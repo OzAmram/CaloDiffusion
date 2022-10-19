@@ -24,9 +24,17 @@ class CaloAE():
 
         self.stride_size=self.config['STRIDE']
         self.kernel_size =self.config['KERNEL']
-        self.layer_size = self.config['LAYER_SIZE']
+        self.layer_size = self.config['LAYER_SIZE_AE']
         self.nlayers = len(self.layer_size)
         self.dim_red = self.config['DIM_RED']
+
+        total_dim_red = int(np.sum(self.dim_red))
+        print("Dim red %i" % total_dim_red)
+
+        encoded_shape = list(self._data_shape)
+        encoded_shape[-2] = int(self._data_shape[-2]/total_dim_red)
+        encoded_shape[-3] = int(self._data_shape[-3]/total_dim_red)
+        self.encoded_shape = encoded_shape
 
         inputs = Input((self._data_shape))
         #x = layers.Conv3D(1,kernel_size=self.kernel_size,padding='same', strides=1,use_bias=False,activation=self.activation)(inputs)
@@ -34,39 +42,60 @@ class CaloAE():
         z = self.Encoder(inputs)
         x = self.Decoder(z)
 
-        #self.encoder_model = keras.Model(inputs, z)
-        #self.decoder_model = keras.Model(z, x)
-
         self.model = keras.Model(inputs, x)
+        
+        self.encoder_model = keras.Model(inputs, z)
+
+        enc_inputs = Input((encoded_shape))
+        dec = enc_inputs
+        for lay in self.dec_layers:
+            dec = lay(dec)
+        self.decoder_model = keras.Model(enc_inputs, dec)
 
         print(self.model.summary())
 
 
     def Encoder(self, inputs):
         x = inputs
+        self.enc_layers = []
         for ilayer in range(self.nlayers):
-            x = layers.Conv3D(self.layer_size[ilayer],kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)(x)
+            lay = layers.Conv3D(self.layer_size[ilayer],kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)
+            x = lay(x)
+            self.enc_layers.append(lay)
 
             if(self.dim_red[ilayer] > 0):
-                x = layers.AveragePooling3D(pool_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))(x)
+                pool = layers.AveragePooling3D(pool_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
+                x = pool(x)
+                self.enc_layers.append(pool)
             #x = layers.BatchNormalization()(x)
 
-        z = layers.Conv3D(1,kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)(x)
+        final= layers.Conv3D(1,kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)
+        z = final(x)
+        self.enc_layers.append(final)
         #z = layers.BatchNormalization()(x)
 
         return z
 
     def Decoder(self, z):
         x = z
+        self.dec_layers = []
         for ilayer in range(self.nlayers -1, 0, -1):
-            x = layers.Conv3D(self.layer_size[ilayer],kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)(x)
+            lay =  layers.Conv3D(self.layer_size[ilayer],kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)
+            x = lay(x)
+            self.dec_layers.append(lay)
 
             if(self.dim_red[ilayer] > 0):
-                x = layers.UpSampling3D(size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))(x)
+                up = layers.UpSampling3D(size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
+                x = up(x)
+                self.dec_layers.append(up)
 
             #x = layers.BatchNormalization()(x)
 
-        x = layers.Conv3D(1,kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)(x)
+        final = layers.Conv3D(1,kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)
+        self.dec_layers.append(final)
+
+        x = final(x)
+
         return x
 
 

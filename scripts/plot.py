@@ -84,9 +84,22 @@ if flags.sample:
         model = CaloDiffu(dataset_config['SHAPE_PAD'][1:],energies.shape[1],nevts,config=dataset_config)    
         model.load_weights(flags.model_loc).expect_partial()
 
-        generated=model.Sample(cond=energies,
-                                  snr=dataset_config['SNR'],
-                                  num_steps=dataset_config['NSTEPS']).numpy()
+        generated=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
+
+    elif(flags.model == "LatentDiffu"):
+        print("Loading AE from " + dataset_config['AE'])
+        AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config)
+        AE.model.load_weights(dataset_config['AE']).expect_partial()
+
+
+        print("Loading Diffu model from " + flags.model_loc)
+        model = CaloDiffu(AE.encoded_shape,energies.shape[1],nevts, config=dataset_config)
+        model.load_weights(flags.model_loc).expect_partial()
+
+        generated_latent=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
+
+        generated = AE.decoder_model.predict(generated_latent, batch_size = batch_size)
+
 
     else:
         print("Loading CaloScore from " + flags.model_loc)
@@ -435,15 +448,11 @@ else:
          'Nhits':HistNhits,
     }
     
-    if '1' in flags.config:
-        plot_routines['Max voxel']=HistMaxE
-    else:
-        pass
-        plot_routines['Shower width']=AverageShowerWidth        
-        plot_routines['Energy per eta']=AverageEX
-        plot_routines['Energy per phi']=AverageEY
-        plot_routines['2D average shower']=Plot_Shower_2D
-        plot_routines['Max voxel']=HistMaxELayer
+    plot_routines['Shower width']=AverageShowerWidth        
+    plot_routines['Energy per eta']=AverageEX
+    plot_routines['Energy per phi']=AverageEY
+    plot_routines['2D average shower']=Plot_Shower_2D
+    plot_routines['Max voxel']=HistMaxELayer
 
     print("Saving plots to "  + flags.plot_folder) 
     for plot in plot_routines:

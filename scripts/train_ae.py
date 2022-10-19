@@ -62,6 +62,9 @@ if __name__ == '__main__':
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     if not os.path.exists(checkpoint_folder):
         os.makedirs(checkpoint_folder)
+
+    os.system('cp CaloAE.py {}'.format(checkpoint_folder)) # bkp of model def
+    os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
     
     callbacks = [
         #hvd.callbacks.BroadcastGlobalVariablesCallback(0),
@@ -96,6 +99,4 @@ if __name__ == '__main__':
 
 
     print("Saving to %s" % checkpoint_folder)
-    os.system('cp CaloAE.py {}'.format(checkpoint_folder)) # bkp of model def
-    os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
     model.save_weights('{}/{}'.format(checkpoint_folder,'final'),save_format='tf')

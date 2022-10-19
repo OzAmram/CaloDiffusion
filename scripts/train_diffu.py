@@ -8,6 +8,7 @@ import argparse
 import h5py as h5
 import utils
 from CaloDiffu import CaloDiffu
+from CaloAE import CaloAE
 
 
 if __name__ == '__main__':
@@ -33,6 +34,13 @@ if __name__ == '__main__':
     dataset_config = utils.LoadJson(flags.config)
     data = []
     energies = []
+
+    BATCH_SIZE = dataset_config['BATCH']
+    LR = float(dataset_config['LR'])
+    NUM_EPOCHS = dataset_config['MAXEPOCH']
+    EARLY_STOP = dataset_config['EARLYSTOP']
+
+
     for dataset in dataset_config['FILES']:
         data_,e_ = utils.DataLoader(
             os.path.join(flags.data_folder,dataset),
@@ -48,25 +56,44 @@ if __name__ == '__main__':
         energies.append(e_)
         
 
-    #TODO encode showers to latent
-    data = np.reshape(data,dataset_config['SHAPE_PAD'])
     energies = np.reshape(energies,(-1,1))    
+    data = np.reshape(data,dataset_config['SHAPE_PAD'])
     data_size = data.shape[0]
+
+    if(flags.model == "Diffu"):
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:],energies.shape[1],BATCH_SIZE, config=dataset_config)
+    elif(flags.model == "LatentDiffu"):
+        AE = CaloAE(dataset_config['SHAPE_PAD'][1:], BATCH_SIZE, config=dataset_config)
+        AE.model.load_weights(dataset_config['AE']).expect_partial()
+
+        print("ENC shape", AE.encoded_shape)
+        model = CaloDiffu(AE.encoded_shape,energies.shape[1],BATCH_SIZE, config=dataset_config)
+
+        #encode data to latent space
+        data = AE.encoder_model.predict(data, batch_size = 256)
+
+
+
+    else:
+        print("Model %s not supported!" % flags.model)
+        exit(1)
+
+
+
     tf_data = tf.data.Dataset.from_tensor_slices(data)
     tf_energies = tf.data.Dataset.from_tensor_slices(energies)
     dataset =tf.data.Dataset.zip((tf_data, tf_energies))    
     train_data, test_data = utils.split_data(dataset,data_size,flags.frac)
     del dataset, data, tf_data,tf_energies
     
-    BATCH_SIZE = dataset_config['BATCH']
-    LR = float(dataset_config['LR'])
-    NUM_EPOCHS = dataset_config['MAXEPOCH']
-    EARLY_STOP = dataset_config['EARLYSTOP']
 
 
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     if not os.path.exists(checkpoint_folder):
         os.makedirs(checkpoint_folder)
+
+    os.system('cp CaloDiffu.py {}'.format(checkpoint_folder)) # bkp of model def
+    os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
     
     callbacks = [
         #hvd.callbacks.BroadcastGlobalVariablesCallback(0),
@@ -80,7 +107,7 @@ if __name__ == '__main__':
         #     verbose=hvd.rank()==0)
     ]
 
-    model = CaloDiffu(dataset_config['SHAPE_PAD'][1:],energies.shape[1],BATCH_SIZE, config=dataset_config)
+
     if flags.load:
         checkpoint_folder = '../checkpoints_{}_{}'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
         model.load_weights('{}/{}'.format(checkpoint_folder,'checkpoint')).expect_partial()
@@ -104,6 +131,4 @@ if __name__ == '__main__':
     print("Finished training!")
 
 
-    os.system('cp CaloDiffu.py {}'.format(checkpoint_folder)) # bkp of model def
-    os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
     model.save_weights('{}/{}'.format(checkpoint_folder,'final'),save_format='tf')

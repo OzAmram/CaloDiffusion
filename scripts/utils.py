@@ -38,6 +38,7 @@ line_style = {
 
     'Autoencoder' : '-',
     'Diffu' : '-',
+    'LatentDiffu' : '-',
 
 }
 
@@ -65,6 +66,7 @@ colors = {
     
     'Autoencoder': 'purple',
     'Diffu': 'blue',
+    'LatentDiffu': 'green',
 
 }
 
@@ -72,6 +74,7 @@ name_translate={
 
     'AE' : "Autoencoder",
     'Diffu' : "Diffu",
+    'LatentDiffu' : "LatentDiffu",
 
 
     'VPSDE':'CaloScore: VP',
@@ -148,7 +151,8 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4'):
         else:
             ax0.plot(np.mean(feed_dict[plot],0),label=plot,linestyle=line_style[plot],color=colors[plot])
         if reference_name!=plot:
-            ratio = 100*np.divide(np.mean(feed_dict[reference_name],0)-np.mean(feed_dict[plot],0),np.mean(feed_dict[reference_name],0))
+            eps = 1e-8
+            ratio = 100*np.divide(np.mean(feed_dict[reference_name],0)-np.mean(feed_dict[plot],0),np.mean(feed_dict[reference_name],0) + eps)
             #ax1.plot(ratio,color=colors[plot],marker='o',ms=10,lw=0,markerfacecolor='none',markeredgewidth=3)
             if 'steps' in plot or 'r=' in plot:
                 ax1.plot(ratio,color=colors[plot],markeredgewidth=1,marker=line_style[plot],lw=0)
@@ -221,7 +225,8 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
             dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,linestyle=line_style[plot],color=colors[plot],density=True,histtype="step")
             
         if reference_name!=plot:
-            ratio = 100*np.divide(reference_hist-dist,reference_hist)
+            eps = 1e-8
+            ratio = 100*np.divide(reference_hist-dist,reference_hist + eps)
             if 'steps' in plot or 'r=' in plot:
                 ax1.plot(xaxis,ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=3)
             else:
@@ -317,7 +322,7 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True,norm_data=False, 
         exp = np.exp(voxels)    
         x = exp/(1+exp)
         data = (x-alpha)/(1 - 2*alpha)
-    else:
+    elif(showerMap == 'sqrt'):
         data = np.square(voxels)
 
     if norm_data:

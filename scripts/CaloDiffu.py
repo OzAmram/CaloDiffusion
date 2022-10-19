@@ -102,6 +102,7 @@ class CaloDiffu(keras.Model):
     def ConvModel(self,time_embed):     
         inputs = Input((self._data_shape))
         conv_sizes = self.config['LAYER_SIZE']
+        self.n_skips = 0
 
         def ConvBlocks(layer,conv_sizes,stride_size,kernel_size,nlayers):
             skip_layers = []
@@ -117,10 +118,14 @@ class CaloDiffu(keras.Model):
                                                stride=1,
                                                )
                 
-                if len(self._data_shape) == 2:
-                    layer_encoded = layers.AveragePooling1D(stride_size)(layer_encoded)
+                if(layer_encoded.shape[-2] >= stride_size[-2] and layer_encoded.shape[-2] % 2 == 0):
+                    if len(self._data_shape) == 2:
+                        layer_encoded = layers.AveragePooling1D(stride_size)(layer_encoded)
+                    else:
+                        layer_encoded = layers.AveragePooling3D(stride_size)(layer_encoded)
                 else:
-                    layer_encoded = layers.AveragePooling3D(stride_size)(layer_encoded)
+                    self.n_skips +=1
+
                 skip_layers.append(layer_encoded)
 
             return skip_layers[::-1]
@@ -135,21 +140,22 @@ class CaloDiffu(keras.Model):
                                                time_embed,conv_sizes[len(skip_layers)-2-ilayer],
                                                stride = 1,
                                                kernel_size=kernel_size,padding='same')
-                if len(self._data_shape) == 2:
-                    layer_decoded = layers.UpSampling1D(stride_size)(layer_decoded)
-                    layer_decoded =layers.Conv1D(conv_sizes[len(skip_layers)-2-ilayer],
-                                                 kernel_size=kernel_size,padding="same",
-                                                 strides=1,use_bias=True,
-                                                 activation=self.activation)(layer_decoded)
-                else:
-                    layer_decoded = layers.UpSampling3D(stride_size)(layer_decoded)
-                    layer_decoded =layers.Conv3D(conv_sizes[len(skip_layers)-2-ilayer],
-                                                 kernel_size=kernel_size,padding="same",
-                                                 strides=1,use_bias=True,
-                                                 activation=self.activation)(layer_decoded)
+                if(ilayer >= self.n_skips):
+                    if len(self._data_shape) == 2:
+                        layer_decoded = layers.UpSampling1D(stride_size)(layer_decoded)
+                        layer_decoded =layers.Conv1D(conv_sizes[len(skip_layers)-2-ilayer],
+                                                     kernel_size=kernel_size,padding="same",
+                                                     strides=1,use_bias=True,
+                                                     activation=self.activation)(layer_decoded)
+                    else:
+                        layer_decoded = layers.UpSampling3D(stride_size)(layer_decoded)
+                        layer_decoded =layers.Conv3D(conv_sizes[len(skip_layers)-2-ilayer],
+                                                     kernel_size=kernel_size,padding="same",
+                                                     strides=1,use_bias=True,
+                                                     activation=self.activation)(layer_decoded)
+                        
                     
-                
-                layer_decoded = (layer_decoded+ skip_layers[ilayer+1])/np.sqrt(2)
+                    layer_decoded = (layer_decoded+ skip_layers[ilayer+1])/np.sqrt(2)
                 if len(self._data_shape) == 2:
                     layer_decoded =layers.Conv1D(conv_sizes[len(skip_layers)-2-ilayer],
                                                  kernel_size=1,padding="same",
@@ -333,8 +339,6 @@ class CaloDiffu(keras.Model):
 
 
     def Sample(self, cond, num_steps = 200, 
-                  snr=0.3,
-                  ncorrections=1,
                   gen_batch_size = 256, eps = 1e-3):
         """Generate samples from diffusion model.
         

@@ -8,7 +8,7 @@ import tensorflow.keras.backend as K
 #import horovod.tensorflow.keras as hvd
 import utils
 
-class CaloAE():
+class CaloAE(nn.Module):
     """AE to encoder calorimeter data"""
     def __init__(self, data_shape,num_batch, config=None):
         super(CaloAE, self).__init__()
@@ -36,6 +36,8 @@ class CaloAE():
         encoded_shape[-3] = int(self._data_shape[-3]/total_dim_red)
         self.encoded_shape = encoded_shape
 
+        self.encoder_model = self.BuildEncoder(self._data_shape)
+        self.decoder_model = self.BuildEncoder(self._data_shape)
         inputs = Input((self._data_shape))
         #x = layers.Conv3D(1,kernel_size=self.kernel_size,padding='same', strides=1,use_bias=False,activation=self.activation)(inputs)
 
@@ -55,48 +57,46 @@ class CaloAE():
         print(self.model.summary())
 
 
-    def Encoder(self, inputs):
-        x = inputs
+    def BuildEncoder(self, input_shape):
         self.enc_layers = []
+        in_channels = input_shape[1]
         for ilayer in range(self.nlayers):
-            lay = layers.Conv3D(self.layer_size[ilayer],kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)
-            x = lay(x)
+            out_channels = self.layer_size[ilayer]
+            lay = nn.Conv3D(in_channels = in_channels, out_channels = out_channels, kernel_size=self.kernel_size,padding='same', bias=True)
             self.enc_layers.append(lay)
+            self.enc_layers.append(self.activation)
+            in_channels = out_channels
 
             if(self.dim_red[ilayer] > 0):
-                pool = layers.AveragePooling3D(pool_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
-                x = pool(x)
-                self.enc_layers.append(pool)
-            #x = layers.BatchNormalization()(x)
+                pool_lay = nn.AvgPool3D(kernel_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
+                self.enc_layers.append(pool_lay)
 
-        final= layers.Conv3D(1,kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)
-        z = final(x)
-        self.enc_layers.append(final)
-        #z = layers.BatchNormalization()(x)
+        final_lay = nn.Conv3D(in_channels = in_channels, out_channels = 1, ,kernel_size=self.kernel_size,padding='same', strides=1, bias=True)
+        self.enc_layers.append(final_lay)
+        Encoder = nn.Sequential(*self.enc_layers)
+        return Encoder
 
-        return z
-
-    def Decoder(self, z):
-        x = z
+    def Decoder(self, input_shape):
         self.dec_layers = []
+        in_channels = 1
         for ilayer in range(self.nlayers -1, 0, -1):
-            lay =  layers.Conv3D(self.layer_size[ilayer],kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)
-            x = lay(x)
+            out_channels = self.layer_size[ilayer]
+            lay =  nn.Conv3D(in_channels = in_channels, out_channels = out_channels, kernel_size=self.kernel_size,padding='same', bias=True)
             self.dec_layers.append(lay)
+            self.enc_layers.append(self.activation)
+            in_channels = out_channels
 
             if(self.dim_red[ilayer] > 0):
-                up = layers.UpSampling3D(size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
-                x = up(x)
+                up = nn.UpSampling3D(kernel_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
                 self.dec_layers.append(up)
 
             #x = layers.BatchNormalization()(x)
 
-        final = layers.Conv3D(1,kernel_size=self.kernel_size,padding='same', strides=1,use_bias=True,activation=self.activation)
-        self.dec_layers.append(final)
+        final_lay = nn.Conv3D(in_channels = in_channels, out_channels = input_shape[1], kernel_size=self.kernel_size,padding='same', bias=True)
+        self.dec_layers.append(final_lay)
+        Decoder = nn.Sequential(*self.enc_layers)
 
-        x = final(x)
-
-        return x
+        return Decoder
 
 
     def AEModel(self):

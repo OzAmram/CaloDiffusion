@@ -7,18 +7,14 @@ import h5py as h5
 import os
 import utils
 import copy
-import tensorflow as tf
-from CaloScore import CaloScore
-from CaloAE import CaloAE
-from CaloDiffu import CaloDiffu
+#from CaloScore import CaloScore
+#from CaloDiffu import CaloDiffu
+import torch
+import torch.utils.data as torchdata
+from CaloAE_torch import CaloAE
 
-
-
-gpus = tf.config.experimental.list_physical_devices('GPU')
-for gpu in gpus:
-    tf.config.experimental.set_memory_growth(gpu, True)
-#if gpus:
-    #tf.config.experimental.set_visible_devices(gpus[hvd.local_rank()], 'GPU')
+if(torch.cuda.is_available()): device = torch.device('cuda')
+else: device = torch.device('cpu')
 
 plt_ext = "png"
 rank = 0
@@ -71,45 +67,56 @@ if flags.sample:
         energies.append(e_)
 
     energies = np.reshape(energies,(-1,1))
+    data = np.reshape(data,dataset_config['SHAPE_PAD'])
+    data = torch.from_numpy(data).to(device=device)
+
+    data_loader = torchdata.DataLoader(data, batch_size = batch_size, shuffle = False)
     #print(energies)
     if(flags.model == "AE"):
         print("Loading AE from " + flags.model_loc)
-        model = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).model
-        model.load_weights(flags.model_loc).expect_partial()
+        model = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device=device)
+        model.load_state_dict(torch.load(flags.model_loc, map_location=device))
 
-        generated = model.predict(data[:nevts], batch_size = batch_size)
+        generated = []
+        for i,d_batch in enumerate(data_loader):
+            gen = model(d_batch).detach().cpu().numpy()
+            if(i == 0): generated = gen
+            else: generated = np.concatenate((generated, gen))
 
-    elif(flags.model == "Diffu"):
-        print("Loading Diffu model from " + flags.model_loc)
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:],energies.shape[1],nevts,config=dataset_config)    
-        model.load_weights(flags.model_loc).expect_partial()
+    #elif(flags.model == "Diffu"):
+    #    print("Loading Diffu model from " + flags.model_loc)
+    #    model = CaloDiffu(dataset_config['SHAPE_PAD'][1:],energies.shape[1],nevts,config=dataset_config)    
+    #    model.load_weights(flags.model_loc).expect_partial()
 
-        generated=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
+    #    generated=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
 
-    elif(flags.model == "LatentDiffu"):
-        print("Loading AE from " + dataset_config['AE'])
-        AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config)
-        AE.model.load_weights(dataset_config['AE']).expect_partial()
-
-
-        print("Loading Diffu model from " + flags.model_loc)
-        model = CaloDiffu(AE.encoded_shape,energies.shape[1],nevts, config=dataset_config)
-        model.load_weights(flags.model_loc).expect_partial()
-
-        generated_latent=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
-
-        generated = AE.decoder_model.predict(generated_latent, batch_size = batch_size)
+    #elif(flags.model == "LatentDiffu"):
+    #    print("Loading AE from " + dataset_config['AE'])
+    #    AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config)
+    #    AE.model.load_weights(dataset_config['AE']).expect_partial()
 
 
-    else:
-        print("Loading CaloScore from " + flags.model_loc)
-        model = CaloScore(dataset_config['SHAPE_PAD'][1:],energies.shape[1],nevts,sde_type=flags.model,config=dataset_config)    
-        model.load_weights(flags.model_loc).expect_partial()
+    #    print("Loading Diffu model from " + flags.model_loc)
+    #    model = CaloDiffu(AE.encoded_shape,energies.shape[1],nevts, config=dataset_config)
+    #    model.load_weights(flags.model_loc).expect_partial()
+
+    #    generated_latent=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
+
+    #    generated = AE.decoder_model.predict(generated_latent, batch_size = batch_size)
 
 
-        generated=model.PCSampler(cond=energies,
-                                  snr=dataset_config['SNR'],
-                                  num_steps=dataset_config['NSTEPS']).numpy()
+    #else:
+    #    print("Loading CaloScore from " + flags.model_loc)
+    #    model = CaloScore(dataset_config['SHAPE_PAD'][1:],energies.shape[1],nevts,sde_type=flags.model,config=dataset_config)    
+    #    model.load_weights(flags.model_loc).expect_partial()
+
+
+    #    generated=model.PCSampler(cond=energies,
+    #                              snr=dataset_config['SNR'],
+    #                              num_steps=dataset_config['NSTEPS']).numpy()
+
+    #swap channels to be last axis (unlike pytorch standard)
+    generated = generated.reshape(dataset_config["SHAPE"])
 
     generated,energies = utils.ReverseNorm(generated,energies[:nevts],
                                            shape=dataset_config['SHAPE'],
@@ -178,6 +185,7 @@ else:
 
     
     data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE'])
+    print(data_dict['Geant4'].shape)
     true_energies = np.reshape(true_energies,(-1,1))
 
 

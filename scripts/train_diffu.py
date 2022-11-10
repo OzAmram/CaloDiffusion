@@ -1,25 +1,19 @@
 import numpy as np
 import os
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras.callbacks import ReduceLROnPlateau,EarlyStopping, ModelCheckpoint
-#import horovod.tensorflow.keras as hvd
 import argparse
 import h5py as h5
-import utils
-from CaloDiffu import CaloDiffu
-from CaloAE import CaloAE
+from utils import *
+import torch.optim as optim
+import torch.utils.data as torchdata
+from CaloAE_torch import *
+from CaloDiffu import *
+from tqdm import tqdm
 
 
 if __name__ == '__main__':
-    #hvd.init()
-    gpus = tf.config.experimental.list_physical_devices('GPU')
-    for gpu in gpus:
-        tf.config.experimental.set_memory_growth(gpu, True)
-    #if gpus:
-        #tf.config.experimental.set_visible_devices(gpus[hvd.local_rank()], 'GPU')
 
-
+    if(torch.cuda.is_available()): device = torch.device('cuda')
+    else: device = torch.device('cpu')
         
     parser = argparse.ArgumentParser()
     
@@ -35,10 +29,9 @@ if __name__ == '__main__':
     data = []
     energies = []
 
-    BATCH_SIZE = dataset_config['BATCH']
-    LR = float(dataset_config['LR'])
-    NUM_EPOCHS = dataset_config['MAXEPOCH']
-    EARLY_STOP = dataset_config['EARLYSTOP']
+    batch_size = dataset_config['BATCH']
+    num_epochs = dataset_config['MAXEPOCH']
+    early_stop = dataset_config['EARLYSTOP']
 
 
     for dataset in dataset_config['FILES']:
@@ -56,18 +49,32 @@ if __name__ == '__main__':
         energies.append(e_)
         
 
-    energies = np.reshape(energies,(-1,1))    
+    energies = np.reshape(energies,(-1))    
     data = np.reshape(data,dataset_config['SHAPE_PAD'])
     data_size = data.shape[0]
+    torch_data_tensor = torch.from_numpy(data)
+    torch_E_tensor = torch.from_numpy(energies)
+    #train_data, val_data = utils.split_data_np(data,flags.frac)
+
+    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_data_tensor)
+    nTrain = int(round(flags.frac * data.shape[0]))
+    nVal = data.shape[0] - nTrain
+    train_dataset, val_dataset = torch.utils.data.random_split(torch_dataset, [nTrain, nVal])
+
+    loader_train = torchdata.DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
+    loader_val = torchdata.DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
+
+
+    del data,torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
 
     if(flags.model == "Diffu"):
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:],energies.shape[1],BATCH_SIZE, config=dataset_config)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
     elif(flags.model == "LatentDiffu"):
-        AE = CaloAE(dataset_config['SHAPE_PAD'][1:], BATCH_SIZE, config=dataset_config)
+        AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
         AE.model.load_weights(dataset_config['AE']).expect_partial()
 
         print("ENC shape", AE.encoded_shape)
-        model = CaloDiffu(AE.encoded_shape,energies.shape[1],BATCH_SIZE, config=dataset_config)
+        model = CaloDiffu(AE.encoded_shape,energies.shape[1],batch_size, config=dataset_config).to(device=device)
 
         #encode data to latent space
         data = AE.encoder_model.predict(data, batch_size = 256)
@@ -80,55 +87,93 @@ if __name__ == '__main__':
 
 
 
-    tf_data = tf.data.Dataset.from_tensor_slices(data)
-    tf_energies = tf.data.Dataset.from_tensor_slices(energies)
-    dataset =tf.data.Dataset.zip((tf_data, tf_energies))    
-    train_data, test_data = utils.split_data(dataset,data_size,flags.frac)
-    del dataset, data, tf_data,tf_energies
-    
-
-
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
+
     if not os.path.exists(checkpoint_folder):
         os.makedirs(checkpoint_folder)
 
     os.system('cp CaloDiffu.py {}'.format(checkpoint_folder)) # bkp of model def
+    os.system('cp utils.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
-    
-    callbacks = [
-        #hvd.callbacks.BroadcastGlobalVariablesCallback(0),
-        #hvd.callbacks.MetricAverageCallback(),            
-        #ReduceLROnPlateau(patience=100, factor=0.5,
-        #                  min_lr=1e-8,verbose=hvd.rank()==0),
-        EarlyStopping(patience=EARLY_STOP,restore_best_weights=True),
-        ModelCheckpoint(filepath = checkpoint_folder + "checkpoint", save_weights_only = True, save_best_only = True, mode = "min", monitor = "loss", save_format = "tf"),
-        # hvd.callbacks.LearningRateWarmupCallback(
-        #     initial_lr=LR*hvd.size(), warmup_epochs=5,
-        #     verbose=hvd.rank()==0)
-    ]
 
+    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 1e-3)
+    
 
     if flags.load:
         checkpoint_folder = '../checkpoints_{}_{}'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
         model.load_weights('{}/{}'.format(checkpoint_folder,'checkpoint')).expect_partial()
 
-    opt = keras.optimizers.Adam(learning_rate=LR)
-    #opt = hvd.DistributedOptimizer(
-        #opt, average_aggregated_gradients=True)
 
-    model.compile(optimizer=opt,experimental_run_tf_function=False)
+    criterion = nn.MSELoss().to(device = device)
 
+    optimizer = optim.Adam(model.parameters(), lr = float(dataset_config["LR"]))
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 10, verbose = True) 
+    step = 0
+    training_losses = np.zeros(num_epochs)
+    val_losses = np.zeros(num_epochs)
+
+    if flags.load:
+        checkpoint_folder = '../checkpoints_{}_{}'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
+        model.load_weights('{}/{}'.format(checkpoint_folder,'checkpoint')).expect_partial()
     
-    history = model.fit(
-        train_data.batch(BATCH_SIZE),
-        epochs=NUM_EPOCHS,
-        steps_per_epoch=int(data_size*flags.frac/BATCH_SIZE),
-        validation_data=test_data.batch(BATCH_SIZE),
-        validation_steps=int(data_size*(1-flags.frac)/BATCH_SIZE),
-        verbose=1,
-        callbacks=callbacks
-    )
-    print("Finished training!")
+    #training loop
+    for epoch in range(num_epochs):
+        print("Beginning epoch %i" % epoch)
+        train_loss = 0
+
+        model.train()
+        for i, (E,data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
+            model.zero_grad()
+            optimizer.zero_grad()
+
+            data = data.to(device = device)
+            E = E.to(device = device)
+            t = torch.randint(0, model.nsteps, (data.size()[0],), device=device).long()
+            noise = torch.randn_like(data)
+
+            batch_loss = model.compute_loss(data, E, t, noise)
+            batch_loss.backward()
+
+            optimizer.step()
+            train_loss+=batch_loss.item()
+
+            del data, E, t, noise, batch_loss
+
+        train_loss = train_loss/len(loader_train)
+        training_losses[epoch] = train_loss
+        tqdm.write("loss: "+ str(train_loss))
+
+        val_loss = 0
+        model.eval()
+        for i, (vE, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
+            vdata = vdata.to(device=device)
+            vE = vE.to(device = device)
+
+            t = torch.randint(0, model.nsteps, (vdata.size()[0],), device=device).long()
+            noise = torch.randn_like(vdata)
+            batch_loss = model.compute_loss(vdata, vE, t, noise)
+
+            val_loss+=batch_loss.item()
+            del vdata,vE, t, noise, batch_loss
+
+        val_loss = val_loss/len(loader_val)
+        scheduler.step(torch.tensor([val_loss]))
+        val_losses[epoch] = val_loss
+        tqdm.write("val_loss: "+ str(val_loss))
+        if(early_stopper.early_stop(val_loss)):
+            print("Early stopping!")
+            break
+
+        # save the model
+        model.eval()
+        torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'checkpoint.pth'))
 
 
-    model.save_weights('{}/{}'.format(checkpoint_folder,'final'),save_format='tf')
+    print("Saving to %s" % checkpoint_folder)
+    torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'final.pth'))
+
+    with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
+        tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")
+    with open(checkpoint_folder + "/validation_losses.txt","w") as vfileout:
+        vfileout.write("\n".join("{}".format(vl) for vl in val_losses)+"\n")
+

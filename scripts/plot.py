@@ -7,11 +7,10 @@ import h5py as h5
 import os
 import utils
 import copy
-#from CaloScore import CaloScore
-#from CaloDiffu import CaloDiffu
 import torch
 import torch.utils.data as torchdata
-from CaloAE_torch import CaloAE
+from CaloAE_torch import *
+from CaloDiffu import *
 
 if(torch.cuda.is_available()): device = torch.device('cuda')
 else: device = torch.device('cpu')
@@ -66,11 +65,16 @@ if flags.sample:
         data.append(data_)
         energies.append(e_)
 
-    energies = np.reshape(energies,(-1,1))
+    energies = np.reshape(energies,(-1,))
     data = np.reshape(data,dataset_config['SHAPE_PAD'])
-    data = torch.from_numpy(data).to(device=device)
 
-    data_loader = torchdata.DataLoader(data, batch_size = batch_size, shuffle = False)
+    torch_data_tensor = torch.from_numpy(data)
+    torch_E_tensor = torch.from_numpy(energies)
+
+    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_data_tensor)
+    data_loader = torchdata.DataLoader(torch_dataset, batch_size = batch_size, shuffle = False)
+
+
     #print(energies)
     if(flags.model == "AE"):
         print("Loading AE from " + flags.model_loc)
@@ -78,15 +82,30 @@ if flags.sample:
         model.load_state_dict(torch.load(flags.model_loc, map_location=device))
 
         generated = []
-        for i,d_batch in enumerate(data_loader):
+        for i,(E,d_batch) in enumerate(data_loader):
+            E = E.to(device=device)
+            d_batch = d_batch.to(device=device)
+        
             gen = model(d_batch).detach().cpu().numpy()
             if(i == 0): generated = gen
             else: generated = np.concatenate((generated, gen))
+            del E, d_batch
 
-    #elif(flags.model == "Diffu"):
-    #    print("Loading Diffu model from " + flags.model_loc)
-    #    model = CaloDiffu(dataset_config['SHAPE_PAD'][1:],energies.shape[1],nevts,config=dataset_config)    
-    #    model.load_weights(flags.model_loc).expect_partial()
+    elif(flags.model == "Diffu"):
+        print("Loading Diffu model from " + flags.model_loc)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config).to(device=device)
+        model.load_state_dict(torch.load(flags.model_loc, map_location=device))
+
+        generated = []
+        for i,(E,d_batch) in enumerate(data_loader):
+            E = E.to(device=device)
+            d_batch = d_batch.to(device=device)
+
+            gen = model.Sample(E).detach().cpu().numpy()
+        
+            if(i == 0): generated = gen
+            else: generated = np.concatenate((generated, gen))
+            del E, d_batch
 
     #    generated=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
 
@@ -200,20 +219,6 @@ else:
 
     def ScatterESplit(data_dict,true_energies):
         
-        def SetFig(xlabel,ylabel):
-            fig = plt.figure(figsize=(8, 6))
-            gs = gridspec.GridSpec(1, 1) 
-            ax0 = plt.subplot(gs[0])
-            ax0.yaxis.set_ticks_position('both')
-            ax0.xaxis.set_ticks_position('both')
-            ax0.tick_params(direction="in",which="both")    
-            plt.xticks(fontsize=20)
-            plt.yticks(fontsize=20)
-            plt.xlabel(xlabel,fontsize=20)
-            plt.ylabel(ylabel,fontsize=20)
-
-            ax0.minorticks_on()
-            return fig, ax0
 
         fig,ax = SetFig("Gen. energy [GeV]","Dep. energy [GeV]")
         for key in data_dict:
@@ -395,28 +400,43 @@ else:
         fig,ax0 = utils.HistRoutine(feed_dict,ylabel='Normalized entries', xlabel= 'Max. voxel/Dep. energy',binning=binning,logy=True)
         fig.savefig('{}/FCC_MaxEnergy_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
+        
 
-    def Plot_Shower_2D(data_dict):
+
+
+    def plot_shower(shower, fout = "", title = "", vmax = 0, vmin = 0):
         #cmap = plt.get_cmap('PiYG')
         cmap = copy.copy(plt.get_cmap('viridis'))
         cmap.set_bad("white")
+
+        shower[shower==0]=np.nan
+
+        fig,ax = SetFig("x-bin","y-bin")
+        if vmax==0:
+            vmax = np.nanmax(shower[:,:,0])
+            vmin = np.nanmin(shower[:,:,0])
+            #print(vmin,vmax)
+        im = ax.pcolormesh(range(shower.shape[0]), range(shower.shape[1]), shower[:,:,0], cmap=cmap,vmin=vmin,vmax=vmax)
+
+        yScalarFormatter = utils.ScalarFormatterClass(useMathText=True)
+        yScalarFormatter.set_powerlimits((0,0))
+        #cbar.ax.set_major_formatter(yScalarFormatter)
+
+        cbar=fig.colorbar(im, ax=ax,label='Dep. energy [GeV]',format=yScalarFormatter)
+        
+        
+        bar = ax.set_title(title,fontsize=15)
+
+        if(len(fout) > 0): fig.savefig(fout)
+        return vmax, vmin
+
+
+
+    def Plot_Shower_2D(data_dict):
         plt.rcParams['pcolor.shading'] ='nearest'
         layer_number = [10,44]
-        
-        def SetFig(xlabel,ylabel):
-            fig = plt.figure(figsize=(8, 6))
-            gs = gridspec.GridSpec(1, 1) 
-            ax0 = plt.subplot(gs[0])
-            ax0.yaxis.set_ticks_position('both')
-            ax0.xaxis.set_ticks_position('both')
-            ax0.tick_params(direction="in",which="both")    
-            plt.xticks(fontsize=20)
-            plt.yticks(fontsize=20)
-            plt.xlabel(xlabel,fontsize=20)
-            plt.ylabel(ylabel,fontsize=20)
 
-            ax0.minorticks_on()
-            return fig, ax0
+
 
         for layer in layer_number:
             
@@ -427,25 +447,21 @@ else:
                 return preprocessed
 
             vmin=vmax=0
+            nShowers = 5
             for ik,key in enumerate(['Geant4',utils.name_translate[flags.model]]):
-                fig,ax = SetFig("x-bin","y-bin")
                 average = _preprocess(data_dict[key])
-                if vmax==0:
-                    vmax = np.nanmax(average[:,:,0])
-                    vmin = np.nanmin(average[:,:,0])
-                    #print(vmin,vmax)
-                im = ax.pcolormesh(range(average.shape[0]), range(average.shape[1]), average[:,:,0], cmap=cmap,vmin=vmin,vmax=vmax)
 
-                yScalarFormatter = utils.ScalarFormatterClass(useMathText=True)
-                yScalarFormatter.set_powerlimits((0,0))
-                #cbar.ax.set_major_formatter(yScalarFormatter)
+                fout_avg = '{}/FCC_{}2D_{}_{}_{}.{}'.format(flags.plot_folder,key,layer,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext)
+                title = "{}, layer number {}".format(key,layer)
+                plot_shower(average, fout = fout_avg, title = title)
 
-                cbar=fig.colorbar(im, ax=ax,label='Dep. energy [GeV]',format=yScalarFormatter)
-                
-                
-                bar = ax.set_title("{}, layer number {}".format(key,layer),fontsize=15)
+                for i in range(nShowers):
+                    shower = data_dict[key][i,layer]
+                    fout_ex = '{}/FCC_{}2D_{}_{}_{}_shower{}.{}'.format(flags.plot_folder,key,layer,dataset_config['CHECKPOINT_NAME'],flags.model, i, plt_ext)
+                    title = "{} Shower {}, layer number {}".format(key, i, layer)
+                    vmax, vmin = plot_shower(shower, fout = fout_ex, title = title, vmax = vmax, vmin = vmin)
 
-                fig.savefig('{}/FCC_{}2D_{}_{}_{}.{}'.format(flags.plot_folder,key,layer,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+
             
 
     high_level = []

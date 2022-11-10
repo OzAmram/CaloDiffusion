@@ -9,7 +9,6 @@ from CaloAE_torch import *
 from tqdm import tqdm
 
 if __name__ == '__main__':
-    #hvd.init()
     if(torch.cuda.is_available()): device = torch.device('cuda')
     else: device = torch.device('cpu')
         
@@ -90,8 +89,8 @@ if __name__ == '__main__':
         print("Beginning epoch %i" % epoch)
         train_loss = 0
 
+        model.train()
         for i, data in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
-            model.train()
             model.zero_grad()
             optimizer.zero_grad()
             data = data.to(device = device)
@@ -99,7 +98,6 @@ if __name__ == '__main__':
             batch_loss = criterion(output, data).to(device=device)
             batch_loss.backward()
             optimizer.step()
-            model.eval()
             train_loss+=batch_loss.item()
             del data
             del output
@@ -109,6 +107,7 @@ if __name__ == '__main__':
         tqdm.write("loss: "+ str(train_loss))
 
         val_loss = 0
+        model.eval()
         for i, vdata in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
             vdata = vdata.to(device=device)
             output = model(vdata).to(device=device)

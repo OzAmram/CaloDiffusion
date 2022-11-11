@@ -9,7 +9,7 @@ import utils
 import copy
 import torch
 import torch.utils.data as torchdata
-from CaloAE_torch import *
+from CaloAE import *
 from CaloDiffu import *
 
 if(torch.cuda.is_available()): device = torch.device('cuda')

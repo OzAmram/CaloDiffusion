@@ -5,7 +5,7 @@ import h5py as h5
 from utils import *
 import torch.optim as optim
 import torch.utils.data as torchdata
-from CaloAE_torch import *
+from CaloAE import *
 from tqdm import tqdm
 
 if __name__ == '__main__':

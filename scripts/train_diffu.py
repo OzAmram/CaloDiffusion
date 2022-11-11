@@ -2,12 +2,14 @@ import numpy as np
 import os
 import argparse
 import h5py as h5
-from utils import *
 import torch.optim as optim
 import torch.utils.data as torchdata
-from CaloAE_torch import *
-from CaloDiffu import *
 from tqdm import tqdm
+
+from utils import *
+from CaloAE import *
+from CaloDiffu import *
+from models import *
 
 
 if __name__ == '__main__':
@@ -68,7 +70,8 @@ if __name__ == '__main__':
     del data,torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
 
     if(flags.model == "Diffu"):
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, cylindrical = dataset_config['CYLINDRICAL'], config=dataset_config).to(device = device)
+
     elif(flags.model == "LatentDiffu"):
         AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
         AE.model.load_weights(dataset_config['AE']).expect_partial()
@@ -93,7 +96,7 @@ if __name__ == '__main__':
         os.makedirs(checkpoint_folder)
 
     os.system('cp CaloDiffu.py {}'.format(checkpoint_folder)) # bkp of model def
-    os.system('cp utils.py {}'.format(checkpoint_folder)) # bkp of model def
+    os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
 
     early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 1e-3)

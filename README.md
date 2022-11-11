@@ -11,7 +11,7 @@ with Latent Diffusion Models](http://arxiv.org/abs/2112.10752).
 
 
 
-[Tensorflow 2.6.0](https://www.tensorflow.org/) was used to implement all models.
+Pytorch v1.9  was used to implement all models. 
 
 # Data
 

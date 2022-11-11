@@ -1,12 +1,21 @@
 import json, yaml
 import os
 import h5py as h5
-#import horovod.tensorflow.keras as hvd
 import numpy as np
-import tensorflow as tf
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 import matplotlib.ticker as mtick
+import torch
+import torch.nn as nn
+
+
+def split_data_np(data, frac=0.8):
+    np.random.shuffle(data)
+    split = int(frac * data.shape[0])
+    train_data =data[:split]
+    test_data = data[split:]
+    return train_data,test_data
+
 
 def split_data(data,nevts,frac=0.8):
     data = data.shuffle(nevts)
@@ -334,7 +343,7 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True,norm_data=False, 
             return shower
 
         data = ApplyNorm(data)
-    data = data.reshape(voxels.shape[0],-1)*max_deposit*energy
+    data = data.reshape(voxels.shape[0],-1)*max_deposit*energy.reshape(-1,1)
     
     return data,energy
     
@@ -362,7 +371,42 @@ def polar_to_cart(polar_data,nr=9,nalpha=16,nx=12,ny=12):
                     nfilled+=1
                 cart_img[binx,biny]+=polar_data[alpha,r]
     return cart_img
-    
+
+class EarlyStopper:
+    def __init__(self, patience=1, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.min_validation_loss = np.inf
+
+    def early_stop(self, validation_loss):
+        if validation_loss < self.min_validation_loss:
+            self.min_validation_loss = validation_loss
+            self.counter = 0
+        elif validation_loss > (self.min_validation_loss + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False
+
+
+
+def SetFig(xlabel,ylabel):
+    fig = plt.figure(figsize=(8, 6))
+    gs = gridspec.GridSpec(1, 1) 
+    ax0 = plt.subplot(gs[0])
+    ax0.yaxis.set_ticks_position('both')
+    ax0.xaxis.set_ticks_position('both')
+    ax0.tick_params(direction="in",which="both")    
+    plt.xticks(fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.xlabel(xlabel,fontsize=20)
+    plt.ylabel(ylabel,fontsize=20)
+
+    ax0.minorticks_on()
+    return fig, ax0
+
+
 if __name__ == "__main__":
     #Preprocessing of the input files: conversion to cartesian coordinates + zero-padded mask generation
     file_path = '/wclustre/cms/denoise/CaloChallenge/dataset_2_2.hdf5'

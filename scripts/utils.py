@@ -16,6 +16,22 @@ def split_data_np(data, frac=0.8):
     test_data = data[split:]
     return train_data,test_data
 
+def create_R_Z_image(device):
+
+    shape = (1,45,16,9)
+    r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
+    r_avgs = [(r_bins[i] + r_bins[i+1]) / 2.0 for i in range(len(r_bins) -1) ]
+    print(len(r_avgs), shape)
+    assert(len(r_avgs) == shape[-1])
+    Z_image = torch.zeros(shape, device=device)
+    R_image = torch.zeros(shape, device=device)
+    for z in range(shape[0]):
+        Z_image[:,z,:,:] = z
+
+    for r in range(shape[-1]):
+        R_image[:,:,:,r] = r_avgs[r]
+    return R_image, Z_image
+
 
 def split_data(data,nevts,frac=0.8):
     data = data.shuffle(nevts)
@@ -258,18 +274,22 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
 
 
 
-def EnergyLoader(file_name,nevts,emax,emin,rank=0,logE=True):
-    
-    with h5.File(file_name,"r") as h5f:
-        e = h5f['incident_energies'][rank*int(nevts):(rank+1)*int(nevts)].astype(np.float32)/1000.0
-        shower = h5f['showers'][rank*int(nevts):(rank+1)*int(nevts)].astype(np.float32)/1000.0
+#precomputed values for dataset2, TODO should make this more general
+logit_mean = -12.8564
+logit_std = 1.9123
+logit_min = -13.8155
+logit_max =  0.1153
 
-    if logE:        
-        return np.log10(e/emin)/np.log10(emax/emin)
-    else:
-        return (e-emin)/(emax-emin)
-        
+log_mean = -17.5451
+log_std = 4.4086
+log_min = -20.0
+log_max =  -0.6372
 
+
+sqrt_mean = 0.0026
+sqrt_std = 0.0073
+sqrt_min = 0.
+sqrt_max = 1.0
 
 
 def DataLoader(file_name,shape,nevts,emax,emin,max_deposit=2,logE=True,norm_data=False, showerMap = 'log'):
@@ -284,27 +304,41 @@ def DataLoader(file_name,shape,nevts,emax,emin,max_deposit=2,logE=True,norm_data
 
         
     shower = np.reshape(shower,(shower.shape[0],-1))
+    e = np.reshape(e,(-1,1))
     shower = shower/(max_deposit*e)
 
-    if norm_data:
-        #Normalize voxels to 1 and learn the normalization factor as a dimension
-        def NormLayer(shower,shape):
-            shower_padded = np.zeros([shower.shape[0],shape[1]],dtype=np.float32)
-            deposited_energy = np.sum(shower,-1,keepdims=True)
-            shower = np.ma.divide(shower,np.sum(shower,-1,keepdims=True)).filled(0)
-            shower = np.concatenate((shower,deposited_energy),-1)        
-            shower_padded[:,:shower.shape[1]] += shower
-            return shower_padded
-        
-        shower = NormLayer(shower,shape)
+    #if norm_data:
+    #    #Normalize voxels to 1 and learn the normalization factor as a dimension
+    #    def NormLayer(shower,shape):
+    #        shower_padded = np.zeros([shower.shape[0],shape[1]],dtype=np.float32)
+    #        deposited_energy = np.sum(shower,-1,keepdims=True)
+    #        shower = np.ma.divide(shower,np.sum(shower,-1,keepdims=True)).filled(0)
+    #        shower = np.concatenate((shower,deposited_energy),-1)        
+    #        shower_padded[:,:shower.shape[1]] += shower
+    #        return shower_padded
+    #    
+    #    shower = NormLayer(shower,shape)
     shower = shower.reshape(shape)
     
-    if(showerMap == 'log'):
+    if('logit' in showerMap):
         alpha = 1e-6
         x = alpha + (1 - 2*alpha)*shower
         shower = np.ma.log(x/(1-x)).filled(0)    
-    elif(showerMap == 'sqrt'):
+
+        if('norm' in showerMap): shower = (shower - logit_mean) / logit_std
+        elif('scaled' in showerMap): shower = 2.0 * (shower - logit_min) / (logit_max - logit_min) - 1.0
+
+    elif('log' in showerMap):
+        eps = 1e-8
+        shower = np.ma.log(shower).filled(log_min)
+        if('norm' in showerMap): shower = (shower - log_mean) / log_std
+        elif('scaled' in showerMap):  shower = 2.0 * (shower - log_min) / (log_max - log_min) - 1.0
+
+    elif('sqrt' in showerMap):
         shower = np.sqrt(shower)
+        if('norm' in showerMap): shower = (shower - sqrt_mean) / sqrt_std
+        #Range naturally from 0 to 1, change to be from -1 to 1
+        elif('scaled' in showerMap): shower  = (shower * 2.0) - 1.0
 
     if logE:        
         return shower,np.log10(e/emin)/np.log10(emax/emin)
@@ -327,22 +361,37 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True,norm_data=False, 
     else:
         energy = emin + (emax-emin)*e
         
-    if(showerMap == 'log'):
+    if('logit' in showerMap):
+        if('norm' in showerMap): voxels = (voxels * logit_std) + logit_mean
+        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (logit_max - logit_min) + logit_min
+
+
         exp = np.exp(voxels)    
         x = exp/(1+exp)
         data = (x-alpha)/(1 - 2*alpha)
-    elif(showerMap == 'sqrt'):
+
+    elif('log' in showerMap):
+        if('norm' in showerMap): voxels = (voxels * log_std) + log_mean
+        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (log_max - log_min) + log_min
+
+
+        data = np.exp(voxels)
+
+    elif('sqrt' in showerMap):
+        if('norm' in showerMap): voxels = (voxels * sqrt_std) + sqrt_mean
+        elif('scaled' in showerMap): voxels = (voxels + 1.0)/2.0
         data = np.square(voxels)
 
-    if norm_data:
-        def ApplyNorm(data):
-            energies = data[:,shape[1]:shape[1]+1]
-            shower = data[:,:shape[1]]
-            shower = shower/np.sum(shower,-2,keepdims=True)
-            shower *=energies
-            return shower
 
-        data = ApplyNorm(data)
+    #if norm_data:
+    #    def ApplyNorm(data):
+    #        energies = data[:,shape[1]:shape[1]+1]
+    #        shower = data[:,:shape[1]]
+    #        shower = shower/np.sum(shower,-2,keepdims=True)
+    #        shower *=energies
+    #        return shower
+
+    #    data = ApplyNorm(data)
     data = data.reshape(voxels.shape[0],-1)*max_deposit*energy.reshape(-1,1)
     
     return data,energy

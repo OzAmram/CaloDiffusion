@@ -54,6 +54,7 @@ if __name__ == '__main__':
     energies = np.reshape(energies,(-1))    
     data = np.reshape(data,dataset_config['SHAPE_PAD'])
     data_size = data.shape[0]
+    print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
     torch_data_tensor = torch.from_numpy(data)
     torch_E_tensor = torch.from_numpy(energies)
     #train_data, val_data = utils.split_data_np(data,flags.frac)
@@ -70,7 +71,8 @@ if __name__ == '__main__':
     del data,torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
 
     if(flags.model == "Diffu"):
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, cylindrical = dataset_config['CYLINDRICAL'], config=dataset_config).to(device = device)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, cylindrical = dataset_config['CYLINDRICAL'], 
+                R_Z_inputs = dataset_config['R_Z_INPUT'], config=dataset_config).to(device = device)
 
     elif(flags.model == "LatentDiffu"):
         AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
@@ -170,6 +172,10 @@ if __name__ == '__main__':
         # save the model
         model.eval()
         torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'checkpoint.pth'))
+        with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
+            tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")
+        with open(checkpoint_folder + "/validation_losses.txt","w") as vfileout:
+            vfileout.write("\n".join("{}".format(vl) for vl in val_losses)+"\n")
 
 
     print("Saving to %s" % checkpoint_folder)

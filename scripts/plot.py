@@ -93,7 +93,8 @@ if flags.sample:
 
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config).to(device=device)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config, 
+                cylindrical = dataset_config['CYLINDRICAL'], R_Z_inputs = dataset_config['R_Z_INPUT'] ).to(device=device)
         model.load_state_dict(torch.load(flags.model_loc, map_location=device))
 
         generated = []
@@ -147,9 +148,17 @@ if flags.sample:
                                            showerMap = dataset_config['SHOWERMAP'])
     generated[generated<dataset_config['ECUT']] = 0 #min from samples
 
-    with h5.File(os.path.join(flags.data_folder,dataset_config['EVAL'][0].replace('.hdf5','_mask.hdf5')),"r") as h5f:
-        #mask file for voxels that are always empty, run utils.py to create a new one
-        mask = h5f['mask'][:]
+
+    energies = np.reshape(energies,(-1,1))
+    #mask file for voxels that are always empty
+    mask_file = os.path.join(flags.data_folder,dataset_config['EVAL'][0].replace('.hdf5','_mask.hdf5'))
+    if(not os.path.exists(mask_file)):
+        print("Creating mask based on data batch")
+        mask = np.sum(data,0)==0
+
+    else:
+        with h5.File(mask_file,"r") as h5f:
+            mask = h5f['mask'][:]
     generated = generated*(np.reshape(mask,(1,-1))==0)
     
     fout = os.path.join(checkpoint_folder,'generated_{}_{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.model))
@@ -222,8 +231,8 @@ else:
 
         fig,ax = SetFig("Gen. energy [GeV]","Dep. energy [GeV]")
         for key in data_dict:
-            ax.scatter(true_energies[10000:10500],
-                       np.sum(data_dict[key].reshape(data_dict[key].shape[0],-1),-1)[10000:10500],
+            ax.scatter(true_energies[0:500],
+                       np.sum(data_dict[key].reshape(data_dict[key].shape[0],-1),-1)[0:500],
                        label=key)
 
         ax.set_yscale("log")
@@ -232,12 +241,13 @@ else:
         fig.savefig('{}/FCC_Scatter_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
 
 
+
     def AverageShowerWidth(data_dict):
         eta_bins = dataset_config['SHAPE'][2]
         eta_binning = np.linspace(-1,1,eta_bins+1)
         eta_coord = [(eta_binning[i] + eta_binning[i+1])/2.0 for i in range(len(eta_binning)-1)]
 
-        def GetMatrix(sizex,sizey,minval=-1,maxval=1):
+        def GetMatrix(sizex,sizey, minval=-1,maxval=1):
             nbins = sizex
             binning = np.linspace(minval,maxval,nbins+1)
             coord = [(binning[i] + binning[i+1])/2.0 for i in range(len(binning)-1)]
@@ -245,6 +255,9 @@ else:
             return matrix
 
         
+        #TODO : Use radial bins
+        #r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
+
         eta_matrix = GetMatrix(dataset_config['SHAPE'][2],dataset_config['SHAPE'][3])
         eta_matrix = np.reshape(eta_matrix,(1,1,eta_matrix.shape[0],eta_matrix.shape[1],1))
         
@@ -277,14 +290,24 @@ else:
             feed_dict_eta2[key] = GetWidth(feed_dict_eta[key],GetCenter(eta_matrix,data_dict[key],2))
             
 
-        fig,ax0 = utils.PlotRoutine(feed_dict_eta,xlabel='Layer number', ylabel= 'x-center of energy')
-        fig.savefig('{}/FCC_EtaEC_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
-        fig,ax0 = utils.PlotRoutine(feed_dict_phi,xlabel='Layer number', ylabel= 'y-center of energy')
-        fig.savefig('{}/FCC_PhiEC_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
-        fig,ax0 = utils.PlotRoutine(feed_dict_eta2,xlabel='Layer number', ylabel= 'x-width')
-        fig.savefig('{}/FCC_EtaW_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
-        fig,ax0 = utils.PlotRoutine(feed_dict_phi2,xlabel='Layer number', ylabel= 'y-width')
-        fig.savefig('{}/FCC_PhiW_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        if(dataset_config['cartesian_plot']): 
+            xlabel1 = 'x'
+            f_str1 = "Eta"
+            xlabel2 = 'y'
+            f_str2 = "Phi"
+        else: 
+            xlabel1 = 'r'
+            f_str1 = "R"
+            xlabel2 = 'alpha'
+            f_str2 = "Alpha"
+        fig,ax0 = utils.PlotRoutine(feed_dict_eta,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel1)
+        fig.savefig('{}/FCC_{}EC_{}_{}.{}'.format(flags.plot_folder,f_str1,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.PlotRoutine(feed_dict_phi,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel2)
+        fig.savefig('{}/FCC_{}EC_{}_{}.{}'.format(flags.plot_folder,f_str2,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.PlotRoutine(feed_dict_eta2,xlabel='Layer number', ylabel= '%s-width' % xlabel1)
+        fig.savefig('{}/FCC_{}W_{}_{}.{}'.format(flags.plot_folder,f_str1,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.PlotRoutine(feed_dict_phi2,xlabel='Layer number', ylabel= '%s-width' % xlabel2)
+        fig.savefig('{}/FCC_{}W_{}_{}.{}'.format(flags.plot_folder,f_str2,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
 
         return feed_dict_eta2
 
@@ -316,8 +339,15 @@ else:
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
     
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='x-bin', ylabel= 'Mean Energy [GeV]')
-        fig.savefig('{}/FCC_EnergyX_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        if(dataset_config['cartesian_plot']): 
+            xlabel = 'x-bin'
+            f_str = "X"
+        else: 
+            xlabel = 'R-bin'
+            f_str = "R"
+
+        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]')
+        fig.savefig('{}/FCC_Energy{}_{}_{}.{}'.format(flags.plot_folder,f_str, dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
         
     def AverageEY(data_dict):
@@ -331,9 +361,17 @@ else:
         feed_dict = {}
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
+
+        if(dataset_config['cartesian_plot']): 
+            xlabel = 'y-bin'
+            f_str = "Y"
+        else: 
+            xlabel = 'alpha-bin'
+            f_str = "Alpha"
+
     
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='y-bin', ylabel= 'Mean Energy [GeV]')
-        fig.savefig('{}/FCC_EnergyY_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]')
+        fig.savefig('{}/FCC_Energy{}_{}_{}.{}'.format(flags.plot_folder, f_str, dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
     def HistEtot(data_dict):
@@ -464,6 +502,9 @@ else:
 
             
 
+    do_cart_plots = (not dataset_config['CYLINDRICAL']) and dataset_config['SHAPE_PAD'][-1] == dataset_config['SHAPE_PAD'][-2]
+    dataset_config['cartesian_plot'] = do_cart_plots
+    print("Do cartesian plots " + str(do_cart_plots))
     high_level = []
     plot_routines = {
          'Energy per layer':AverageELayer,
@@ -473,10 +514,11 @@ else:
     }
     
     plot_routines['Shower width']=AverageShowerWidth        
+    plot_routines['Max voxel']=HistMaxELayer
     plot_routines['Energy per eta']=AverageEX
     plot_routines['Energy per phi']=AverageEY
-    plot_routines['2D average shower']=Plot_Shower_2D
-    plot_routines['Max voxel']=HistMaxELayer
+    if(do_cart_plots):
+        plot_routines['2D average shower']=Plot_Shower_2D
 
     print("Saving plots to "  + flags.plot_folder) 
     for plot in plot_routines:

@@ -21,7 +21,7 @@
     'STRIDE':[3,2,2],
     'ACT':'swish',
     'EMBED':128,
-    'CHECKPOINT_NAME':'dataset2_nov11_cyl',
+    'CHECKPOINT_NAME':'dataset2_nov11_sqrt',
     'EMAX':100.,
     'EMIN':1.,
     'ECUT':0.0000151,
@@ -29,7 +29,7 @@
     'SNR':0.2,
     'logE':True,
     'NORMED':False,
-    'CYLINDRICAL': True,
+    'CYLINDRICAL': False,
     'MAXDEP':2,
     'SHOWERMAP': 'sqrt',
 }

@@ -13,7 +13,7 @@ from models import *
 
 class CaloDiffu(nn.Module):
     """Diffusion based generative model"""
-    def __init__(self, data_shape,num_batch,name='SGM',config=None, cylindrical = False):
+    def __init__(self, data_shape,num_batch,name='SGM',config=None, cylindrical = False, R_Z_inputs = False):
         super(CaloDiffu, self).__init__()
         self._data_shape = data_shape
         self._num_batch = num_batch
@@ -54,17 +54,35 @@ class CaloDiffu(nn.Module):
 
         self.posterior_variance = self.betas * (1. - alphas_cumprod_prev) / (1. - self.alphas_cumprod)
 
+        self.R_Z_inputs = R_Z_inputs
+        in_channels = 1
+
+        if(torch.cuda.is_available()): device = torch.device('cuda')
+        else: device = torch.device('cpu')
+        self.R_image, self.Z_image = create_R_Z_image(device)
+
+        if(self.R_Z_inputs):
+
+            self.batch_R_image = self.R_image.repeat([num_batch, 1,1,1,1])
+            self.batch_Z_image = self.Z_image.repeat([num_batch, 1,1,1,1])
+
+            in_channels = 3
+
         layer_sizes = config['LAYER_SIZE_UNET']
         cond_dim = config['COND_SIZE_UNET']
 
-        self.noise_predictor = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = 1, layer_sizes = layer_sizes, cylindrical = cylindrical)
-
-            
         calo_summary_shape = list(copy.copy(self._data_shape))
-        calo_summary_shape.insert(0, 1)
+        calo_summary_shape.insert(0, self._num_batch)
+        calo_summary_shape[1] = in_channels
+
+        calo_summary_shape[0] = 1
         summary_shape = [calo_summary_shape, [1], [1]]
+
+        self.noise_predictor = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, cylindrical = cylindrical, data_shape = calo_summary_shape)
+
         print("\n\n Noise predictor model: \n")
         summary(self.noise_predictor, summary_shape)
+            
     
     
     def noise_image(self, data, random_t, noise = None):
@@ -80,7 +98,15 @@ class CaloDiffu(nn.Module):
             noise = torch.randn_like(data)
 
         x_noisy = self.noise_image(data, random_t, noise=noise)
-        predicted_noise = self.noise_predictor(x_noisy, energy, random_t)
+        if(self.R_Z_inputs):
+            if(data.shape[0] == self._num_batch):
+                x_input = torch.cat([x_noisy, self.batch_R_image, self.batch_Z_image], axis = 1)
+            else:
+                batch_R_image = self.R_image.repeat([data.shape[0], 1,1,1,1])
+                batch_Z_image = self.Z_image.repeat([data.shape[0], 1,1,1,1])
+                x_input = torch.cat([x_noisy, batch_R_image, batch_Z_image], axis = 1)
+        else: x_input = x_noisy
+        predicted_noise = self.noise_predictor(x_input, energy, random_t)
 
         if loss_type == 'l1':
             loss = torch.nn.functional.l1_loss(noise, predicted_noise)
@@ -97,30 +123,40 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def p_sample(self, x, cond, t):
+    def p_sample(self, x, img, cond, t):
         #reverse the diffusion process (one step)
 
 
-        betas_t = extract(self.betas, t, x.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
-        sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, x.shape)
+        betas_t = extract(self.betas, t, img.shape)
+        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, img.shape)
+        sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, img.shape)
 
         #noise_pred = self.model.predict([x, t, cond], batch_size = batch_size)
         noise_pred = self.noise_predictor(x, cond, t)
         
         
         # Use our model (noise predictor) to predict the mean of denoised
-        model_mean = sqrt_recip_alphas_t * ( x - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
+        model_mean = sqrt_recip_alphas_t * ( img - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
 
-        #all t's are the same
-        if t[0] == 0:
-            return model_mean
-        else:
-            posterior_variance_t = extract(self.posterior_variance, t, x.shape)
-            noise = torch.randn_like(x)
-            # Algorithm 2 line 4:
+        noise = torch.randn(img.shape, device = x.device)
+        posterior_variance_t = extract(self.posterior_variance, t, img.shape)
+
+        sample_algo2 = False
+        if t[0] == 0: return model_mean
+        if(not sample_algo2):
             out = model_mean + torch.sqrt(posterior_variance_t) * noise 
-            return out
+        else:
+            #Algorithm 2 from cold diffusion paper
+            #Work in progress!
+            # x_t-1 = x_t - D(x0, t) + D(x0, t-1), D(x,t) = x + eps(t) (?) for gaussian noise
+
+            if t[0] == 1: return (x - model_mean + torch.sqrt(posterior_variance_t)*noise)
+            else: 
+                posterior_variance_tm1 = extract(self.posterior_variance, t-1, img.shape)
+                noise2 = torch.randn(img.shape, device = x.device)
+                out = (x - model_mean + torch.sqrt(posterior_variance_t)*noise) + (model_mean + torch.sqrt(posterior_variance_tm1) * noise2)
+
+        return out
 
 
     @torch.no_grad()
@@ -153,9 +189,15 @@ class CaloDiffu(nn.Module):
         time_steps = list(range(num_steps))
         time_steps.reverse()
 
+        batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+        batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+
+
         for time_step in time_steps:      
             times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
-            img = self.p_sample(img, cond, times)
+            if(self.R_Z_inputs): x_in = torch.cat([img, batch_R_image, batch_Z_image], axis = 1)
+            else: x_in = img
+            img = self.p_sample(x_in, img, cond, times)
 
         end = time.time()
         print("Time for sampling {} events is {} seconds".format(gen_size,end - start))

@@ -6,7 +6,6 @@ from utils import *
 import torch.optim as optim
 import torch.utils.data as torchdata
 from CaloAE import *
-from tqdm import tqdm
 
 if __name__ == '__main__':
     if(torch.cuda.is_available()): device = torch.device('cuda')
@@ -104,7 +103,7 @@ if __name__ == '__main__':
             del batch_loss
         train_loss = train_loss/len(loader_train)
         training_losses[epoch] = train_loss
-        tqdm.write("loss: "+ str(train_loss))
+        print("loss: "+ str(train_loss))
 
         val_loss = 0
         model.eval()
@@ -119,7 +118,7 @@ if __name__ == '__main__':
         val_loss = val_loss/len(loader_val)
         scheduler.step(torch.tensor([val_loss]))
         val_losses[epoch] = val_loss
-        tqdm.write("val_loss: "+ str(val_loss))
+        print("val_loss: "+ str(val_loss))
         if(early_stopper.early_stop(val_loss)):
             print("Early stopping!")
             break

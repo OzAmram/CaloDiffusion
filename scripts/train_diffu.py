@@ -4,7 +4,6 @@ import argparse
 import h5py as h5
 import torch.optim as optim
 import torch.utils.data as torchdata
-from tqdm import tqdm
 
 from utils import *
 from CaloAE import *
@@ -19,7 +18,7 @@ if __name__ == '__main__':
         
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--data_folder', default='/pscratch/sd/v/vmikuni/FCC', help='Folder containing data and MC files')
+    parser.add_argument('--data_folder', default='/wclustre/cms_mlsim/denoise/CaloChallenge/', help='Folder containing data and MC files')
     parser.add_argument('--model', default='Diffu', help='Diffusion model to train. Options are: VPSDE, VESDE and subVPSDE')
     parser.add_argument('--config', default='config_dataset2.json', help='Config file with training parameters')
     parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
@@ -69,14 +68,18 @@ if __name__ == '__main__':
 
 
     del data,torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
+    checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
 
     if(flags.model == "Diffu"):
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, cylindrical = dataset_config['CYLINDRICAL'], 
-                R_Z_inputs = dataset_config['R_Z_INPUT'], config=dataset_config).to(device = device)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
+        if(flags.load): 
+            load_path = checkpoint_folder + "checkpoint.pth"
+            print("Loading saved weights from %s" % load_path)
+            model.load_state_dict(load_path, map_location=device)
 
     elif(flags.model == "LatentDiffu"):
         AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
-        AE.model.load_weights(dataset_config['AE']).expect_partial()
+        AE.load_state_dict(dataset_config['AE'], map_location=device)
 
         print("ENC shape", AE.encoded_shape)
         model = CaloDiffu(AE.encoded_shape,energies.shape[1],batch_size, config=dataset_config).to(device=device)
@@ -146,7 +149,7 @@ if __name__ == '__main__':
 
         train_loss = train_loss/len(loader_train)
         training_losses[epoch] = train_loss
-        tqdm.write("loss: "+ str(train_loss))
+        print("loss: "+ str(train_loss))
 
         val_loss = 0
         model.eval()
@@ -164,7 +167,7 @@ if __name__ == '__main__':
         val_loss = val_loss/len(loader_val)
         scheduler.step(torch.tensor([val_loss]))
         val_losses[epoch] = val_loss
-        tqdm.write("val_loss: "+ str(val_loss))
+        print("val_loss: "+ str(val_loss))
         if(early_stopper.early_stop(val_loss)):
             print("Early stopping!")
             break

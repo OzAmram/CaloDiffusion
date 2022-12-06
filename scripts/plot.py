@@ -93,8 +93,7 @@ if flags.sample:
 
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config, 
-                cylindrical = dataset_config['CYLINDRICAL'], R_Z_inputs = dataset_config['R_Z_INPUT'] ).to(device=device)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config).to(device=device)
         model.load_state_dict(torch.load(flags.model_loc, map_location=device))
 
         generated = []

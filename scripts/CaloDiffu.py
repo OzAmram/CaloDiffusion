@@ -33,12 +33,18 @@ class CaloDiffu(nn.Module):
 
         #Convolutional model for 3D images and dense for flatten inputs
 
-        #nested arrays to get shapes right
+        #Minimum and maximum maximum variance of noise
         self.beta_start = 0.0001
-        self.beta_end = 0.02
+        self.beta_end = config.get("BETA_MAX", 0.02)
 
         #linear schedule
-        self.betas = torch.linspace(self.beta_start, self.beta_end, self.nsteps)
+        schedd = config.get("NOISE_SCHED", "linear")
+        if(schedd == "linear"): self.betas = torch.linspace(self.beta_start, self.beta_end, self.nsteps)
+        elif(schedd == "cosine"): self.betas = cosine_beta_scheddule(self.nsteps)
+        else:
+            print("Invalid NOISE_SCHEDD param %s" % schedd)
+            exit(1)
+
         self.alphas = 1. - self.betas
 
 
@@ -52,9 +58,13 @@ class CaloDiffu(nn.Module):
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
 
+        #print("MIN MIDDLE MAX variance", ( self.sqrt_one_minus_alphas_cumprod[0].numpy(),   
+            #self.sqrt_one_minus_alphas_cumprod[self.nsteps//2].numpy(), self.sqrt_one_minus_alphas_cumprod[-1].numpy()))
+        #exit(1)
+
         self.posterior_variance = self.betas * (1. - alphas_cumprod_prev) / (1. - self.alphas_cumprod)
 
-        self.R_Z_inputs = R_Z_inputs
+        self.R_Z_inputs = config.get('R_Z_INPUT', False)
         in_channels = 1
 
         if(torch.cuda.is_available()): device = torch.device('cuda')
@@ -78,7 +88,8 @@ class CaloDiffu(nn.Module):
         calo_summary_shape[0] = 1
         summary_shape = [calo_summary_shape, [1], [1]]
 
-        self.noise_predictor = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, cylindrical = cylindrical, data_shape = calo_summary_shape)
+        self.noise_predictor = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, 
+                cylindrical =  config.get('CYLINDRICAL', False), data_shape = calo_summary_shape)
 
         print("\n\n Noise predictor model: \n")
         summary(self.noise_predictor, summary_shape)

@@ -8,6 +8,21 @@ import matplotlib.ticker as mtick
 import torch
 import torch.nn as nn
 
+#use tqdm if local, skip if batch job
+import sys
+try:
+    ipy_str = str(type(get_ipython()))
+    if 'zmqshell' in ipy_str:
+        from tqdm import tqdm_notebook as tqdm
+    if 'terminal' in ipy_str:
+        from tqdm import tqdm
+except:
+    if sys.stderr.isatty():
+        from tqdm import tqdm
+    else:
+        def tqdm(iterable, **kwargs):
+            return iterable
+
 
 def split_data_np(data, frac=0.8):
     np.random.shuffle(data)

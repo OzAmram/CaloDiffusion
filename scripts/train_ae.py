@@ -29,19 +29,25 @@ if __name__ == '__main__':
 
     data = []
     energies = []
-    for dataset in dataset_config['FILES']:
+    for i, dataset in enumerate(dataset_config['FILES']):
         data_,e_ = utils.DataLoader(
             os.path.join(flags.data_folder,dataset),
-            dataset_config['SHAPE_PAD'],flags.nevts,
+            dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
+            nevts = flags.nevts,
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             norm_data=dataset_config['NORMED'],
             showerMap = dataset_config['SHOWERMAP'],
+            nholdout = 5000 if (i == len(dataset_config['FILES']) -1 ) else 0,
         )
         
-        data.append(data_)
-        energies.append(e_)
+        if(i ==0): 
+            data = data_
+            energies = e_
+        else:
+            data = np.concatenate((data, data_))
+            energies = np.concatenate((energies, e_))
         
 
     data = np.reshape(data,dataset_config['SHAPE_PAD'])
@@ -71,6 +77,11 @@ if __name__ == '__main__':
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
     
     model = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device=device)
+    if(flags.load and os.path.exists(checkpoint_folder + "checkpoint.pth")): 
+        load_path = checkpoint_folder + "checkpoint.pth"
+        print("Loading saved weights from %s" % load_path)
+        model.load_state_dict(torch.load(load_path, map_location = device))
+
     criterion = nn.MSELoss().to(device = device)
 
     optimizer = optim.Adam(model.parameters(), lr = float(dataset_config["LR"]))
@@ -79,9 +90,6 @@ if __name__ == '__main__':
     training_losses = np.zeros(num_epochs)
     val_losses = np.zeros(num_epochs)
 
-    if flags.load:
-        checkpoint_folder = '../checkpoints_{}_{}'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
-        model.load_weights('{}/{}'.format(checkpoint_folder,'checkpoint')).expect_partial()
     
     #training loop
     for epoch in range(num_epochs):

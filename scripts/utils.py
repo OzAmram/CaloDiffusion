@@ -10,18 +10,11 @@ import torch.nn as nn
 
 #use tqdm if local, skip if batch job
 import sys
-try:
-    ipy_str = str(type(get_ipython()))
-    if 'zmqshell' in ipy_str:
-        from tqdm import tqdm_notebook as tqdm
-    if 'terminal' in ipy_str:
-        from tqdm import tqdm
-except:
-    if sys.stderr.isatty():
-        from tqdm import tqdm
-    else:
-        def tqdm(iterable, **kwargs):
-            return iterable
+if sys.stderr.isatty():
+    from tqdm import tqdm
+else:
+    def tqdm(iterable, **kwargs):
+        return iterable
 
 
 def split_data_np(data, frac=0.8):
@@ -307,15 +300,18 @@ sqrt_min = 0.
 sqrt_max = 1.0
 
 
-def DataLoader(file_name,shape,nevts,emax,emin,max_deposit=2,logE=True,norm_data=False, showerMap = 'log'):
-    #rank = hvd.rank()
-    #size = hvd.size()
-    rank = 0
-    size = 1
+def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2,logE=True,norm_data=False, showerMap = 'log', nholdout = 0, from_end = False):
+    start = 0
 
     with h5.File(file_name,"r") as h5f:
-        e = h5f['incident_energies'][rank:int(nevts):size].astype(np.float32)/1000.0
-        shower = h5f['showers'][rank:int(nevts):size].astype(np.float32)/1000.0
+        #holdout events for testing
+        if(nevts == -1 and nholdout > 0): nevts = -(nholdout + 1)
+        end = int(nevts)
+        if(from_end):
+            start = -int(nevts) -1
+            end = -1
+        e = h5f['incident_energies'][start:end].astype(np.float32)/1000.0
+        shower = h5f['showers'][start:end].astype(np.float32)/1000.0
 
         
     shower = np.reshape(shower,(shower.shape[0],-1))

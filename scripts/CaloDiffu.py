@@ -40,7 +40,9 @@ class CaloDiffu(nn.Module):
         #linear schedule
         schedd = config.get("NOISE_SCHED", "linear")
         if(schedd == "linear"): self.betas = torch.linspace(self.beta_start, self.beta_end, self.nsteps)
-        elif(schedd == "cosine"): self.betas = cosine_beta_scheddule(self.nsteps)
+        elif(schedd == "cosine"): 
+            print("COSINE SCHEDULE!")
+            self.betas = cosine_beta_schedule(self.nsteps)
         else:
             print("Invalid NOISE_SCHEDD param %s" % schedd)
             exit(1)
@@ -143,6 +145,11 @@ class CaloDiffu(nn.Module):
         sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, img.shape)
 
         #noise_pred = self.model.predict([x, t, cond], batch_size = batch_size)
+
+        sample_algo = 'euler'
+        #sample_algo = 'cold'
+        #sample_algo = 'stocasticSampler'
+
         noise_pred = self.noise_predictor(x, cond, t)
         
         
@@ -151,12 +158,11 @@ class CaloDiffu(nn.Module):
 
         noise = torch.randn(img.shape, device = x.device)
         posterior_variance_t = extract(self.posterior_variance, t, img.shape)
-
-        sample_algo2 = False
         if t[0] == 0: return model_mean
-        if(not sample_algo2):
+
+        if(sample_algo == 'euler'):
             out = model_mean + torch.sqrt(posterior_variance_t) * noise 
-        else:
+        elif(sample_algo == 'cold'):
             #Algorithm 2 from cold diffusion paper
             #Work in progress!
             # x_t-1 = x_t - D(x0, t) + D(x0, t-1), D(x,t) = x + eps(t) (?) for gaussian noise
@@ -214,4 +220,99 @@ class CaloDiffu(nn.Module):
         print("Time for sampling {} events is {} seconds".format(gen_size,end - start))
         return img
 
+    @torch.no_grad()
+    def Sample(self, cond, num_steps = 1000):
+        """Generate samples from diffusion model.
+        
+        Args:
+        cond: Conditional input
+        num_steps: The number of sampling steps. 
+        Equivalent to the number of discretized time steps.    
+        
+        Returns: 
+        Samples.
+        """
+        # Full sample (all steps)
+        device = next(self.parameters()).device
 
+
+        gen_size = cond.shape[0]
+        # start from pure noise (for each example in the batch)
+        gen_shape = list(copy.copy(self._data_shape))
+        gen_shape.insert(0,gen_size)
+
+
+        img = torch.randn(gen_shape, device=device)
+        imgs = []
+
+        start = time.time()
+        #for i in tqdm(reversed(range(0, num_steps)), desc='sampling loop time step', total=num_steps):
+        time_steps = list(range(num_steps))
+        time_steps.reverse()
+
+        batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+        batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+
+
+        for time_step in time_steps:      
+            times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
+            if(self.R_Z_inputs): x_in = torch.cat([img, batch_R_image, batch_Z_image], axis = 1)
+            else: x_in = img
+            img = self.p_sample(x_in, img, cond, times)
+
+        end = time.time()
+        print("Time for sampling {} events is {} seconds".format(gen_size,end - start))
+        return img
+    
+    @torch.no_grad()
+    def Sample_v2(self, cond, num_steps = 1000):
+
+        # Full sample (all steps)
+        device = next(self.parameters()).device
+
+
+        gen_size = cond.shape[0]
+        # start from pure noise (for each example in the batch)
+        gen_shape = list(copy.copy(self._data_shape))
+        gen_shape.insert(0,gen_size)
+
+
+        img = torch.randn(gen_shape, device=device)
+        imgs = []
+
+        start = time.time()
+        #for i in tqdm(reversed(range(0, num_steps)), desc='sampling loop time step', total=num_steps):
+        time_steps = list(range(num_steps))
+        time_steps.reverse()
+
+        batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+        batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+
+        train_steps = torch.linspace(0, self.nsteps, self.nsteps + 1)
+        C1 = 0.001
+        C2 = 0.008
+        j0 = 8
+        alphas = torch.sin((np.pi/2.0) * train_steps / self.nsteps / (C2 + 1.0)) **2
+        Us = [0.]*num_steps
+        for j in range(self.nsteps-1, 0, -1):
+            Us[j-1] = ( (Us[j]**2 + 1.0) / max((alphas[j-1]/ alphas[j]).item(), C1) - 1.0)**0.5
+
+        Us.reverse()
+
+        print("us", Us[-10:])
+        print("self.betas", self.betas[-10:]**0.5)
+        print('alphas', 1. - alphas[-10:])
+        print('self.alphas_cumprod', self.alphas_cumprod[-10:])
+        num_steps = 500
+        ts_sample = [np.floor(j0 + (self.nsteps - 1 - j0)/(num_steps -1) * i + 0.5) for i in range(num_steps)]
+        ts_sample.reverse()
+        print(ts_sample)
+        exit(1)
+
+
+
+            
+
+
+
+        

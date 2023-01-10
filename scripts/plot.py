@@ -59,7 +59,6 @@ if flags.sample:
             nevts = flags.nevts,
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
-            norm_data=dataset_config['NORMED'],
             showerMap = dataset_config['SHOWERMAP'],
             #from_end = True,
         )
@@ -146,7 +145,6 @@ if flags.sample:
                                            shape=dataset_config['SHAPE'],
                                            logE=dataset_config['logE'],
                                            max_deposit=dataset_config['MAXDEP'],
-                                           norm_data=dataset_config['NORMED'],
                                            emax = dataset_config['EMAX'],
                                            emin = dataset_config['EMIN'],
                                            showerMap = dataset_config['SHOWERMAP'])

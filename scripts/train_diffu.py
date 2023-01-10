@@ -47,7 +47,6 @@ if __name__ == '__main__':
             nevts = flags.nevts,
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
-            norm_data=dataset_config['NORMED'],
             showerMap = dataset_config['SHOWERMAP'],
             nholdout = 5000 if (i == len(dataset_config['FILES']) -1 ) else 0,
         )

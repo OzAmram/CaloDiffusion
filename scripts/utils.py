@@ -300,7 +300,7 @@ sqrt_min = 0.
 sqrt_max = 1.0
 
 
-def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2,logE=True,norm_data=False, showerMap = 'log', nholdout = 0, from_end = False):
+def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False):
     start = 0
 
     with h5.File(file_name,"r") as h5f:
@@ -314,23 +314,16 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2,logE=True,norm
         shower = h5f['showers'][start:end].astype(np.float32)/1000.0
 
         
+
+    return preprocess(shower, e, shape, emax, emin, max_deposit = max_deposit,  logE = logE, showerMap = showerMap)
+    
+def preprocess(shower, e, shape, emax, emin, max_deposit = 2, logE = True, showerMap = 'log-norm'):
+
     shower = np.reshape(shower,(shower.shape[0],-1))
     e = np.reshape(e,(-1,1))
     shower = shower/(max_deposit*e)
-
-    #if norm_data:
-    #    #Normalize voxels to 1 and learn the normalization factor as a dimension
-    #    def NormLayer(shower,shape):
-    #        shower_padded = np.zeros([shower.shape[0],shape[1]],dtype=np.float32)
-    #        deposited_energy = np.sum(shower,-1,keepdims=True)
-    #        shower = np.ma.divide(shower,np.sum(shower,-1,keepdims=True)).filled(0)
-    #        shower = np.concatenate((shower,deposited_energy),-1)        
-    #        shower_padded[:,:shower.shape[1]] += shower
-    #        return shower_padded
-    #    
-    #    shower = NormLayer(shower,shape)
     shower = shower.reshape(shape)
-    
+
     if('logit' in showerMap):
         alpha = 1e-6
         x = alpha + (1 - 2*alpha)*shower
@@ -363,7 +356,7 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True,norm_data=False, showerMap ='log'):
+def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True, showerMap ='log'):
     '''Revert the transformations applied to the training set'''
     #shape=voxels.shape
     alpha = 1e-6
@@ -394,15 +387,6 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True,norm_data=False, 
         data = np.square(voxels)
 
 
-    #if norm_data:
-    #    def ApplyNorm(data):
-    #        energies = data[:,shape[1]:shape[1]+1]
-    #        shower = data[:,:shape[1]]
-    #        shower = shower/np.sum(shower,-2,keepdims=True)
-    #        shower *=energies
-    #        return shower
-
-    #    data = ApplyNorm(data)
     data = data.reshape(voxels.shape[0],-1)*max_deposit*energy.reshape(-1,1)
     
     return data,energy

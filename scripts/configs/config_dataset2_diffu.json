@@ -22,7 +22,7 @@
     'ACT':'swish',
     'EMBED':128,
     'CHECKPOINT_NAME':'dataset2_nov11_sqrt',
-    'EMAX':100.,
+    'EMAX':1000.,
     'EMIN':1.,
     'ECUT':0.0000151,
     'NSTEPS':200,

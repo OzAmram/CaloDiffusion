@@ -67,8 +67,6 @@ if flags.sample:
         energies.append(e_)
 
     energies = np.reshape(energies,(-1,))
-    print(energies.shape)
-    print(energies[:10])
     data = np.reshape(data,dataset_config['SHAPE_PAD'])
 
     torch_data_tensor = torch.from_numpy(data)

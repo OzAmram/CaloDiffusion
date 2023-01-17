@@ -145,6 +145,8 @@ class CaloDiffu(nn.Module):
         sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, img.shape)
         sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, img.shape)
         sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, img.shape)
+        posterior_variance_t = extract(self.posterior_variance, t, img.shape)
+        if(t[0] > 0): posterior_variance_tm1 = extract(self.posterior_variance, t-1, img.shape)
 
         #noise_pred = self.model.predict([x, t, cond], batch_size = batch_size)
 
@@ -159,26 +161,31 @@ class CaloDiffu(nn.Module):
         post_mean = sqrt_recip_alphas_t * ( img - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
 
         noise = torch.randn(img.shape, device = x.device)
-        posterior_variance_t = extract(self.posterior_variance, t, img.shape)
 
         if(sample_algo == 'euler'):
             if t[0] == 0: return post_mean
             out = post_mean + torch.sqrt(posterior_variance_t) * noise 
+            print(torch.mean(out[0]))
         elif(sample_algo == 'cold'):
             #Algorithm 2 from cold diffusion paper
             #Work in progress!
             # x_t-1 = x_t - D(x0, t) + D(x0, t-1)
 
+            if t[0] == 0: return post_mean
+
             x0_pred = (img - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
             noise2 = torch.randn(img.shape, device = x.device)
 
-            if(t[0] == 0):  return x0_pred
+            #if(t[0] == 0):  return x0_pred
 
             #algo 1
             #out = self.noise_image(x0_pred, t-1, noise = noise)
+            #out = post_mean + torch.sqrt(posterior_variance_tm1) * noise 
 
             #algo 2
-            out = img - self.noise_image(x0_pred, t, noise = noise2) + self.noise_image(x0_pred, t-1, noise = noise)
+            #out = img - self.noise_image(x0_pred, t, noise = noise2) + self.noise_image(x0_pred, t-1, noise = noise)
+            out =  (img - post_mean -  torch.sqrt(posterior_variance_t) * noise2 ) + post_mean + torch.sqrt(posterior_variance_tm1) * noise 
+            print(torch.mean(out[0]), torch.mean(img[0]), torch.mean((post_mean +  torch.sqrt(posterior_variance_t) * noise2)[0]))
 
             #print(out.shape, img_in.shape, post_mean.shape, noise.shape, posterior_variance_tm1.shape)
 

@@ -10,7 +10,6 @@
     'BATCH':36,
     'LR':4e-4,
     'MAXEPOCH':1000,
-    'EARLYSTOP':100,
     'NLAYERS':3,
     'EARLYSTOP':25,
     'LAYER_SIZE_AE':[32,64, 64,32],

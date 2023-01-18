@@ -47,6 +47,8 @@ run_classifier=False
 
 batch_size = flags.batch_size
 
+from_end = False
+
 if flags.sample:
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     energies = []
@@ -60,7 +62,7 @@ if flags.sample:
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
-            #from_end = True,
+            from_end = from_end,
         )
         
         data.append(data_)
@@ -210,8 +212,14 @@ data = []
 true_energies = []
 for dataset in dataset_config['EVAL']:
     with h5.File(os.path.join(flags.data_folder,dataset),"r") as h5f:
-        data.append(h5f['showers'][:total_evts]/1000.)
-        true_energies.append(h5f['incident_energies'][:total_evts]/1000.)
+        if(from_end):
+            start = -int(total_evts) -1
+            end = -1
+        else: 
+            start = 0
+            end = total_evts
+        data.append(h5f['showers'][start:end]/1000.)
+        true_energies.append(h5f['incident_energies'][start:end]/1000.)
 
 
 data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE'])

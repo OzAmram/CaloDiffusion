@@ -26,6 +26,7 @@ if __name__ == '__main__':
     parser.add_argument('--frac', type=float,default=0.8, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
+    parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
 
     dataset_config = utils.LoadJson(flags.config)
@@ -122,15 +123,17 @@ if __name__ == '__main__':
     os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
 
-    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 1e-3)
+    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 5e-4)
+    if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
+    print(early_stopper.__dict__)
     
 
     criterion = nn.MSELoss().to(device = device)
 
     optimizer = optim.Adam(model.parameters(), lr = float(dataset_config["LR"]))
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 10, verbose = True) 
-    if('optimizer_state_dict' in checkpoint.keys()): optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    if('scheduler_state_dict' in checkpoint.keys()): scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    if('optimizer_state_dict' in checkpoint.keys() and not flags.reset_training): optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if('scheduler_state_dict' in checkpoint.keys() and not flags.reset_training): scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
     training_losses = np.zeros(num_epochs)
     val_losses = np.zeros(num_epochs)
@@ -144,7 +147,6 @@ if __name__ == '__main__':
     for epoch in range(start_epoch, num_epochs):
         print("Beginning epoch %i" % epoch, flush=True)
         for i, param in enumerate(model.parameters()):
-            print(param.detach().cpu().numpy()[0,0,0])
             break
         train_loss = 0
 
@@ -187,6 +189,10 @@ if __name__ == '__main__':
         scheduler.step(torch.tensor([val_loss]))
         val_losses[epoch] = val_loss
         print("val_loss: "+ str(val_loss), flush = True)
+
+        if(val_loss < early_stopper.min_validation_loss):
+            torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
+
         if(early_stopper.early_stop(val_loss)):
             print("Early stopping!")
             break
@@ -194,10 +200,6 @@ if __name__ == '__main__':
         # save the model
         model.eval()
         print("SAVING")
-        for i, param in enumerate(model.parameters()):
-            print(param.detach().cpu().numpy()[0,0,0])
-            break
-
         #torch.save(model.state_dict(), checkpoint_path)
         
         #save full training state so can be resumed
@@ -208,6 +210,7 @@ if __name__ == '__main__':
             'scheduler_state_dict': scheduler.state_dict(),
             'train_loss_hist': training_losses,
             'val_loss_hist': val_losses,
+            'early_stop_dict': early_stopper.__dict__,
             }, checkpoint_path)
 
         with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:

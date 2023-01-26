@@ -62,9 +62,15 @@ singularity exec --no-home -p --nv --bind `pwd` --bind /cvmfs --bind /cvmfs/unpa
 
 echo "starting computation at $(date)"
 cd /work1/cms_mlsim/CaloDiffusion/scripts
+
 export HOME=/work1/cms_mlsim/CaloDiffusion/ 
+
+if [[ $restarts -eq 0 ]]; then
 # Timeout command to catch / resubmit before 8h max
-torchexec bash -c "export HOME=/work1/cms_mlsim/CaloDiffusion/; timeout 7.8h python3 train_diffu.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load"
+torchexec bash -c "export HOME=/work1/cms_mlsim/CaloDiffusion/; timeout 7.8h python3 train_diffu.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load --reset_training"
+else 
+torchexec bash -c "export HOME=/work1/cms_mlsim/CaloDiffusion/; timeout 7.8h python3 train_diffu.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load "
+fi
 
 #resubmit
 if [[ $? -eq 124 ]]; then

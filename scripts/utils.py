@@ -263,7 +263,7 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
             if 'steps' in plot or 'r=' in plot:
                 ax1.plot(xaxis,ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=3)
             else:
-                ax1.plot(xaxis,ratio,color=colors[plot],marker='o',ms=10,lw=0,markerfacecolor='none',markeredgewidth=3)
+                ax1.plot(xaxis,ratio,color=colors[plot],marker='o',ms=10,lw=0)
         
     ax0.legend(loc=label_loc,fontsize=16,ncol=1)        
     FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0) 

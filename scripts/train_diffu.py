@@ -25,6 +25,8 @@ if __name__ == '__main__':
     parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.8, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
+    parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
+    parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
 
     dataset_config = utils.LoadJson(flags.config)
@@ -33,6 +35,8 @@ if __name__ == '__main__':
 
     print("TRAINING OPTIONS")
     print(dataset_config, flush = True)
+
+    torch.manual_seed(flags.seed)
 
     batch_size = dataset_config['BATCH']
     num_epochs = dataset_config['MAXEPOCH']
@@ -83,12 +87,20 @@ if __name__ == '__main__':
     if not os.path.exists(checkpoint_folder):
         os.makedirs(checkpoint_folder)
 
+    checkpoint = dict()
+    checkpoint_path = os.path.join(checkpoint_folder, "checkpoint.pth")
+    if(flags.load and os.path.exists(checkpoint_path)): 
+        print("Loading training checkpoint from %s" % checkpoint_path, flush = True)
+        checkpoint = torch.load(checkpoint_path, map_location = device)
+        print(checkpoint.keys())
+
+
     if(flags.model == "Diffu"):
         model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
-        if(flags.load and os.path.exists(checkpoint_folder + "checkpoint.pth")): 
-            load_path = checkpoint_folder + "checkpoint.pth"
-            print("Loading saved weights from %s" % load_path, flush = True)
-            model.load_state_dict(torch.load(load_path, map_location = device))
+        #sometimes save only weights, sometimes save other info
+        if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
+        elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
+
 
     elif(flags.model == "LatentDiffu"):
         AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
@@ -111,20 +123,31 @@ if __name__ == '__main__':
     os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
 
-    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 1e-3)
+    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 5e-4)
+    if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
+    print(early_stopper.__dict__)
     
 
     criterion = nn.MSELoss().to(device = device)
 
     optimizer = optim.Adam(model.parameters(), lr = float(dataset_config["LR"]))
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 10, verbose = True) 
-    step = 0
+    if('optimizer_state_dict' in checkpoint.keys() and not flags.reset_training): optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if('scheduler_state_dict' in checkpoint.keys() and not flags.reset_training): scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
     training_losses = np.zeros(num_epochs)
     val_losses = np.zeros(num_epochs)
+    start_epoch = 0
+    if('train_loss_hist' in checkpoint.keys()): 
+        training_losses = checkpoint['train_loss_hist']
+        val_losses = checkpoint['val_loss_hist']
+        start_epoch = checkpoint['epoch'] + 1
 
     #training loop
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         print("Beginning epoch %i" % epoch, flush=True)
+        for i, param in enumerate(model.parameters()):
+            break
         train_loss = 0
 
         model.train()
@@ -166,13 +189,30 @@ if __name__ == '__main__':
         scheduler.step(torch.tensor([val_loss]))
         val_losses[epoch] = val_loss
         print("val_loss: "+ str(val_loss), flush = True)
+
+        if(val_loss < early_stopper.min_validation_loss):
+            torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
+
         if(early_stopper.early_stop(val_loss)):
             print("Early stopping!")
             break
 
         # save the model
         model.eval()
-        torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'checkpoint.pth'))
+        print("SAVING")
+        #torch.save(model.state_dict(), checkpoint_path)
+        
+        #save full training state so can be resumed
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'train_loss_hist': training_losses,
+            'val_loss_hist': val_losses,
+            'early_stop_dict': early_stopper.__dict__,
+            }, checkpoint_path)
+
         with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
             tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")
         with open(checkpoint_folder + "/validation_losses.txt","w") as vfileout:

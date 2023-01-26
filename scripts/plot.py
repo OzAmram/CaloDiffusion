@@ -36,6 +36,8 @@ parser.add_argument('--model', default='Diffu', help='Diffusion model to load. O
 parser.add_argument('--sample', action='store_true', default=False,help='Sample from learned model')
 parser.add_argument('--comp_eps', action='store_true', default=False,help='Load files with different eps')
 parser.add_argument('--comp_N', action='store_true', default=False,help='Load files with different N')
+parser.add_argument('--not_holdout', dest = 'holdout', action='store_false',help='Dont use events which were held out from training')
+parser.set_defaults(holdout = True)
 
 flags = parser.parse_args()
 
@@ -46,6 +48,7 @@ emin = dataset_config['EMIN']
 run_classifier=False
 
 batch_size = flags.batch_size
+
 
 if flags.sample:
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
@@ -60,7 +63,7 @@ if flags.sample:
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
-            #from_end = True,
+            from_end = flags.holdout,
         )
         
         data.append(data_)
@@ -80,7 +83,11 @@ if flags.sample:
     if(flags.model == "AE"):
         print("Loading AE from " + flags.model_loc)
         model = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device=device)
-        model.load_state_dict(torch.load(flags.model_loc, map_location=device))
+
+        saved_model = torch.load(flags.model_loc, map_location = device)
+        if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
+        elif(len(saved_model.keys()) > 1): model.load_state_dict(saved_model)
+        #model.load_state_dict(torch.load(flags.model_loc, map_location=device))
 
         generated = []
         for i,(E,d_batch) in enumerate(data_loader):
@@ -95,7 +102,10 @@ if flags.sample:
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
         model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config).to(device=device)
-        model.load_state_dict(torch.load(flags.model_loc, map_location=device))
+
+        saved_model = torch.load(flags.model_loc, map_location = device)
+        if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
+        elif(len(saved_model.keys()) > 1): model.load_state_dict(saved_model)
 
         generated = []
         for i,(E,d_batch) in enumerate(data_loader):
@@ -208,8 +218,14 @@ data = []
 true_energies = []
 for dataset in dataset_config['EVAL']:
     with h5.File(os.path.join(flags.data_folder,dataset),"r") as h5f:
-        data.append(h5f['showers'][:total_evts]/1000.)
-        true_energies.append(h5f['incident_energies'][:total_evts]/1000.)
+        if(flags.holdout):
+            start = -int(total_evts) -1
+            end = -1
+        else: 
+            start = 0
+            end = total_evts
+        data.append(h5f['showers'][start:end]/1000.)
+        true_energies.append(h5f['incident_energies'][start:end]/1000.)
 
 
 data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE'])
@@ -400,7 +416,8 @@ def HistNhits(data_dict):
     for key in data_dict:
         feed_dict[key] = _preprocess(data_dict[key])
         
-    fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits', ylabel= 'Normalized entries',label_loc='upper left')
+    binning = np.linspace(np.quantile(feed_dict['Geant4'],0.0),np.quantile(feed_dict['Geant4'],1),20)
+    fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits', ylabel= 'Normalized entries',label_loc='upper right', binning = binning)
     yScalarFormatter = utils.ScalarFormatterClass(useMathText=True)
     yScalarFormatter.set_powerlimits((0,0))
     ax0.yaxis.set_major_formatter(yScalarFormatter)

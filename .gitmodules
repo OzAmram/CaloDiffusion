@@ -1,0 +1,3 @@
+[submodule "CaloChallenge"]
+	path = CaloChallenge
+	url = git@github.com:CaloChallenge/homepage.git

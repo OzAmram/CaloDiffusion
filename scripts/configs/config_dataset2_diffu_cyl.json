@@ -20,7 +20,7 @@
     'STRIDE':[3,2,2],
     'ACT':'swish',
     'EMBED':128,
-    'CHECKPOINT_NAME':'dataset2_jan20_logit_norm_nsteps1000_cosine_RZ_cyl',
+    'CHECKPOINT_NAME':'dataset2_feb1_hybrid_cold100',
     'EMAX':1000.,
     'EMIN':1.,
     'ECUT':0.0000151,
@@ -31,6 +31,11 @@
     'SHOWERMAP': 'logit-norm',
     'R_Z_INPUT': True,
     'BETA_MAX' : 0.02,
-    'NSTEPS': 1000,
+    'NSTEPS': 500,
     'NOISE_SCHED': 'cosine',
+    'COLD_DIFFU' : True,
+    'COLD_FRAC' : 1.0,
+    'AVG_SHOWER_LOC' : "/wclustre/cms_mlsim/denoise/CaloChallenge/dataset_2_avg_showers.hdf5",
+    'TRAINING_OBJ' : 'hybrid',
+
 }

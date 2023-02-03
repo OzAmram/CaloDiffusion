@@ -45,6 +45,8 @@ nevts = int(flags.nevts)
 dataset_config = utils.LoadJson(flags.config)
 emax = dataset_config['EMAX']
 emin = dataset_config['EMIN']
+cold_diffu = dataset_config.get('COLD_DIFFU', False)
+training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
 run_classifier=False
 
 batch_size = flags.batch_size
@@ -78,6 +80,13 @@ if flags.sample:
     torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_data_tensor)
     data_loader = torchdata.DataLoader(torch_dataset, batch_size = batch_size, shuffle = False)
 
+    avg_showers = std_showers = E_bins = None
+    if(cold_diffu):
+        f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
+        #Already pre-processed
+        avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
+        std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
+        E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
 
     #print(energies)
     if(flags.model == "AE"):
@@ -101,7 +110,8 @@ if flags.sample:
 
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config).to(device=device)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config , training_obj = training_obj,
+                cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
 
         saved_model = torch.load(flags.model_loc, map_location = device)
         if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
@@ -112,7 +122,8 @@ if flags.sample:
             E = E.to(device=device)
             d_batch = d_batch.to(device=device)
 
-            gen = model.Sample(E, num_steps = dataset_config["NSTEPS"]).detach().cpu().numpy()
+            #gen = model.Sample_Cold(E, num_steps = dataset_config["NSTEPS"], cold_frac = dataset_config.get("COLD_FRAC")).detach().cpu().numpy()
+            gen = model.Sample(E, num_steps = dataset_config["NSTEPS"], cold_frac = dataset_config.get("COLD_FRAC")).detach().cpu().numpy()
             #gen = model.Sample_v2(E, num_steps = dataset_config["NSTEPS"]).detach().cpu().numpy()
         
             if(i == 0): generated = gen

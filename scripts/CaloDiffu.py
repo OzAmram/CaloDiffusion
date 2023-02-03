@@ -8,12 +8,11 @@ from torchinfo import summary
 from utils import *
 from models import *
 
-#https://huggingface.co/blog/annotated-diffusion
-
 
 class CaloDiffu(nn.Module):
     """Diffusion based generative model"""
-    def __init__(self, data_shape,num_batch,name='SGM',config=None, cylindrical = False, R_Z_inputs = False):
+    def __init__(self, data_shape,num_batch,name='SGM',config=None, cylindrical = False, R_Z_inputs = False, training_obj = 'noise_pred',
+                    cold_diffu = False, E_bins = None, avg_showers = None, std_showers = None):
         super(CaloDiffu, self).__init__()
         self._data_shape = data_shape
         self._num_batch = num_batch
@@ -21,6 +20,14 @@ class CaloDiffu(nn.Module):
         self._num_embed = self.config['EMBED']
         self.num_heads=1
         self.nsteps = self.config['NSTEPS']
+        self.cold_diffu = cold_diffu
+        self.E_bins = E_bins
+        self.avg_showers = avg_showers
+        self.std_showers = std_showers
+        self.training_obj = training_obj
+        if(self.training_obj not in ['noise_pred', 'mean_pred', 'hybrid']):
+            print("Training objective %s not supported!" % self.training_obj)
+            exit(1)
 
 
         if config is None:
@@ -41,7 +48,6 @@ class CaloDiffu(nn.Module):
         schedd = config.get("NOISE_SCHED", "linear")
         if(schedd == "linear"): self.betas = torch.linspace(self.beta_start, self.beta_end, self.nsteps)
         elif(schedd == "cosine"): 
-            print("COSINE SCHEDULE!")
             self.betas = cosine_beta_schedule(self.nsteps)
         else:
             print("Invalid NOISE_SCHEDD param %s" % schedd)
@@ -59,7 +65,7 @@ class CaloDiffu(nn.Module):
         self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
-        print(self.sqrt_one_minus_alphas_cumprod[:10])
+        #CHECK OFF BY ONE ERROR ? 
 
         #print("MIN MIDDLE MAX variance", ( self.sqrt_one_minus_alphas_cumprod[0].numpy(),   
             #self.sqrt_one_minus_alphas_cumprod[self.nsteps//2].numpy(), self.sqrt_one_minus_alphas_cumprod[-1].numpy()))
@@ -91,27 +97,37 @@ class CaloDiffu(nn.Module):
         calo_summary_shape[0] = 1
         summary_shape = [calo_summary_shape, [1], [1]]
 
-        self.noise_predictor = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, 
+        self.model = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, 
                 cylindrical =  config.get('CYLINDRICAL', False), data_shape = calo_summary_shape)
 
-        print("\n\n Noise predictor model: \n")
-        summary(self.noise_predictor, summary_shape)
+        print("\n\n Model: \n")
+        summary(self.model, summary_shape)
             
     
+    def lookup_avg_std_shower(self, inputEs):
+        idxs = torch.bucketize(inputEs, self.E_bins)  - 1 #NP indexes bins starting at 1 
+        return self.avg_showers[idxs], self.std_showers[idxs]
+
     
-    def noise_image(self, data, random_t, noise = None):
+    def noise_image(self, data = None, t = None, noise = None):
+
         if(noise is None): noise = torch.randn_like(data)
 
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, random_t, data.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, random_t, data.shape)
+        if(t[0] <=0): return data
+
+        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
+        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
         out = sqrt_alphas_cumprod_t * data + sqrt_one_minus_alphas_cumprod_t * noise
         return out
 
-    def compute_loss(self, data, energy, random_t, noise = None, loss_type = "l2"):
+
+    def compute_loss(self, data, energy, noise = None, loss_type = "l2"):
         if noise is None:
             noise = torch.randn_like(data)
+        
+        t = torch.randint(0, self.nsteps, (data.size()[0],), device=data.device).long()
+        x_noisy = self.noise_image(data, t, noise=noise)
 
-        x_noisy = self.noise_image(data, random_t, noise=noise)
         if(self.R_Z_inputs):
             if(data.shape[0] == self._num_batch):
                 x_input = torch.cat([x_noisy, self.batch_R_image, self.batch_Z_image], axis = 1)
@@ -120,14 +136,44 @@ class CaloDiffu(nn.Module):
                 batch_Z_image = self.Z_image.repeat([data.shape[0], 1,1,1,1])
                 x_input = torch.cat([x_noisy, batch_R_image, batch_Z_image], axis = 1)
         else: x_input = x_noisy
-        predicted_noise = self.noise_predictor(x_input, energy, random_t)
+
+        pred = self.model(x_input, energy, t/self.nsteps)
+
+        if(self.training_obj == 'hybrid'):
+            #sample noise from random normal 
+            #P_mean = torch.log(self.nsteps/2)
+            #P_mean = torch.log(self.nsteps/4)
+            #rnd_normal = torch.randn([images.shape[0], 1, 1, 1], device=images.device)
+            #sigma = (rnd_normal * self.P_std + self.P_mean).exp()
+
+            sigma2 = extract(self.betas, t, data.shape)
+            weight = 1. + (1./ sigma2)
+
+            c_skip = 1. / (sigma2 + 1.)
+            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
+            c_in = 1. / (sigma2 + 1. ).sqrt()
+
+            pred = c_skip * data + c_out * pred
+            target = data
+            loss = (weight * ((pred - data) ** 2)).sum() / weight.sum()
+
+            return loss
+
+        elif(self.training_obj == 'noise_pred'):
+            target = noise
+        elif(self.training_obj == 'mean_pred'):
+            target = data
+
+
+
 
         if loss_type == 'l1':
-            loss = torch.nn.functional.l1_loss(noise, predicted_noise)
+            loss = torch.nn.functional.l1_loss(target, pred)
         elif loss_type == 'l2':
-            loss = torch.nn.functional.mse_loss(noise, predicted_noise)
+            loss = torch.nn.functional.mse_loss(target, pred)
+
         elif loss_type == "huber":
-            loss =torch.nn.functional.smooth_l1_loss(noise, predicted_noise)
+            loss =torch.nn.functional.smooth_l1_loss(target, pred)
         else:
             raise NotImplementedError()
 
@@ -137,35 +183,49 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def p_sample(self, x, img, cond, t):
+    def p_sample(self, x, img, cond, t, avg_shower = None, std_shower = None, cold_frac = 0., noise = None):
         #reverse the diffusion process (one step)
 
+        if(noise is None): noise = torch.randn(img.shape, device = x.device)
 
         betas_t = extract(self.betas, t, img.shape)
         sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, img.shape)
         sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, img.shape)
         sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, img.shape)
         posterior_variance_t = extract(self.posterior_variance, t, img.shape)
-        if(t[0] > 0): posterior_variance_tm1 = extract(self.posterior_variance, t-1, img.shape)
+
 
         #noise_pred = self.model.predict([x, t, cond], batch_size = batch_size)
 
-        #sample_algo = 'euler'
-        sample_algo = 'cold'
+        sample_algo = 'euler'
+        #sample_algo = 'cold'
         #sample_algo = 'stocasticSampler'
 
-        noise_pred = self.noise_predictor(x, cond, t)
-        
-        
-        # Use results from our model (noise predictor) to predict the mean of posterior distribution
-        post_mean = sqrt_recip_alphas_t * ( img - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
+        pred = self.model(x, cond, t/self.nsteps)
+        if(self.training_obj == 'noise_pred'):
+            noise_pred = pred
+        elif(self.training_obj == 'mean_pred'):
+            noise_pred = (img - sqrt_alphas_cumprod_t * pred)/sqrt_one_minus_alphas_cumprod_t
+        elif(self.trainig_obj == 'hybrid'):
 
-        noise = torch.randn(img.shape, device = x.device)
+            sigma2 = extract(self.betas, t, data.shape)
+            c_skip = 1. / (sigma2 + 1.)
+            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
+
+            mean_pred = c_skip * img + c_out * pred
+            noise_pred = (img - sqrt_alphas_cumprod_t * mean_pred)/sqrt_one_minus_alphas_cumprod_t
+
+        
+
+        if(self.cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
+            sample_algo = 'cold'
+            noise = torch.add(avg_shower, cold_frac * (noise * std_shower))
 
         if(sample_algo == 'euler'):
+            # Use results from our model (noise predictor) to predict the mean of posterior distribution of prev step
+            post_mean = sqrt_recip_alphas_t * ( img - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
             if t[0] == 0: return post_mean
             out = post_mean + torch.sqrt(posterior_variance_t) * noise 
-            print(torch.mean(out[0]))
         elif(sample_algo == 'cold'):
             #Algorithm 2 from cold diffusion paper
             #Work in progress!
@@ -174,30 +234,117 @@ class CaloDiffu(nn.Module):
             if t[0] == 0: return post_mean
 
             x0_pred = (img - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
-            noise2 = torch.randn(img.shape, device = x.device)
 
             #if(t[0] == 0):  return x0_pred
+            algo1 = False
 
             #algo 1
-            #out = self.noise_image(x0_pred, t-1, noise = noise)
-            #out = post_mean + torch.sqrt(posterior_variance_tm1) * noise 
+            out1 = self.noise_image(x0_pred, t-1, noise = noise)
+            if(t[0] % 20 == 0):
+                print( "ALGO1", torch.mean(out1), torch.mean(self.noise_image(x0_pred, t-1, noise = noise)))
+                    #print(torch.mean(out), torch.mean(self.noise_image(x0_pred, t-1, noise = noise)))
 
             #algo 2
-            #out = img - self.noise_image(x0_pred, t, noise = noise2) + self.noise_image(x0_pred, t-1, noise = noise)
-            out =  (img - post_mean -  torch.sqrt(posterior_variance_t) * noise2 ) + post_mean + torch.sqrt(posterior_variance_tm1) * noise 
-            print(torch.mean(out[0]), torch.mean(img[0]), torch.mean((post_mean +  torch.sqrt(posterior_variance_t) * noise2)[0]))
+            noise2 = torch.randn(img.shape, device = x.device)
+            #if(self.cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
+            #    noise2 = torch.add(avg_shower, cold_frac * (noise2 * std_shower))
+            out2 = img - self.noise_image(x0_pred, t, noise = noise) + self.noise_image(x0_pred, t-1, noise = noise)
+            if(t[0] % 20 == 0):
+                print("ALGO2", torch.mean(out2), torch.mean(img), torch.mean(self.noise_image(x0_pred, t, noise = noise)), torch.mean(self.noise_image(x0_pred, t-1, noise = noise)))
 
-            #print(out.shape, img_in.shape, post_mean.shape, noise.shape, posterior_variance_tm1.shape)
+            out = out2
 
+
+        print(torch.mean(out))
         return out
 
+    @torch.no_grad()
+    def Sample_Cold(self, E, num_steps = 200, cold_frac = 0.):
+
+        device = next(self.parameters()).device
+        gen_size = E.shape[0]
+        # start from pure noise (for each example in the batch)
+        gen_shape = list(copy.copy(self._data_shape))
+        gen_shape.insert(0,gen_size)
+
+        #start from pure noise
+        img_start = torch.randn(gen_shape, device=device)
+
+        avg_shower = std_shower = None
+        if(self.cold_diffu): #cold diffu starts using avg images
+            avg_shower, std_shower = self.lookup_avg_std_shower(E)
+            img_start = torch.add(avg_shower, cold_frac * (img_start * std_shower))
+
+        img = noise = img_start
+        sampling_routine = 'algo1'
+
+        batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+        batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+
+        t = num_steps
+
+        while (t):
+
+            if(self.R_Z_inputs): x_in = torch.cat([img, batch_R_image, batch_Z_image], axis = 1)
+            else: x_in = img
+
+            step = torch.full((gen_size,), t - 1, dtype=torch.long, device=img.device)
+            noise_pred = self.noise_predictor(x_in, E, step)
+
+            sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, step, img.shape)
+            sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, step, img.shape)
+
+            x1_bar = (img - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
+            if sampling_routine == 'ddim':
+                x2_bar = noise_pred
+            else: x2_bar = noise
+
+            xt_bar = x1_bar
+            if t != 0:
+                xt_bar = self.noise_image(data=xt_bar, noise=x2_bar, t=step)
+
+            xt_sub1_bar = x1_bar
+            if t - 1 != 0:
+                step2 = torch.full((gen_size,), t - 2, dtype=torch.long, device=img.device)
+                xt_sub1_bar = self.noise_image(data=xt_sub1_bar, noise=x2_bar, t=step2)
+
+            x = img - xt_bar + xt_sub1_bar
+            print(torch.mean(x), torch.mean(img), torch.mean(xt_bar), torch.mean(xt_sub1_bar))
+            img = x
+            t = t - 1
+
+        return img
+
+        #elif self.sampling_routine == 'x0_step_down':
+        #    while (t):
+        #        step = torch.full((batch_size,), t - 1, dtype=torch.long, device=img.device)
+        #        x1_bar = self.denoise_fn(img, step)
+        #        x2_bar = noise
+        #        if direct_recons == None:
+        #            direct_recons = x1_bar
+
+        #        xt_bar = x1_bar
+        #        if t != 0:
+        #            xt_bar = self.q_sample(x_start=xt_bar, x_end=x2_bar, t=step)
+
+        #        xt_sub1_bar = x1_bar
+        #        if t - 1 != 0:
+        #            step2 = torch.full((batch_size,), t - 2, dtype=torch.long, device=img.device)
+        #            xt_sub1_bar = self.q_sample(x_start=xt_sub1_bar, x_end=x2_bar, t=step2)
+
+        #        x = img - xt_bar + xt_sub1_bar
+        #        img = x
+        #        t = t - 1
+
+
+
 
     @torch.no_grad()
-    def Sample(self, cond, num_steps = 200):
+    def Sample(self, E, num_steps = 200, cold_frac = 0.):
         """Generate samples from diffusion model.
         
         Args:
-        cond: Conditional input
+        E: Energies
         num_steps: The number of sampling steps. 
         Equivalent to the number of discretized time steps.    
         
@@ -208,14 +355,19 @@ class CaloDiffu(nn.Module):
         device = next(self.parameters()).device
 
 
-        gen_size = cond.shape[0]
+        gen_size = E.shape[0]
         # start from pure noise (for each example in the batch)
         gen_shape = list(copy.copy(self._data_shape))
         gen_shape.insert(0,gen_size)
 
+        #start from pure noise
+        img_start = torch.randn(gen_shape, device=device)
 
-        img = torch.randn(gen_shape, device=device)
-        imgs = []
+        avg_shower = std_shower = None
+        if(self.cold_diffu): #cold diffu starts using avg images
+            avg_shower, std_shower = self.lookup_avg_std_shower(E)
+            img_start = torch.add(avg_shower, cold_frac * (img_start * std_shower))
+
 
         start = time.time()
         #for i in tqdm(reversed(range(0, num_steps)), desc='sampling loop time step', total=num_steps):
@@ -225,60 +377,19 @@ class CaloDiffu(nn.Module):
         batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
         batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
 
-
+        img = img_start
+        fixed_noise = None
+        fixed_noise = img_start
         for time_step in time_steps:      
             times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
             if(self.R_Z_inputs): x_in = torch.cat([img, batch_R_image, batch_Z_image], axis = 1)
             else: x_in = img
-            img = self.p_sample(x_in, img, cond, times)
+            img = self.p_sample(x_in, img, E, times, avg_shower = avg_shower, std_shower = std_shower, cold_frac = cold_frac, noise = fixed_noise)
 
         end = time.time()
         print("Time for sampling {} events is {} seconds".format(gen_size,end - start))
         return img
 
-    @torch.no_grad()
-    def Sample(self, cond, num_steps = 1000):
-        """Generate samples from diffusion model.
-        
-        Args:
-        cond: Conditional input
-        num_steps: The number of sampling steps. 
-        Equivalent to the number of discretized time steps.    
-        
-        Returns: 
-        Samples.
-        """
-        # Full sample (all steps)
-        device = next(self.parameters()).device
-
-
-        gen_size = cond.shape[0]
-        # start from pure noise (for each example in the batch)
-        gen_shape = list(copy.copy(self._data_shape))
-        gen_shape.insert(0,gen_size)
-
-
-        img = torch.randn(gen_shape, device=device)
-        imgs = []
-
-        start = time.time()
-        #for i in tqdm(reversed(range(0, num_steps)), desc='sampling loop time step', total=num_steps):
-        time_steps = list(range(num_steps))
-        time_steps.reverse()
-
-        batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
-        batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
-
-
-        for time_step in time_steps:      
-            times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
-            if(self.R_Z_inputs): x_in = torch.cat([img, batch_R_image, batch_Z_image], axis = 1)
-            else: x_in = img
-            img = self.p_sample(x_in, img, cond, times)
-
-        end = time.time()
-        print("Time for sampling {} events is {} seconds".format(gen_size,end - start))
-        return img
     
     @torch.no_grad()
     def Sample_v2(self, cond, num_steps = 1000):

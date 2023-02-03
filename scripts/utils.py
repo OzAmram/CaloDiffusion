@@ -29,7 +29,6 @@ def create_R_Z_image(device):
     shape = (1,45,16,9)
     r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
     r_avgs = [(r_bins[i] + r_bins[i+1]) / 2.0 for i in range(len(r_bins) -1) ]
-    print(len(r_avgs), shape)
     assert(len(r_avgs) == shape[-1])
     Z_image = torch.zeros(shape, device=device)
     R_image = torch.zeros(shape, device=device)
@@ -314,15 +313,22 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, sh
         shower = h5f['showers'][start:end].astype(np.float32)/1000.0
 
         
-
-    return preprocess(shower, e, shape, emax, emin, max_deposit = max_deposit,  logE = logE, showerMap = showerMap)
-    
-def preprocess(shower, e, shape, emax, emin, max_deposit = 2, logE = True, showerMap = 'log-norm'):
-
     shower = np.reshape(shower,(shower.shape[0],-1))
     e = np.reshape(e,(-1,1))
     shower = shower/(max_deposit*e)
     shower = shower.reshape(shape)
+
+    shower_preprocessed = preprocess_shower(shower, showerMap)
+
+    if logE:        
+        E_preprocessed = np.log10(e/emin)/np.log10(emax/emin)
+    else:
+        E_preprocessed = (e-emin)/(emax-emin)
+
+    return shower_preprocessed, E_preprocessed 
+    
+def preprocess_shower(shower, showerMap = 'log-norm'):
+
 
     if('logit' in showerMap):
         alpha = 1e-6
@@ -344,10 +350,8 @@ def preprocess(shower, e, shape, emax, emin, max_deposit = 2, logE = True, showe
         #Range naturally from 0 to 1, change to be from -1 to 1
         elif('scaled' in showerMap): shower  = (shower * 2.0) - 1.0
 
-    if logE:        
-        return shower,np.log10(e/emin)/np.log10(emax/emin)
-    else:
-        return shower,(e-emin)/(emax-emin)
+    return shower
+
         
 
 def LoadJson(file_name):

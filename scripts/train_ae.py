@@ -18,6 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('--config', default='configs/config_dataset2_ae.json', help='Config file with training parameters')
     parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.8, help='Fraction of total events used for training')
+    parser.add_argument('--workers', type=int, default=1, help='number of workers for data loaders')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     flags = parser.parse_args()
 
@@ -55,12 +56,12 @@ if __name__ == '__main__':
 
     train_data_tensor = torch.from_numpy(train_data)
     #train_dataset = torchdata.TensorDataset(train_data_tensor)
-    loader_train = torchdata.DataLoader(train_data_tensor, batch_size = batch_size, shuffle = True)
+    loader_train = torchdata.DataLoader(train_data_tensor, batch_size = batch_size, shuffle = True, num_workers = flags.workers)
 
 
     val_data_tensor = torch.from_numpy(val_data)
     #val_dataset = torchdata.TensorDataset(val_data_tensor)
-    loader_val = torchdata.DataLoader(val_data_tensor, batch_size = batch_size, shuffle = True)
+    loader_val = torchdata.DataLoader(val_data_tensor, batch_size = batch_size, num_workers = flags.workers)
 
 
     del data,train_data_tensor, val_data_tensor

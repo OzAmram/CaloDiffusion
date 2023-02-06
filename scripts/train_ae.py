@@ -135,6 +135,11 @@ if __name__ == '__main__':
         model.eval()
         torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'checkpoint.pth'))
 
+        with open(checkpoint_folder + "/training_losses_checkpoint.txt","w") as tfileout:
+            tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")
+        with open(checkpoint_folder + "/validation_losses_checkpoint.txt","w") as vfileout:
+            vfileout.write("\n".join("{}".format(vl) for vl in val_losses)+"\n")
+
 
     print("Saving to %s" % checkpoint_folder)
     torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'final.pth'))

@@ -17,21 +17,15 @@ class CaloAE(nn.Module):
         self._data_shape = data_shape
         self._num_batch = num_batch
 
-        self.config = config
-        self._num_embed = self.config['EMBED']
-        self.num_heads=1
+        self.num_heads = 1
 
-        if(self.config['ACT'].lower() == 'swish'): self.activation = nn.SiLU
-        elif(self.config['ACT'].lower() == 'relu'): self.activation = nn.ReLU
-        else: 
-            print("Unrecognized activation fn : %s" % self.config['ACT'].lower())
-            self.activation = nn.ReLU
+        self.activation = config.act
 
-        self.stride_size=self.config['STRIDE']
-        self.kernel_size =self.config['KERNEL']
-        self.layer_size = self.config['LAYER_SIZE_AE']
+        self.stride_size = config.stride
+        self.kernel_size = config.kernel
+        self.layer_size = config.layer_size
         self.nlayers = len(self.layer_size)
-        self.dim_red = self.config['DIM_RED']
+        self.dim_red = config.dim_red
 
         total_dim_red = int(np.sum(self.dim_red))
         print("Dim red %i" % total_dim_red)

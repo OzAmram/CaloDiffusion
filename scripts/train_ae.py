@@ -11,11 +11,11 @@ if __name__ == '__main__':
     if(torch.cuda.is_available()): device = torch.device('cuda')
     else: device = torch.device('cpu')
         
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
-    parser.add_argument('--data_folder', default='/pscratch/sd/v/vmikuni/FCC', help='Folder containing data and MC files')
+    parser.add_argument('--data_folder', default='/wclustre/cms_mlsim/denoise/CaloChallenge/', help='Folder containing data and MC files')
     parser.add_argument('--model', default='AE', help='AE')
-    parser.add_argument('--config', default='config_dataset2.json', help='Config file with training parameters')
+    parser.add_argument('--config', default='configs/config_dataset2_ae.json', help='Config file with training parameters')
     parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.8, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')

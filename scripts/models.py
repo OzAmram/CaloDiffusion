@@ -1,3 +1,5 @@
+import sys
+sys.path.append(".local/lib/python{}.{}/site-packages".format(sys.version_info.major,sys.version_info.minor))
 #some pytorch modules & useful functions
 from einops import rearrange
 import copy

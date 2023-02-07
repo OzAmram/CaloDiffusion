@@ -6,6 +6,7 @@ import numpy as np
 class GeGeLayer(nn.Module):
     def __init__(self, in_shape, out_shape):
         super().__init__()
+        self.in_shape = in_shape
         self.channels = in_shape[0]
         self.in_size = np.prod(in_shape[1:])
         self.out_shape = list(out_shape)
@@ -35,9 +36,11 @@ class GeGeLayer(nn.Module):
 
     # starting from new geometry, restore original order, size, shape
     def restore(self, x, indices):
+        restore_shape = [x.size()[0], x.size()[1]] + self.in_shape[1:]
         x = torch.reshape(x, (x.size()[0], x.size()[1], self.out_size))
-        x = torch.narrow(x, x.dim-1, 0, self.in_size)
+        x = torch.narrow(x, x.dim()-1, 0, self.in_size)
         x = torch.take(x, indices)
+        x = torch.reshape(x, restore_shape)
         return x
 
 # wrap existing NN in GeGe layer

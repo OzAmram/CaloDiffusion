@@ -30,7 +30,7 @@ class CaloAE(nn.Module):
         self.convT_class = nn.ConvTranspose3d
         if config.cylindrical:
             self.conv_class = CylindricalConv
-            self.convT_class = CylindricalConv
+            #self.convT_class = CylindricalConv
 
         total_dim_red = int(np.sum(self.dim_red))
         print("Dim red %i" % total_dim_red)
@@ -63,7 +63,7 @@ class CaloAE(nn.Module):
         self.enc_layers = []
         in_channels = input_shape[0]
         cur_data_shape = input_shape[1:]
-        self.extra_upsamples = [0,0,0] * self.nlayers
+        self.extra_upsamples = [[0,0,0]] * self.nlayers
         for ilayer in range(self.nlayers):
             is_last = (ilayer == self.nlayers -1)
 
@@ -74,10 +74,10 @@ class CaloAE(nn.Module):
             in_channels = out_channels
 
             if(self.dim_red[ilayer] > 0):
-                if(not is_last):
-                    extra_upsample_dim = (0, cur_data_shape[1]%self.dim_red[ilayer], cur_data_shape[2]%self.dim_red[ilayer])
-                    cur_data_shape = (cur_data_shape[0], cur_data_shape[1] // self.dim_red[ilayer], cur_data_shape[2]// self.dim_red[ilayer])
-                    self.extra_upsamples[ilayer] = extra_upsample_dim
+                extra_upsample_dim = (0, cur_data_shape[1] % self.dim_red[ilayer], cur_data_shape[2] % self.dim_red[ilayer])
+                cur_data_shape = (cur_data_shape[0], cur_data_shape[1] // self.dim_red[ilayer], cur_data_shape[2]// self.dim_red[ilayer])
+                self.extra_upsamples[ilayer] = extra_upsample_dim
+
                 pool_lay = nn.AvgPool3d(kernel_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
                 self.enc_layers.append(pool_lay)
 

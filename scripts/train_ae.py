@@ -41,6 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('--kernel', type=int, default=[3,3,3], nargs=3, help='kernel dimensions')
     parser.add_argument('--layer-size', type=int, default=[32,64,64,32], nargs='+', help='layer sizes')
     parser.add_argument('--dim-red', type=int, default=[0,2,0,2], nargs='+', help='dimensional reduction')
+    parser.add_argument('--cylindrical', action='store_true', default=False, help='use cylindrical convolutions')
     args = parser.parse_args()
 
     args.act = activation_choices[args.act]

@@ -26,6 +26,11 @@ class CaloAE(nn.Module):
         self.layer_size = config.layer_size
         self.nlayers = len(self.layer_size)
         self.dim_red = config.dim_red
+        self.conv_class = nn.Conv3d
+        self.convT_class = nn.ConvTranspose3d
+        if config.cylindrical:
+            self.conv_class = CylindricalConv
+            self.convT_class = CylindricalConv
 
         total_dim_red = int(np.sum(self.dim_red))
         print("Dim red %i" % total_dim_red)
@@ -63,7 +68,7 @@ class CaloAE(nn.Module):
             is_last = (ilayer == self.nlayers -1)
 
             out_channels = self.layer_size[ilayer]
-            lay = nn.Conv3d(in_channels = in_channels, out_channels = out_channels, kernel_size=self.kernel_size,padding='same', bias=True)
+            lay = self.conv_class(in_channels = in_channels, out_channels = out_channels, kernel_size=self.kernel_size,padding='same', bias=True)
             self.enc_layers.append(lay)
             self.enc_layers.append(self.activation())
             in_channels = out_channels
@@ -76,7 +81,7 @@ class CaloAE(nn.Module):
                 pool_lay = nn.AvgPool3d(kernel_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
                 self.enc_layers.append(pool_lay)
 
-        final_lay = nn.Conv3d(in_channels = in_channels, out_channels = 1, kernel_size=self.kernel_size,padding='same', bias=True)
+        final_lay = self.conv_class(in_channels = in_channels, out_channels = 1, kernel_size=self.kernel_size,padding='same', bias=True)
         self.enc_layers.append(final_lay)
         Encoder = nn.Sequential(*self.enc_layers)
         return Encoder
@@ -86,20 +91,20 @@ class CaloAE(nn.Module):
         in_channels = 1
         for ilayer in range(self.nlayers -1, -1, -1):
             out_channels = self.layer_size[ilayer]
-            lay =  nn.Conv3d(in_channels = in_channels, out_channels = out_channels, kernel_size=self.kernel_size,padding='same', bias=True)
+            lay =  self.conv_class(in_channels = in_channels, out_channels = out_channels, kernel_size=self.kernel_size,padding='same', bias=True)
             self.dec_layers.append(lay)
             self.dec_layers.append(self.activation())
             in_channels = out_channels
 
             if(self.dim_red[ilayer] > 0):
-                up = nn.ConvTranspose3d(out_channels, out_channels, kernel_size = (3,4,4),
+                up = self.convT_class(out_channels, out_channels, kernel_size = (3,4,4),
                         stride = (1,self.dim_red[ilayer],self.dim_red[ilayer]), padding = 1, output_padding = self.extra_upsamples[ilayer])
                 #up = nn.Upsample(scale_factor = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
                 self.dec_layers.append(up)
 
             #x = layers.BatchNormalization()(x)
 
-        final_lay = nn.Conv3d(in_channels = in_channels, out_channels = input_shape[0], kernel_size=self.kernel_size,padding='same', bias=True)
+        final_lay = self.conv_class(in_channels = in_channels, out_channels = input_shape[0], kernel_size=self.kernel_size,padding='same', bias=True)
         self.dec_layers.append(final_lay)
         Decoder = nn.Sequential(*self.dec_layers)
 

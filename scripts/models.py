@@ -34,7 +34,8 @@ def cosine_beta_schedule(timesteps, s=0.008):
 
 class CylindricalConv(nn.Module):
     #assumes format of channels,zbin,phi_bin,rbin
-    def __init__(self, dim_in, dim_out, kernel_size = 3, stride=1, groups = 1, padding = 0, bias = True):
+    #if output_padding is not None, uses ConvTranspose3d instead (use output_padding = 0 for ConvTranspose3d w/ no actual output padding)
+    def __init__(self, in_channels, out_channels, kernel_size = 3, stride=1, groups = 1, padding = 0, bias = True, output_padding = None):
         super().__init__()
         if(type(padding) != int):
             self.padding_orig = copy.copy(padding)
@@ -45,7 +46,12 @@ class CylindricalConv(nn.Module):
             self.padding_orig = copy.copy(padding)
             padding[1] = 0
         self.kernel_size = kernel_size
-        self.conv = nn.Conv3d(dim_in, dim_out, kernel_size=kernel_size, stride = stride, groups = groups, padding = padding, bias = bias)
+        conv_class = nn.Conv3d
+        conv_kwargs = dict(kernel_size=kernel_size, stride = stride, groups = groups, padding = padding, bias = bias)
+        if output_padding is not None:
+            conv_class = nn.ConvTranspose3d
+            conv_kwargs["output_padding"] = output_padding
+        self.conv = conv_class(in_channels, out_channels, **conv_kwargs)
 
     def forward(self, x):
         #to achieve 'same' use padding P = ((S-1)*W-S+F)/2, with F = filter size, S = stride, W = input size

@@ -37,7 +37,10 @@ class CylindricalConv(nn.Module):
     #if output_padding is not None, uses ConvTranspose3d instead (use output_padding = 0 for ConvTranspose3d w/ no actual output padding)
     def __init__(self, in_channels, out_channels, kernel_size = 3, stride=1, groups = 1, padding = 0, bias = True, output_padding = None):
         super().__init__()
-        if(type(padding) != int):
+        if padding=="same":
+            # this is probably not correct
+            self.padding_orig = [0,0,0]
+        elif(type(padding) != int):
             self.padding_orig = copy.copy(padding)
             padding = list(padding)
             padding[1] = 0

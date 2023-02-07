@@ -37,7 +37,7 @@ if __name__ == '__main__':
     parser.add_argument('--showermap', type=str, default='logit-norm', help='transform for showers')
     parser.add_argument('--lr', type=float, default=4e-4, help='learning rate')
     parser.add_argument('--act', type=str, default='swish', choices=sorted(list(activation_choices.keys())), help='activation function')
-    parser.add_argument('--stride', type=int, default=[3,2,2], nargs=3, help='stride dimension')
+    parser.add_argument('--stride', type=int, default=[3,2,2], nargs=3, help='stride dimensions')
     parser.add_argument('--kernel', type=int, default=[3,3,3], nargs=3, help='kernel dimensions')
     parser.add_argument('--layer-size', type=int, default=[32,64,64,32], nargs='+', help='layer sizes')
     parser.add_argument('--dim-red', type=int, default=[0,2,0,2], nargs='+', help='dimensional reduction')

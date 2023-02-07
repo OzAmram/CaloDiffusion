@@ -9,10 +9,12 @@ from utils import *
 import torch.optim as optim
 import torch.utils.data as torchdata
 from CaloAE import *
+from GeGe import *
 
 if __name__ == '__main__':
     transform_choices = ['none','log']
-    activation_choices = {'relu' : nn.ReLU, 'silu': nn.SiLU, 'swish': nn.SiLU}
+    activation_dict = {'relu' : nn.ReLU, 'silu': nn.SiLU, 'swish': nn.SiLU}
+    activation_choices = sorted(list(activation_dict.keys()))
     # todo: choices for showermap
 
     if(torch.cuda.is_available()): device = torch.device('cuda')
@@ -36,15 +38,18 @@ if __name__ == '__main__':
     parser.add_argument('--transform', type=str, default='log', choices=transform_choices, help='transform for energy values')
     parser.add_argument('--showermap', type=str, default='logit-norm', help='transform for showers')
     parser.add_argument('--lr', type=float, default=4e-4, help='learning rate')
-    parser.add_argument('--act', type=str, default='swish', choices=sorted(list(activation_choices.keys())), help='activation function')
+    parser.add_argument('--act', type=str, default='swish', choices=activation_choices, help='activation function')
     parser.add_argument('--stride', type=int, default=[3,2,2], nargs=3, help='stride dimensions')
     parser.add_argument('--kernel', type=int, default=[3,3,3], nargs=3, help='kernel dimensions')
     parser.add_argument('--layer-size', type=int, default=[32,64,64,32], nargs='+', help='layer sizes')
     parser.add_argument('--dim-red', type=int, default=[0,2,0,2], nargs='+', help='dimensional reduction')
     parser.add_argument('--cylindrical', action='store_true', default=False, help='use cylindrical convolutions')
+    parser.add_argument('--gege-shape', type=int, default=None, nargs=3, help='geometry generalization shape')
+    parser.add_argument('--gege-hidden', type=int, default=None, nargs='*', help='hidden layer sizes for geometry generalization')
+    parser.add_argument('--gege-act', type=str, default='swish', choices=activation_choices, help='hidden layer activation for geometry generalization')
     args = parser.parse_args()
 
-    args.act = activation_choices[args.act]
+    args.act = activation_dict[args.act]
 
     batch_size = args.batch
     num_epochs = args.maxepoch
@@ -95,7 +100,10 @@ if __name__ == '__main__':
     shutil.copy("CaloAE.py", checkpoint_folder+"CaloAE.py") # bkp of model def
     parser.write_config(args, checkpoint_folder+"config.py") # bkp of config file
 
-    model = CaloAE(args.shape_pad[1:], batch_size, config=args).to(device=device)
+    model = CaloAE(args.shape_pad[1:] if args.gege_shape is None else [args.shape_pad[1]]+list(args.gege_shape), batch_size, config=args).to(device=device)
+    if args.gege_shape is not None:
+        model = make_GeGeModel(model, args.shape_pad[1:], args.gege_shape, args.gege_hidden, activation_dict[args.gege_act]).to(device)
+
     load_path = checkpoint_folder + "checkpoint.pth"
     if(args.load and os.path.exists(load_path)):
         print("Loading saved weights from %s" % load_path)

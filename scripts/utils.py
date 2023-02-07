@@ -373,6 +373,9 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True, showerMap ='log'
         if('norm' in showerMap): voxels = (voxels * logit_std) + logit_mean
         elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (logit_max - logit_min) + logit_min
 
+        print(np.amax(voxels))
+        voxels = np.minimum(voxels, np.log(max_deposit))
+        print(np.amax(voxels))
 
         exp = np.exp(voxels)    
         x = exp/(1+exp)
@@ -381,6 +384,8 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True, showerMap ='log'
     elif('log' in showerMap):
         if('norm' in showerMap): voxels = (voxels * log_std) + log_mean
         elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (log_max - log_min) + log_min
+
+        data = np.clip(data,-99999, np.log(max_deposit))
 
 
         data = np.exp(voxels)

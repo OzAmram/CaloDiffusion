@@ -44,6 +44,7 @@ class CylindricalConv(nn.Module):
             padding[1] = 0
         self.kernel_size = kernel_size
         self.conv = nn.Conv3d(dim_in, dim_out, kernel_size=kernel_size, stride = stride, groups = groups, padding = padding, bias = bias)
+        torch.nn.init.xavier_normal_(self.conv.weight)
 
     def forward(self, x):
         #to achieve 'same' use padding P = ((S-1)*W-S+F)/2, with F = filter size, S = stride, W = input size
@@ -86,7 +87,9 @@ class SinusoidalPositionEmbeddings(nn.Module):
 class Block(nn.Module):
     def __init__(self, dim, dim_out, groups = 8, cylindrical = False):
         super().__init__()
-        if(not cylindrical): self.proj = nn.Conv3d(dim, dim_out, kernel_size = 3, padding = 1)
+        if(not cylindrical): 
+            self.proj = nn.Conv3d(dim, dim_out, kernel_size = 3, padding = 1)
+            torch.nn.init.xavier_normal_(self.proj.weight)
         else:  self.proj = CylindricalConv(dim, dim_out, kernel_size = 3, padding = 1)
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
@@ -114,6 +117,7 @@ class ResnetBlock(nn.Module):
         )
 
         conv = CylindricalConv(dim, dim_out, kernel_size = 1) if cylindrical else nn.Conv3d(dim, dim_out, kernel_size = 1)
+        if(not cylindrical): torch.nn.init.xavier_normal_(conv.weight)
         self.block1 = Block(dim, dim_out, groups=groups, cylindrical = cylindrical)
         self.block2 = Block(dim_out, dim_out, groups=groups, cylindrical = cylindrical)
         self.res_conv = conv if dim != dim_out else nn.Identity()
@@ -140,7 +144,8 @@ class ConvNextBlock(nn.Module):
             else None
         )
 
-        if(not cylindrical): conv_op = nn.Conv3d
+        
+        if(not cylindrical): conv_op = lambda x :  torch.nn.init.xavier_normal_(nn.Conv3d(x).weight)
         else: conv_op = CylindricalConv
 
         self.ds_conv = conv_op(dim, dim, kernel_size = 7, padding=3, groups=dim)
@@ -240,7 +245,7 @@ def Upsample(dim, extra_upsample = (0,0,0), cylindrical = False):
 
 def Downsample(dim, cylindrical = False):
     if(cylindrical): return CylindricalConv(dim, dim, kernel_size = (3,4,4), stride = (1,2,2), padding = 1)
-    else: return nn.Conv3d(dim, dim, kernel_size = (3,4,4), stride = (1,2,2), padding = 1)
+    else: return torch.nn.init.xavier_normal_(nn.Conv3d(dim, dim, kernel_size = (3,4,4), stride = (1,2,2), padding = 1).weight)
     #return nn.AvgPool3d(kernel_size = (1,2,2), stride = (1,2,2), padding =0)
 
 

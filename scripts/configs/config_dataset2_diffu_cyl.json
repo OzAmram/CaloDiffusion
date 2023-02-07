@@ -20,7 +20,7 @@
     'STRIDE':[3,2,2],
     'ACT':'swish',
     'EMBED':128,
-    'CHECKPOINT_NAME':'dataset2_feb1_hybrid_cold100',
+    'CHECKPOINT_NAME':'dataset2_feb6_hybrid_cold100',
     'EMAX':1000.,
     'EMIN':1.,
     'ECUT':0.0000151,

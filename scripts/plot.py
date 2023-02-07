@@ -34,6 +34,7 @@ parser.add_argument('--nrank', type=int,default=0, help='Rank of the files gener
 parser.add_argument('--batch_size', type=int,default=50, help='Batch size for generation')
 parser.add_argument('--model', default='Diffu', help='Diffusion model to load. Options are: Diffu, AE, VPSDE, VESDE,  subVPSDE, all')
 parser.add_argument('--sample', action='store_true', default=False,help='Sample from learned model')
+parser.add_argument('--sample_algo', default = 'euler', help = 'What sampling algorithm (euler, cold, cold2)')
 parser.add_argument('--comp_eps', action='store_true', default=False,help='Load files with different eps')
 parser.add_argument('--comp_N', action='store_true', default=False,help='Load files with different N')
 parser.add_argument('--not_holdout', dest = 'holdout', action='store_false',help='Dont use events which were held out from training')
@@ -123,7 +124,7 @@ if flags.sample:
             d_batch = d_batch.to(device=device)
 
             #gen = model.Sample_Cold(E, num_steps = dataset_config["NSTEPS"], cold_frac = dataset_config.get("COLD_FRAC")).detach().cpu().numpy()
-            gen = model.Sample(E, num_steps = dataset_config["NSTEPS"], cold_frac = dataset_config.get("COLD_FRAC")).detach().cpu().numpy()
+            gen = model.Sample(E, num_steps = dataset_config["NSTEPS"], cold_frac = dataset_config.get("COLD_FRAC"), sample_algo = flags.sample_algo).detach().cpu().numpy()
             #gen = model.Sample_v2(E, num_steps = dataset_config["NSTEPS"]).detach().cpu().numpy()
         
             if(i == 0): generated = gen
@@ -241,6 +242,8 @@ for dataset in dataset_config['EVAL']:
 
 data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE'])
 print(data_dict['Geant4'].shape)
+print("Geant Avg", np.mean(data_dict['Geant4']))
+print("Diffu Avg", np.mean(data_dict['Diffu']))
 true_energies = np.reshape(true_energies,(-1,1))
 
 

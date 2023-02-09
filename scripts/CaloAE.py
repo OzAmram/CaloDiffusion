@@ -64,9 +64,8 @@ class CaloAE(nn.Module):
         self.enc_layers = []
         in_channels = input_shape[0]
         cur_data_shape = input_shape[1:]
-        self.extra_upsamples = [0,0,0] * self.nlayers
+        self.extra_upsamples = [[0,0,0]] * self.nlayers
         for ilayer in range(self.nlayers):
-            is_last = (ilayer == self.nlayers -1)
 
             out_channels = self.layer_size[ilayer]
             lay = nn.Conv3d(in_channels = in_channels, out_channels = out_channels, kernel_size=self.kernel_size,padding='same', bias=True)
@@ -75,10 +74,10 @@ class CaloAE(nn.Module):
             in_channels = out_channels
 
             if(self.dim_red[ilayer] > 0):
-                if(not is_last):
-                    extra_upsample_dim = (0, cur_data_shape[1]%self.dim_red[ilayer], cur_data_shape[2]%self.dim_red[ilayer])
-                    cur_data_shape = (cur_data_shape[0], cur_data_shape[1] // self.dim_red[ilayer], cur_data_shape[2]// self.dim_red[ilayer])
-                    self.extra_upsamples[ilayer] = extra_upsample_dim
+                extra_upsample_dim = (0, cur_data_shape[1]%self.dim_red[ilayer], cur_data_shape[2]%self.dim_red[ilayer])
+                cur_data_shape = (cur_data_shape[0], cur_data_shape[1] // self.dim_red[ilayer], cur_data_shape[2]// self.dim_red[ilayer])
+                self.extra_upsamples[ilayer] = extra_upsample_dim
+
                 pool_lay = nn.AvgPool3d(kernel_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
                 self.enc_layers.append(pool_lay)
 

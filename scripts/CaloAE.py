@@ -51,19 +51,22 @@ class CaloAE(nn.Module):
         print("Encoder : \n")
         summary_shape = list(self._data_shape)
         summary_shape.insert(0, 1)
-        #summary(self.encoder_model, summary_shape)
+        summary(self.encoder_model, summary_shape)
 
         print("Decoder : \n")
         summary_shape = list(self.encoded_shape)
         summary_shape.insert(0, 1)
-        #summary(self.decoder_model, summary_shape)
+        summary(self.decoder_model, summary_shape)
 
 
 
     def BuildEncoder(self, input_shape):
         self.enc_layers = []
         in_channels = input_shape[0]
+        cur_data_shape = input_shape[1:]
+        self.extra_upsamples = [[0,0,0]] * self.nlayers
         for ilayer in range(self.nlayers):
+
             out_channels = self.layer_size[ilayer]
             lay = nn.Conv3d(in_channels = in_channels, out_channels = out_channels, kernel_size=self.kernel_size,padding='same', bias=True)
             self.enc_layers.append(lay)
@@ -71,6 +74,10 @@ class CaloAE(nn.Module):
             in_channels = out_channels
 
             if(self.dim_red[ilayer] > 0):
+                extra_upsample_dim = (0, cur_data_shape[1]%self.dim_red[ilayer], cur_data_shape[2]%self.dim_red[ilayer])
+                cur_data_shape = (cur_data_shape[0], cur_data_shape[1] // self.dim_red[ilayer], cur_data_shape[2]// self.dim_red[ilayer])
+                self.extra_upsamples[ilayer] = extra_upsample_dim
+
                 pool_lay = nn.AvgPool3d(kernel_size = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
                 self.enc_layers.append(pool_lay)
 
@@ -90,7 +97,9 @@ class CaloAE(nn.Module):
             in_channels = out_channels
 
             if(self.dim_red[ilayer] > 0):
-                up = nn.Upsample(scale_factor = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
+                up = nn.ConvTranspose3d(out_channels, out_channels, kernel_size = (3,4,4),
+                        stride = (1,self.dim_red[ilayer],self.dim_red[ilayer]), padding = 1, output_padding = self.extra_upsamples[ilayer])
+                #up = nn.Upsample(scale_factor = (1, self.dim_red[ilayer], self.dim_red[ilayer]))
                 self.dec_layers.append(up)
 
             #x = layers.BatchNormalization()(x)

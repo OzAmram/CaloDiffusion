@@ -24,20 +24,24 @@ def split_data_np(data, frac=0.8):
     test_data = data[split:]
     return train_data,test_data
 
-def create_R_Z_image(device):
+def create_R_Z_image(device, scaled = False):
 
     shape = (1,45,16,9)
     r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
     r_avgs = [(r_bins[i] + r_bins[i+1]) / 2.0 for i in range(len(r_bins) -1) ]
-    print(len(r_avgs), shape)
     assert(len(r_avgs) == shape[-1])
     Z_image = torch.zeros(shape, device=device)
     R_image = torch.zeros(shape, device=device)
-    for z in range(shape[0]):
+    for z in range(shape[1]):
         Z_image[:,z,:,:] = z
 
     for r in range(shape[-1]):
-        R_image[:,:,:,r] = r_avgs[r]
+        R_image[:,:,:,r] = r_avgs[r] 
+    if(scaled):
+        r_max = r_avgs[-1]
+        z_max = shape[1]
+        Z_image /= z_max
+        R_image /= r_max
     return R_image, Z_image
 
 
@@ -71,6 +75,7 @@ line_style = {
 
     'Autoencoder' : '-',
     'Diffu' : '-',
+    'Avg Shower' : '-',
     'LatentDiffu' : '-',
 
 }
@@ -99,6 +104,7 @@ colors = {
     
     'Autoencoder': 'purple',
     'Diffu': 'blue',
+    'Avg Shower': 'blue',
     'LatentDiffu': 'green',
 
 }
@@ -108,6 +114,7 @@ name_translate={
     'AE' : "Autoencoder",
     'Diffu' : "Diffu",
     'LatentDiffu' : "LatentDiffu",
+    'Avg' : "Avg Shower",
 
 
     'VPSDE':'CaloScore: VP',
@@ -233,6 +240,36 @@ def WriteText(xpos,ypos,text,ax0):
              verticalalignment='center',
              transform = ax0.transAxes, fontsize=25, fontweight='bold')
 
+def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins = 10, logy = False, normalize = False, stacked = False, h_type = 'step', 
+        h_range = None, fontsize = 16, fname="", yaxis_label = "", ymax = -1):
+    alpha = 1.
+    if(stacked): 
+        h_type = 'barstacked'
+        alpha = 0.2
+    fig_size = (8,6)
+    fig = plt.figure(figsize=fig_size)
+    ns, bins, patches = plt.hist(entries, bins=num_bins, range=h_range, color=colors, alpha=alpha,label=labels, density = normalize, histtype=h_type)
+    plt.xlabel(xaxis_label, fontsize =fontsize)
+    plt.tick_params(axis='x', labelsize=fontsize)
+
+    if(logy): plt.yscale('log')
+    elif(ymax > 0):
+        plt.ylim([0,ymax])
+    else:
+        ymax = 1.3 * np.amax(ns)
+        plt.ylim([0,ymax])
+
+    if(yaxis_label != ""):
+        plt.ylabel(yaxis_label, fontsize=fontsize)
+        plt.tick_params(axis='y', labelsize=fontsize)
+    plt.title(title, fontsize=fontsize)
+    plt.legend(loc='upper right', fontsize = fontsize)
+    if(fname != ""): 
+        plt.savefig(fname)
+        print("saving fig %s" %fname)
+    #else: plt.show(block=False)
+    return fig
+
 
 def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False,binning=None,label_loc='best'):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
@@ -259,7 +296,7 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
             
         if reference_name!=plot:
             eps = 1e-8
-            ratio = 100*np.divide(reference_hist-dist,reference_hist + eps)
+            ratio = 100*np.divide(dist - reference_hist,reference_hist + eps)
             if 'steps' in plot or 'r=' in plot:
                 ax1.plot(xaxis,ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=3)
             else:
@@ -305,24 +342,31 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, sh
 
     with h5.File(file_name,"r") as h5f:
         #holdout events for testing
-        if(nevts == -1 and nholdout > 0): nevts = -(nholdout + 1)
+        if(nevts == -1 and nholdout > 0): nevts = -(nholdout)
         end = int(nevts)
         if(from_end):
-            start = -int(nevts) -1
-            end = -1
+            start = -int(nevts)
+            end = None
         e = h5f['incident_energies'][start:end].astype(np.float32)/1000.0
         shower = h5f['showers'][start:end].astype(np.float32)/1000.0
 
         
-
-    return preprocess(shower, e, shape, emax, emin, max_deposit = max_deposit,  logE = logE, showerMap = showerMap)
-    
-def preprocess(shower, e, shape, emax, emin, max_deposit = 2, logE = True, showerMap = 'log-norm'):
-
     shower = np.reshape(shower,(shower.shape[0],-1))
     e = np.reshape(e,(-1,1))
     shower = shower/(max_deposit*e)
     shower = shower.reshape(shape)
+
+    shower_preprocessed = preprocess_shower(shower, showerMap)
+
+    if logE:        
+        E_preprocessed = np.log10(e/emin)/np.log10(emax/emin)
+    else:
+        E_preprocessed = (e-emin)/(emax-emin)
+
+    return shower_preprocessed, E_preprocessed 
+    
+def preprocess_shower(shower, showerMap = 'log-norm'):
+
 
     if('logit' in showerMap):
         alpha = 1e-6
@@ -344,10 +388,8 @@ def preprocess(shower, e, shape, emax, emin, max_deposit = 2, logE = True, showe
         #Range naturally from 0 to 1, change to be from -1 to 1
         elif('scaled' in showerMap): shower  = (shower * 2.0) - 1.0
 
-    if logE:        
-        return shower,np.log10(e/emin)/np.log10(emax/emin)
-    else:
-        return shower,(e-emin)/(emax-emin)
+    return shower
+
         
 
 def LoadJson(file_name):
@@ -356,7 +398,7 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True, showerMap ='log'):
+def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='log'):
     '''Revert the transformations applied to the training set'''
     #shape=voxels.shape
     alpha = 1e-6
@@ -369,6 +411,8 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True, showerMap ='log'
         if('norm' in showerMap): voxels = (voxels * logit_std) + logit_mean
         elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (logit_max - logit_min) + logit_min
 
+        #avoid overflows
+        #voxels = np.minimum(voxels, np.log(max_deposit/(1-max_deposit)))
 
         exp = np.exp(voxels)    
         x = exp/(1+exp)
@@ -377,6 +421,8 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit,logE=True, showerMap ='log'
     elif('log' in showerMap):
         if('norm' in showerMap): voxels = (voxels * log_std) + log_mean
         elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (log_max - log_min) + log_min
+
+        voxels = np.minimum(voxels, np.log(max_deposit))
 
 
         data = np.exp(voxels)

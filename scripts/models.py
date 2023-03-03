@@ -86,7 +86,8 @@ class SinusoidalPositionEmbeddings(nn.Module):
 class Block(nn.Module):
     def __init__(self, dim, dim_out, groups = 8, cylindrical = False):
         super().__init__()
-        if(not cylindrical): self.proj = nn.Conv3d(dim, dim_out, kernel_size = 3, padding = 1)
+        if(not cylindrical): 
+            self.proj = nn.Conv3d(dim, dim_out, kernel_size = 3, padding = 1)
         else:  self.proj = CylindricalConv(dim, dim_out, kernel_size = 3, padding = 1)
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
@@ -140,6 +141,7 @@ class ConvNextBlock(nn.Module):
             else None
         )
 
+        
         if(not cylindrical): conv_op = nn.Conv3d
         else: conv_op = CylindricalConv
 
@@ -258,6 +260,8 @@ class CondUnet(nn.Module):
         convnext_mult=2,
         cylindrical = False,
         data_shape = (-1,1,45, 16,9),
+        time_embed = True,
+        cond_embed = True,
     ):
         super().__init__()
 
@@ -281,22 +285,22 @@ class CondUnet(nn.Module):
             block_klass = partial(ResnetBlock, groups=resnet_block_groups, cylindrical = cylindrical)
 
         # time and energy embeddings
-        time_dim = cond_dim // 2
+        half_cond_dim = cond_dim // 2
+
+        time_layers = []
+        if(time_embed): time_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
+        else: time_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU() ]
+        time_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
 
 
-        self.time_mlp = nn.Sequential(
-            SinusoidalPositionEmbeddings(time_dim//2),
-            nn.Linear(time_dim//2, time_dim),
-            nn.GELU(),
-            nn.Linear(time_dim, time_dim),
-        )
+        cond_layers = []
+        if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
+        else: cond_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU()]
+        cond_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
 
-        self.cond_mlp = nn.Sequential(
-            SinusoidalPositionEmbeddings(time_dim//2),
-            nn.Linear(time_dim//2, time_dim),
-            nn.GELU(),
-            nn.Linear(time_dim, time_dim),
-        )
+
+        self.time_mlp = nn.Sequential(*time_layers)
+        self.cond_mlp = nn.Sequential(*cond_layers)
 
 
         # layers

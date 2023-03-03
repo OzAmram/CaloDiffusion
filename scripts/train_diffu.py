@@ -1,5 +1,6 @@
 import numpy as np
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import argparse
 import h5py as h5
 import torch.optim as optim
@@ -38,9 +39,14 @@ if __name__ == '__main__':
 
     torch.manual_seed(flags.seed)
 
+    cold_diffu = dataset_config.get('COLD_DIFFU', False)
+    cold_noise_scale = dataset_config.get('COLD_NOISE', 1.0)
+
     batch_size = dataset_config['BATCH']
     num_epochs = dataset_config['MAXEPOCH']
     early_stop = dataset_config['EARLYSTOP']
+    training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
+    loss_type = dataset_config.get("LOSS_TYPE", "l2")
 
 
     for i, dataset in enumerate(dataset_config['FILES']):
@@ -63,10 +69,18 @@ if __name__ == '__main__':
             data = np.concatenate((data, data_))
             energies = np.concatenate((energies, e_))
         
+    avg_showers = std_showers = E_bins = None
+    if(cold_diffu):
+        f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
+        #Already pre-processed
+        avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
+        std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
+        E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
+        
 
     energies = np.reshape(energies,(-1))    
     data = np.reshape(data,dataset_config['SHAPE_PAD'])
-    print(data.shape)
+    print("Data Shape " + str(data.shape))
     data_size = data.shape[0]
     print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
     torch_data_tensor = torch.from_numpy(data)
@@ -96,7 +110,8 @@ if __name__ == '__main__':
 
 
     if(flags.model == "Diffu"):
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config, training_obj = training_obj,
+                cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
         #sometimes save only weights, sometimes save other info
         if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
         elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
@@ -123,7 +138,7 @@ if __name__ == '__main__':
     os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
 
-    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 5e-4)
+    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 1e-5)
     if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
     print(early_stopper.__dict__)
     
@@ -131,13 +146,14 @@ if __name__ == '__main__':
     criterion = nn.MSELoss().to(device = device)
 
     optimizer = optim.Adam(model.parameters(), lr = float(dataset_config["LR"]))
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 10, verbose = True) 
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 15, verbose = True) 
     if('optimizer_state_dict' in checkpoint.keys() and not flags.reset_training): optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     if('scheduler_state_dict' in checkpoint.keys() and not flags.reset_training): scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
     training_losses = np.zeros(num_epochs)
     val_losses = np.zeros(num_epochs)
     start_epoch = 0
+    min_validation_loss = 99999.
     if('train_loss_hist' in checkpoint.keys()): 
         training_losses = checkpoint['train_loss_hist']
         val_losses = checkpoint['val_loss_hist']
@@ -157,16 +173,21 @@ if __name__ == '__main__':
 
             data = data.to(device = device)
             E = E.to(device = device)
+
             t = torch.randint(0, model.nsteps, (data.size()[0],), device=device).long()
             noise = torch.randn_like(data)
+            #print('data', torch.mean(data), torch.std(data))
+            if(cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
+                noise = model.gen_cold_image(E, cold_noise_scale, noise)
+                
 
-            batch_loss = model.compute_loss(data, E, t, noise)
+            batch_loss = model.compute_loss(data, E, noise = noise, t = t, loss_type = loss_type)
             batch_loss.backward()
 
             optimizer.step()
             train_loss+=batch_loss.item()
 
-            del data, E, t, noise, batch_loss
+            del data, E, noise, batch_loss
 
         train_loss = train_loss/len(loader_train)
         training_losses[epoch] = train_loss
@@ -180,18 +201,23 @@ if __name__ == '__main__':
 
             t = torch.randint(0, model.nsteps, (vdata.size()[0],), device=device).long()
             noise = torch.randn_like(vdata)
-            batch_loss = model.compute_loss(vdata, vE, t, noise)
+            if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)
+
+            batch_loss = model.compute_loss(vdata, vE, noise = noise, t = t, loss_type = loss_type)
 
             val_loss+=batch_loss.item()
-            del vdata,vE, t, noise, batch_loss
+            del vdata,vE, noise, batch_loss
 
         val_loss = val_loss/len(loader_val)
-        scheduler.step(torch.tensor([val_loss]))
+        #scheduler.step(torch.tensor([val_loss]))
         val_losses[epoch] = val_loss
         print("val_loss: "+ str(val_loss), flush = True)
 
-        if(val_loss < early_stopper.min_validation_loss):
+        scheduler.step(torch.tensor([train_loss]))
+
+        if(val_loss < min_validation_loss):
             torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
+            min_validation_loss = val_loss
 
         if(early_stopper.early_stop(val_loss)):
             print("Early stopping!")

@@ -5,6 +5,7 @@ from matplotlib import gridspec
 import argparse
 import h5py as h5
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import utils
 import copy
 import torch
@@ -34,8 +35,11 @@ parser.add_argument('--nrank', type=int,default=0, help='Rank of the files gener
 parser.add_argument('--batch_size', type=int,default=50, help='Batch size for generation')
 parser.add_argument('--model', default='Diffu', help='Diffusion model to load. Options are: Diffu, AE, VPSDE, VESDE,  subVPSDE, all')
 parser.add_argument('--sample', action='store_true', default=False,help='Sample from learned model')
+parser.add_argument('--sample_offset', default = 0, type = int, help='Skip some iterations in the sampling (noisiest iters most unstable)')
+parser.add_argument('--sample_algo', default = 'euler', help = 'What sampling algorithm (euler, cold, cold2)')
 parser.add_argument('--comp_eps', action='store_true', default=False,help='Load files with different eps')
 parser.add_argument('--comp_N', action='store_true', default=False,help='Load files with different N')
+parser.add_argument('--debug', action='store_true', default=False,help='Debugging options')
 parser.add_argument('--not_holdout', dest = 'holdout', action='store_false',help='Dont use events which were held out from training')
 parser.set_defaults(holdout = True)
 
@@ -45,9 +49,16 @@ nevts = int(flags.nevts)
 dataset_config = utils.LoadJson(flags.config)
 emax = dataset_config['EMAX']
 emin = dataset_config['EMIN']
+cold_diffu = dataset_config.get('COLD_DIFFU', False)
+cold_noise_scale = dataset_config.get("COLD_NOISE", 1.0)
+training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
 run_classifier=False
 
 batch_size = flags.batch_size
+
+if(not os.path.exists(flags.plot_folder)): 
+    print("Creating plot directory " + flags.plot_folder)
+    os.system("mkdir " + flags.plot_folder)
 
 
 if flags.sample:
@@ -70,16 +81,23 @@ if flags.sample:
         energies.append(e_)
 
     energies = np.reshape(energies,(-1,))
-    print(energies.shape)
-    print(energies[:10])
     data = np.reshape(data,dataset_config['SHAPE_PAD'])
 
     torch_data_tensor = torch.from_numpy(data)
     torch_E_tensor = torch.from_numpy(energies)
 
+    print("DATA", torch.mean(torch_data_tensor), torch.std(torch_data_tensor))
+
     torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_data_tensor)
     data_loader = torchdata.DataLoader(torch_dataset, batch_size = batch_size, shuffle = False)
 
+    avg_showers = std_showers = E_bins = None
+    if(cold_diffu or flags.model == 'Avg'):
+        f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
+        #Already pre-processed
+        avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
+        std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
+        E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
 
     #print(energies)
     if(flags.model == "AE"):
@@ -103,7 +121,8 @@ if flags.sample:
 
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config).to(device=device)
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config , training_obj = training_obj,
+                cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
 
         saved_model = torch.load(flags.model_loc, map_location = device)
         if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
@@ -111,17 +130,35 @@ if flags.sample:
 
         generated = []
         for i,(E,d_batch) in enumerate(data_loader):
+            if(E.shape[0] == 0): continue
             E = E.to(device=device)
             d_batch = d_batch.to(device=device)
 
-            gen = model.Sample(E, num_steps = dataset_config["NSTEPS"]).detach().cpu().numpy()
+            out = model.Sample(E, num_steps = dataset_config["NSTEPS"], cold_noise_scale = cold_noise_scale, sample_algo = flags.sample_algo,
+                    debug = flags.debug, sample_offset = flags.sample_offset)
+            if(flags.debug):
+                gen, all_gen, x0s = out
+                for j in [0,len(all_gen)//4, len(all_gen)//2, 3*len(all_gen)//4, 9*len(all_gen)//10, len(all_gen)-10, len(all_gen)-5,len(all_gen)-1]:
+                    fout_ex = '{}/{}_{}_norm_voxels_gen_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_ext)
+                    make_histogram([all_gen[j].reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                                    num_bins = 40, normalize = True, fname = fout_ex)
+
+                    fout_ex = '{}/{}_{}_norm_voxels_x0_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_ext)
+                    make_histogram([x0s[j].reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                                    num_bins = 40, normalize = True, fname = fout_ex)
+            else: gen = out
+
             #gen = model.Sample_v2(E, num_steps = dataset_config["NSTEPS"]).detach().cpu().numpy()
+
         
             if(i == 0): generated = gen
             else: generated = np.concatenate((generated, gen))
             del E, d_batch
+    elif(flags.model == "Avg"):
+        #define model just for useful fns
+        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
 
-    #    generated=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
+        generated = model.gen_cold_image(torch_E_tensor, cold_noise_scale).numpy()
 
     #elif(flags.model == "LatentDiffu"):
     #    print("Loading AE from " + dataset_config['AE'])
@@ -138,18 +175,14 @@ if flags.sample:
     #    generated = AE.decoder_model.predict(generated_latent, batch_size = batch_size)
 
 
-    #else:
-    #    print("Loading CaloScore from " + flags.model_loc)
-    #    model = CaloScore(dataset_config['SHAPE_PAD'][1:],energies.shape[1],nevts,sde_type=flags.model,config=dataset_config)    
-    #    model.load_weights(flags.model_loc).expect_partial()
+    print("GENERATED", np.mean(generated), np.std(generated), np.amax(generated), np.amin(generated))
 
-
-    #    generated=model.PCSampler(cond=energies,
-    #                              snr=dataset_config['SNR'],
-    #                              num_steps=dataset_config['NSTEPS']).numpy()
-
-    #swap channels to be last axis (unlike pytorch standard)
     generated = generated.reshape(dataset_config["SHAPE"])
+
+    if(flags.debug):
+        fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext)
+        make_histogram([generated.reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                        num_bins = 40, normalize = True, fname = fout_ex)
 
     generated,energies = utils.ReverseNorm(generated,energies[:nevts],
                                            shape=dataset_config['SHAPE'],
@@ -160,6 +193,7 @@ if flags.sample:
                                            showerMap = dataset_config['SHOWERMAP'])
     generated[generated<dataset_config['ECUT']] = 0 #min from samples
 
+    print("GENERATED-reversenorm", np.mean(generated), np.std(generated), np.amax(generated), np.amin(generated))
 
     energies = np.reshape(energies,(-1,1))
     #mask file for voxels that are always empty
@@ -221,8 +255,8 @@ true_energies = []
 for dataset in dataset_config['EVAL']:
     with h5.File(os.path.join(flags.data_folder,dataset),"r") as h5f:
         if(flags.holdout):
-            start = -int(total_evts) -1
-            end = -1
+            start = -int(total_evts)
+            end = None
         else: 
             start = 0
             end = total_evts
@@ -232,6 +266,8 @@ for dataset in dataset_config['EVAL']:
 
 data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE'])
 print(data_dict['Geant4'].shape)
+print("Geant Avg", np.mean(data_dict['Geant4']))
+print("Generated Avg", np.mean(data_dict[utils.name_translate[model]]))
 true_energies = np.reshape(true_energies,(-1,1))
 
 
@@ -239,9 +275,23 @@ true_energies = np.reshape(true_energies,(-1,1))
 #Plot high level distributions and compare with real values
 assert np.allclose(true_energies,energies), 'ERROR: Energies between samples dont match'
 
-if(not os.path.exists(flags.plot_folder)): 
-    print("Creating plot directory " + flags.plot_folder)
-    os.system("mkdir " + flags.plot_folder)
+
+
+def HistERatio(data_dict,true_energies):
+    
+
+    ratios =  []
+    feed_dict = {}
+    for key in data_dict:
+        dep = np.sum(data_dict[key].reshape(data_dict[key].shape[0],-1),-1)
+        feed_dict[key] = dep / true_energies.reshape(-1)
+
+    binning = np.linspace(0.5, 1.5, 101)
+
+    fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Deposited energy / Generated Energy', ylabel= 'Normalized entries',logy=False,binning=binning)
+    fig.savefig('{}/FCC_ERatio_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+    return feed_dict
+
 
 
 def ScatterESplit(data_dict,true_energies):
@@ -529,6 +579,7 @@ plot_routines = {
      'Energy per layer':AverageELayer,
      'Energy':HistEtot,
      '2D Energy scatter split':ScatterESplit,
+     'Energy Ratio split':HistERatio,
      'Nhits':HistNhits,
 }
 

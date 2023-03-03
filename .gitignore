@@ -1,0 +1,6 @@
+*.un~
+*.swp
+*.txt
+*.pyc
+slurm/diffu*
+

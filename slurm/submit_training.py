@@ -13,7 +13,7 @@ flags = parser.parse_args()
 if(flags.name[-1] =="/"): flags.name = flags.name[:-1]
 print(flags.name)
 
-base_dir = r"\/work1\/cms_mlsim\/CaloDiffusion\/slurm\/"
+base_dir = r"\/work1\/cms_mlsim\/oamram\/CaloDiffusion\/slurm\/"
 if(flags.model == 'Diffu'):
     if(not os.path.exists(flags.name)): os.system("mkdir %s" % flags.name)
     cfg_loc = flags.name + "/config.json"

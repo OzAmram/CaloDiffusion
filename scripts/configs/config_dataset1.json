@@ -1,6 +1,7 @@
 {
     'FILES':['dataset_1_photons_1.hdf5','dataset_1_photons_2.hdf5'],
     'EVAL':['dataset_1_photons_2.hdf5'],
+    'DATASET_NUM' : 1,
     'NEVAL':121000,
     'NRANK':20,
     'SHAPE':[-1,368,1],

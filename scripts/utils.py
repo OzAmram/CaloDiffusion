@@ -24,11 +24,15 @@ def split_data_np(data, frac=0.8):
     test_data = data[split:]
     return train_data,test_data
 
-def create_R_Z_image(device, scaled = False):
+def create_R_Z_image(device, scaled = False, shape = (1,45,16,9)):
 
-    shape = (1,45,16,9)
-    r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
+    if(shape[-1] == 9): #dataset 2
+        r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
+    else:
+        r_bins = [0,2.325,4.65,6.975,9.3,11.625,13.95,16.275,18.6,20.925,23.25,25.575,27.9,30.225,32.55,34.875,37.2,39.525,41.85]
+
     r_avgs = [(r_bins[i] + r_bins[i+1]) / 2.0 for i in range(len(r_bins) -1) ]
+    print(len(r_avgs), shape[-1])
     assert(len(r_avgs) == shape[-1])
     Z_image = torch.zeros(shape, device=device)
     R_image = torch.zeros(shape, device=device)
@@ -319,25 +323,66 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
 
 
 
-#precomputed values for dataset2, TODO should make this more general
-logit_mean = -12.8564
-logit_std = 1.9123
-logit_min = -13.8155
-logit_max =  0.1153
+#precomputed values for datasets
+dataset1_params ={
+'logit_mean' : 0.0,
+'logit_std' : 1.0,
+'logit_min': 0. ,
+'logit_max' :  2.0,
 
-log_mean = -17.5451
-log_std = 4.4086
-log_min = -20.0
-log_max =  -0.6372
-
-
-sqrt_mean = 0.0026
-sqrt_std = 0.0073
-sqrt_min = 0.
-sqrt_max = 1.0
+'log_mean' : 0.0,
+'log_std' : 1.0,
+'log_min' : 0.0,
+'log_max' : 2.0,
 
 
-def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False):
+'sqrt_mean' : 0.0,
+'sqrt_std' : 1.0,
+'sqrt_min' : 0.,
+'sqrt_max' : 1.0,
+}
+
+dataset2_params = {
+'logit_mean' : -12.8564,
+'logit_std' : 1.9123,
+'logit_min': -13.8155,
+'logit_max' :  0.1153,
+
+'log_mean' : -17.5451,
+'log_std' : 4.4086,
+'log_min' : -20.0,
+'log_max' :  -0.6372,
+
+
+'sqrt_mean' : 0.0026,
+'sqrt_std' : 0.0073,
+'sqrt_min' : 0.,
+'sqrt_max' : 1.0,
+}
+
+
+dataset3_params = {
+'logit_mean' : -13.4753,
+'logit_std' : 1.1070,
+'logit_min': -13.81551,
+'logit_max' :  0.2909,
+
+'log_mean' : -1.1245,
+'log_std' : 3.3451,
+'log_min' : -18.6905,
+'log_max' : 0.0,
+
+
+'sqrt_mean' : 0.0,
+'sqrt_std' : 1.0,
+'sqrt_min' : 0.,
+'sqrt_max' : 1.0,
+}
+dataset_params = [dataset1_params, dataset2_params, dataset3_params]
+
+
+
+def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2):
     start = 0
 
     with h5.File(file_name,"r") as h5f:
@@ -356,7 +401,7 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, sh
     shower = shower/(max_deposit*e)
     shower = shower.reshape(shape)
 
-    shower_preprocessed = preprocess_shower(shower, showerMap)
+    shower_preprocessed = preprocess_shower(shower, showerMap, dataset_num = dataset_num)
 
     if logE:        
         E_preprocessed = np.log10(e/emin)/np.log10(emax/emin)
@@ -365,7 +410,13 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, sh
 
     return shower_preprocessed, E_preprocessed 
     
-def preprocess_shower(shower, showerMap = 'log-norm'):
+def preprocess_shower(shower, showerMap = 'log-norm', dataset_num = 2):
+
+    if(dataset_num > 3 or dataset_num <=0 ): 
+        print("Invalid dataset %i!" % dataset_num)
+        exit(1)
+
+    c = dataset_params[dataset_num-1]
 
 
     if('logit' in showerMap):
@@ -373,18 +424,18 @@ def preprocess_shower(shower, showerMap = 'log-norm'):
         x = alpha + (1 - 2*alpha)*shower
         shower = np.ma.log(x/(1-x)).filled(0)    
 
-        if('norm' in showerMap): shower = (shower - logit_mean) / logit_std
-        elif('scaled' in showerMap): shower = 2.0 * (shower - logit_min) / (logit_max - logit_min) - 1.0
+        if('norm' in showerMap): shower = (shower - c['logit_mean']) / c['logit_std']
+        elif('scaled' in showerMap): shower = 2.0 * (shower - c['logit_min']) / (c['logit_max'] - c['logit_min']) - 1.0
 
     elif('log' in showerMap):
         eps = 1e-8
-        shower = np.ma.log(shower).filled(log_min)
-        if('norm' in showerMap): shower = (shower - log_mean) / log_std
-        elif('scaled' in showerMap):  shower = 2.0 * (shower - log_min) / (log_max - log_min) - 1.0
+        shower = np.ma.log(shower).filled(c['log_min'])
+        if('norm' in showerMap): shower = (shower - c['log_mean']) / c['log_std']
+        elif('scaled' in showerMap):  shower = 2.0 * (shower - c['log_min']) / (c['log_max'] - c['log_min']) - 1.0
 
     elif('sqrt' in showerMap):
         shower = np.sqrt(shower)
-        if('norm' in showerMap): shower = (shower - sqrt_mean) / sqrt_std
+        if('norm' in showerMap): shower = (shower - c['sqrt_mean']) / c['sqrt_std']
         #Range naturally from 0 to 1, change to be from -1 to 1
         elif('scaled' in showerMap): shower  = (shower * 2.0) - 1.0
 
@@ -398,8 +449,16 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='log'):
+def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='log', dataset_num = 2):
     '''Revert the transformations applied to the training set'''
+
+    if(dataset_num > 3 or dataset_num <=0 ): 
+        print("Invalid dataset %i!" % dataset_num)
+        exit(1)
+
+    c = dataset_params[dataset_num-1]
+
+
     #shape=voxels.shape
     alpha = 1e-6
     if logE:
@@ -408,8 +467,8 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
         energy = emin + (emax-emin)*e
         
     if('logit' in showerMap):
-        if('norm' in showerMap): voxels = (voxels * logit_std) + logit_mean
-        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (logit_max - logit_min) + logit_min
+        if('norm' in showerMap): voxels = (voxels * c['logit_std']) + c['logit_mean']
+        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (c['logit_max'] - c['logit_min']) + c['logit_min']
 
         #avoid overflows
         #voxels = np.minimum(voxels, np.log(max_deposit/(1-max_deposit)))
@@ -419,8 +478,8 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
         data = (x-alpha)/(1 - 2*alpha)
 
     elif('log' in showerMap):
-        if('norm' in showerMap): voxels = (voxels * log_std) + log_mean
-        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (log_max - log_min) + log_min
+        if('norm' in showerMap): voxels = (voxels * c['log_std']) + c['log_mean']
+        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (c['log_max'] - c['log_min']) + c['log_min']
 
         voxels = np.minimum(voxels, np.log(max_deposit))
 
@@ -428,7 +487,7 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
         data = np.exp(voxels)
 
     elif('sqrt' in showerMap):
-        if('norm' in showerMap): voxels = (voxels * sqrt_std) + sqrt_mean
+        if('norm' in showerMap): voxels = (voxels * c['sqrt_std']) + c['sqrt_mean']
         elif('scaled' in showerMap): voxels = (voxels + 1.0)/2.0
         data = np.square(voxels)
 

@@ -36,7 +36,7 @@ parser.add_argument('--batch_size', type=int,default=50, help='Batch size for ge
 parser.add_argument('--model', default='Diffu', help='Diffusion model to load. Options are: Diffu, AE, VPSDE, VESDE,  subVPSDE, all')
 parser.add_argument('--sample', action='store_true', default=False,help='Sample from learned model')
 parser.add_argument('--sample_offset', default = 0, type = int, help='Skip some iterations in the sampling (noisiest iters most unstable)')
-parser.add_argument('--sample_algo', default = 'euler', help = 'What sampling algorithm (euler, cold, cold2)')
+parser.add_argument('--sample_algo', default = 'ddpm', help = 'What sampling algorithm (ddpm, ddim, cold, cold2)')
 parser.add_argument('--comp_eps', action='store_true', default=False,help='Load files with different eps')
 parser.add_argument('--comp_N', action='store_true', default=False,help='Load files with different N')
 parser.add_argument('--debug', action='store_true', default=False,help='Debugging options')
@@ -52,7 +52,7 @@ emin = dataset_config['EMIN']
 cold_diffu = dataset_config.get('COLD_DIFFU', False)
 cold_noise_scale = dataset_config.get("COLD_NOISE", 1.0)
 training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
-run_classifier=False
+dataset_num = dataset_config.get('DATASET_NUM', 2)
 
 batch_size = flags.batch_size
 
@@ -75,6 +75,7 @@ if flags.sample:
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
             from_end = flags.holdout,
+            dataset_num  = dataset_num,
         )
         
         data.append(data_)
@@ -190,7 +191,9 @@ if flags.sample:
                                            max_deposit=dataset_config['MAXDEP'],
                                            emax = dataset_config['EMAX'],
                                            emin = dataset_config['EMIN'],
-                                           showerMap = dataset_config['SHOWERMAP'])
+                                           showerMap = dataset_config['SHOWERMAP'],
+                                            dataset_num  = dataset_num
+                                           )
     generated[generated<dataset_config['ECUT']] = 0 #min from samples
 
     print("GENERATED-reversenorm", np.mean(generated), np.std(generated), np.amax(generated), np.amin(generated))

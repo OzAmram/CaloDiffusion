@@ -25,6 +25,7 @@ class CaloDiffu(nn.Module):
         self.avg_showers = avg_showers
         self.std_showers = std_showers
         self.training_obj = training_obj
+        self.discrete_time = True
         supported = ['noise_pred', 'mean_pred', 'hybrid']
         is_obj = [s in self.training_obj for s in supported]
         if(not any(is_obj)):
@@ -79,7 +80,7 @@ class CaloDiffu(nn.Module):
 
         if(torch.cuda.is_available()): device = torch.device('cuda')
         else: device = torch.device('cpu')
-        self.R_image, self.Z_image = create_R_Z_image(device, scaled = True)
+        self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = self._data_shape)
 
         if(self.R_Z_inputs):
 
@@ -142,8 +143,9 @@ class CaloDiffu(nn.Module):
 
         if(t[0] <=0): return data
 
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
+        if(self.discrete_time):
+            sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
+            sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
         out = sqrt_alphas_cumprod_t * data + sqrt_one_minus_alphas_cumprod_t * noise
         return out
 
@@ -180,16 +182,15 @@ class CaloDiffu(nn.Module):
             #rnd_normal = torch.randn([images.shape[0], 1, 1, 1], device=images.device)
             #sigma = (rnd_normal * self.P_std + self.P_mean).exp()
 
-            weight = 1. + (1./ sigma2)
 
             c_skip = 1. / (sigma2 + 1.)
-            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
             c_out = 1./ (1. + 1./sigma2).sqrt()
 
-            #target = (data - c_skip * x_noisy)
+            target = (data - c_skip * x_noisy)/c_out
 
-            pred = c_skip * x_noisy + c_out * pred
-            target = data
+            #pred = c_skip * x_noisy + c_out * pred
+            #weight = 1. + (1./ sigma2)
+            #target = data
 
 
 
@@ -239,7 +240,7 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def p_sample(self, x, img, E, t, cold_noise_scale = 0., noise = None, sample_algo = 'euler', debug = False):
+    def p_sample(self, x, img, E, t, cold_noise_scale = 0., noise = None, sample_algo = 'ddpm', debug = False):
         #reverse the diffusion process (one step)
 
 
@@ -277,11 +278,27 @@ class CaloDiffu(nn.Module):
         
 
 
-        if(sample_algo == 'euler'):
+        if(sample_algo == 'ddpm'):
+            # Sampling algo from https://arxiv.org/abs/2006.11239
             # Use results from our model (noise predictor) to predict the mean of posterior distribution of prev step
             post_mean = sqrt_recip_alphas_t * ( img - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
             out = post_mean + torch.sqrt(posterior_variance_t) * noise 
             if t[0] == 0: out = post_mean
+        if(sample_algo == 'euler'):
+            step = img - 2. * noise_pred/sigma
+            out = None
+
+
+        #elif(sample_algo == 'ddim'):
+        #    if(x0_pred is None): x0_pred = (img - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
+        #    if t[0] == 0: out = x0_pred
+        #    else:
+        #        t_next = t-1
+        #        sqrt_alphas_cumprod_t_next = extract(self.sqrt_alphas_cumprod, t_next, img.shape)
+
+        #        c1 =  torch.sqrt(1. - sqrt_alphas_cumprod_t_next **2 + betas_t)
+        #        out = sqrt_alphas_cumprod_t_next * x0_pred + c1 * noise_pred + torch.sqrt(betas_t) * noise
+        #        print(torch.mean(out), torch.mean(x0_pred), torch.mean(c1 * noise_pred), torch.mean(torch.sqrt(betas_t) * noise))
 
         elif(sample_algo == 'cold_step'):
             post_mean = img - noise_pred * sqrt_one_minus_alphas_cumprod_t
@@ -332,7 +349,7 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def Sample(self, E, num_steps = 200, cold_noise_scale = 0., sample_algo = 'euler', debug = False, sample_offset = 0):
+    def Sample(self, E, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0, sample_step = 1):
         """Generate samples from diffusion model.
         
         Args:
@@ -364,23 +381,23 @@ class CaloDiffu(nn.Module):
 
 
         start = time.time()
-        #for i in tqdm(reversed(range(0, num_steps)), desc='sampling loop time step', total=num_steps):
-        #time_steps = list(range(num_steps -50))
-        time_steps = list(range(num_steps - sample_offset))
-        time_steps.reverse()
 
         batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
         batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
 
         img = img_start
         fixed_noise = None
-        print("Start", torch.mean(img_start), torch.std(img_start))
         if('fixed' in sample_algo): 
             print("Fixing noise to constant for sampling!")
             fixed_noise = img_start
         imgs = []
         x0s = []
         self.prev_noise = img_start
+
+        sample_step = 1
+        time_steps = list(range(0, num_steps - sample_offset, sample_step))
+        time_steps.reverse()
+
         for time_step in time_steps:      
             times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
             if(self.R_Z_inputs): x_in = torch.cat([img, batch_R_image, batch_Z_image], axis = 1)

@@ -48,38 +48,40 @@ class CaloDiffu(nn.Module):
 
         #linear schedule
         schedd = config.get("NOISE_SCHED", "linear")
-        if(schedd == "linear"): self.betas = torch.linspace(self.beta_start, self.beta_end, self.nsteps)
-        elif(schedd == "cosine"): 
+        self.discrete_time = True
+
+        
+        if("linear" in schedd): self.betas = torch.linspace(self.beta_start, self.beta_end, self.nsteps)
+        elif("cosine" in schedd): 
             self.betas = cosine_beta_schedule(self.nsteps)
+        elif("log" in schedd):
+            self.discrete_time = False
+            self.P_mean = -1.5
+            self.P_std = 1.5
         else:
             print("Invalid NOISE_SCHEDD param %s" % schedd)
             exit(1)
 
-        self.alphas = 1. - self.betas
+        if(self.discrete_time):
+            #precompute useful quantities for training
+            self.alphas = 1. - self.betas
+            self.alphas_cumprod = torch.cumprod(self.alphas, axis = 0)
 
+            #shift all elements over by inserting unit value in first place
+            alphas_cumprod_prev = torch.nn.functional.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
 
-        #precompute useful quantities for training
-        self.alphas_cumprod = torch.cumprod(self.alphas, axis = 0)
+            self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
+            self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
+            self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
 
-        #shift all elements over by inserting unit value in first place
-        alphas_cumprod_prev = torch.nn.functional.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
-
-        self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
-        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
-        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
-
-        #print("MIN MIDDLE MAX variance", ( self.sqrt_one_minus_alphas_cumprod[0].numpy(),   
-            #self.sqrt_one_minus_alphas_cumprod[self.nsteps//2].numpy(), self.sqrt_one_minus_alphas_cumprod[-1].numpy()))
-        #exit(1)
-
-        self.posterior_variance = self.betas * (1. - alphas_cumprod_prev) / (1. - self.alphas_cumprod)
+            self.posterior_variance = self.betas * (1. - alphas_cumprod_prev) / (1. - self.alphas_cumprod)
 
         self.R_Z_inputs = config.get('R_Z_INPUT', False)
         in_channels = 1
 
         if(torch.cuda.is_available()): device = torch.device('cuda')
         else: device = torch.device('cpu')
-        self.R_image, self.Z_image = create_R_Z_image(device, scaled = True)
+        self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = self._data_shape)
 
         if(self.R_Z_inputs):
 
@@ -118,6 +120,14 @@ class CaloDiffu(nn.Module):
         else: d_new = d
 
         return super().load_state_dict(d_new)
+
+    def add_RZ(self, x):
+        if(self.R_Z_inputs):
+            batch_R_image = self.R_image.repeat([x.shape[0], 1,1,1,1]).to(device=x.device)
+            batch_Z_image = self.Z_image.repeat([x.shape[0], 1,1,1,1]).to(device=x.device)
+            return torch.cat([x, batch_R_image, batch_Z_image], axis = 1)
+        else:
+            return x
             
     
     def lookup_avg_std_shower(self, inputEs):
@@ -142,61 +152,51 @@ class CaloDiffu(nn.Module):
 
         if(t[0] <=0): return data
 
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
-        out = sqrt_alphas_cumprod_t * data + sqrt_one_minus_alphas_cumprod_t * noise
-        return out
+        if(self.discrete_time):
+            sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
+            sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
+            out = sqrt_alphas_cumprod_t * data + sqrt_one_minus_alphas_cumprod_t * noise
+            return out
+        else:
+            print("NON DISCRETE TIME BAD")
+            exit(1)
 
 
-    def compute_loss(self, data, energy, noise = None, t = None, loss_type = "l2"):
+    def compute_loss(self, data, energy, noise = None, t = None, loss_type = "l2", rnd_normal = None):
         if noise is None:
             noise = torch.randn_like(data)
         
         
-        if(t is None):
-            t = torch.randint(0, self.nsteps, (data.size()[0],), device=data.device).long()
 
-        t_emb = self.do_time_embed(t, self.time_embed)
 
-        x_noisy = self.noise_image(data, t, noise=noise)
+        if(self.discrete_time): 
+            if(t is None): t = torch.randint(0, self.nsteps, (data.size()[0],), device=data.device).long()
+            x_noisy = self.noise_image(data, t, noise=noise)
+            sigma = None
+            sigma2 = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)**2
+        else:
+            if(rnd_normal is None): rnd_normal = torch.randn((data.size()[0],), device=data.device)
+            sigma = (rnd_normal * self.P_std + self.P_mean).exp()
+            x_noisy = data + torch.reshape(sigma, (data.shape[0], 1,1,1,1)) * noise
+            sigma2 = sigma**2
 
-        sigma2 = extract(self.betas, t, data.shape)
 
-        if(self.R_Z_inputs):
-            if(data.shape[0] == self._num_batch):
-                x_input = torch.cat([x_noisy, self.batch_R_image, self.batch_Z_image], axis = 1)
-            else:
-                batch_R_image = self.R_image.repeat([data.shape[0], 1,1,1,1])
-                batch_Z_image = self.Z_image.repeat([data.shape[0], 1,1,1,1])
-                x_input = torch.cat([x_noisy, batch_R_image, batch_Z_image], axis = 1)
-        else: x_input = x_noisy
 
-        pred = self.model(x_input, energy, t_emb)
+        t_emb = self.do_time_embed(t, self.time_embed, sigma)
+
+        pred = self.model(self.add_RZ(x_input), energy, t_emb)
 
         if( 'hybrid' in self.training_obj ):
-            #sample noise from random normal 
-            #P_mean = torch.log(self.nsteps/2)
-            #P_mean = torch.log(self.nsteps/4)
-            #rnd_normal = torch.randn([images.shape[0], 1, 1, 1], device=images.device)
-            #sigma = (rnd_normal * self.P_std + self.P_mean).exp()
 
-            weight = 1. + (1./ sigma2)
+            c_skip = torch.reshape(1. / (sigma2 + 1.), (data.shape[0], 1,1,1,1))
+            c_out = torch.reshape(1./ (1. + 1./sigma2).sqrt(), (data.shape[0], 1,1,1,1))
+            weight = torch.reshape(1. + (1./ sigma2), (data.shape[0], 1,1,1,1))
 
-            c_skip = 1. / (sigma2 + 1.)
-            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
-            c_out = 1./ (1. + 1./sigma2).sqrt()
+            target = (data - c_skip * x_noisy)/c_out
 
-            #target = (data - c_skip * x_noisy)
 
             pred = c_skip * x_noisy + c_out * pred
             target = data
-
-
-
-            #print(torch.mean(denoised_pred), torch.std(denoised_pred))
-            #print(torch.mean(c_out), torch.mean(c_skip))
-            #print(torch.mean(target), torch.std(target))
-
 
         elif(self.training_obj == 'noise_pred'):
             target = noise
@@ -225,21 +225,82 @@ class CaloDiffu(nn.Module):
         
 
 
-    def do_time_embed(self, t, embed_type = "identity"):
-        if(embed_type == "identity" or embed_type == 'sin'):
-            return t
-        if(embed_type == "scaled"):
-            return t/self.nsteps
-        if(embed_type == "sigma"):
-            return torch.sqrt(self.betas[t]).to(t.device)
+    def do_time_embed(self, t = None, embed_type = "identity",  sigma = None,):
+        if(self.discrete_time):
+            if(embed_type == "identity" or embed_type == 'sin'):
+                return t
+            if(embed_type == "scaled"):
+                return t/self.nsteps
+            if(embed_type == "sigma"):
+                #return torch.sqrt(self.betas[t]).to(t.device)
+                return self.sqrt_one_minus_alphas_cumprod[t].to(t.device)
+            if(embed_type == "log"):
+                return 0.5 * torch.log(self.betas[t]).to(t.device)
+        else:
+            if(embed_type == "log"):
+                return 0.5 * torch.log(sigma).to(t.device)
+            else:
+                return sigma
 
-        if(embed_type == "log"):
-            return 0.5 * torch.log(self.betas[t]).to(t.device)
 
+    def edm_sampler( self, x, E, sample_algo = 'euler', randn_like=torch.randn_like, num_steps=400, sigma_min=0.002, sigma_max=10, rho=7,
+        S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,):
+        # Adjust noise levels based on what's supported by the network.
+
+        #sigma_min = max(sigma_min, net.sigma_min)
+        #sigma_max = min(sigma_max, net.sigma_max)
+
+        gen_size = x.shape[0]
+
+        # Time step discretization.
+        step_indices = torch.arange(num_steps, dtype=torch.float32, device=x.device)
+        t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+        t_steps = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+
+        # Main sampling loop.
+        x_next = x.to(torch.float32) * t_steps[0]
+        for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
+            x_cur = x_next
+
+            # Increase noise temporarily.
+            gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
+            t_hat = torch.as_tensor(t_cur + gamma * t_cur)
+            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
+
+            # Euler step.
+
+            t_hat_full = torch.full((gen_size,), t_hat, device=x.device)
+            denoised = self.denoise(x_hat, E, t_hat_full).to(torch.float32)
+            d_cur = (x_hat - denoised) / t_hat
+            x_next = x_hat + (t_next - t_hat) * d_cur
+
+
+
+            # Apply 2nd order correction.
+            if (sample_algo == 'edm') and (i < num_steps - 1):
+                t_next_full = torch.full((gen_size,), t_next, device=x.device)
+                denoised = self.denoise(x_next, E, t_next_full).to(torch.float32)
+                d_prime = (x_next - denoised) / t_next
+                x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+
+        return x_next
+
+
+    def denoise(self, x, E,t_emb):
+        pred = self.model(self.add_RZ(x), E, t_emb)
+        if('mean_pred' in self.training_obj):
+            return pred
+        elif('hybrid' in self.training_obj):
+
+            sigma2 = (t_emb**2).reshape(-1,1,1,1,1)
+            c_skip = 1. / (sigma2 + 1.)
+            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
+
+            return c_skip * x + c_out * pred
 
 
     @torch.no_grad()
-    def p_sample(self, x, img, E, t, cold_noise_scale = 0., noise = None, sample_algo = 'euler', debug = False):
+    def p_sample(self, x, img, E, t, cold_noise_scale = 0., noise = None, sample_algo = 'ddpm', debug = False):
         #reverse the diffusion process (one step)
 
 
@@ -259,29 +320,43 @@ class CaloDiffu(nn.Module):
 
 
         pred = self.model(x, E, t_emb)
-        if(self.training_obj == 'noise_pred'):
+        if('noise_pred' in self.training_obj):
             noise_pred = pred
             x0_pred = None
-        elif(self.training_obj == 'mean_pred'):
+        elif('mean_pred' in self.training_obj):
             x0_pred = pred
             noise_pred = (img - sqrt_alphas_cumprod_t * x0_pred)/sqrt_one_minus_alphas_cumprod_t
-        elif(self.training_obj == 'hybrid'):
+        elif('hybrid' in self.training_obj):
 
-            sigma2 = extract(self.betas, t, img.shape)
+            #sigma2 = extract(self.sqrt_one_minus_alphas_cumprod, t, img.shape)**2
+            sigma2 = extract(self.betas, t, img.shape)**2
             c_skip = 1. / (sigma2 + 1.)
             c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
 
             x0_pred = c_skip * img + c_out * pred
             noise_pred = (img - sqrt_alphas_cumprod_t * x0_pred)/sqrt_one_minus_alphas_cumprod_t
+            print(torch.mean(noise_pred), torch.std(noise_pred))
 
         
 
 
-        if(sample_algo == 'euler'):
+        if(sample_algo == 'ddpm'):
+            # Sampling algo from https://arxiv.org/abs/2006.11239
             # Use results from our model (noise predictor) to predict the mean of posterior distribution of prev step
             post_mean = sqrt_recip_alphas_t * ( img - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
             out = post_mean + torch.sqrt(posterior_variance_t) * noise 
             if t[0] == 0: out = post_mean
+
+        elif(sample_algo == 'ddim'):
+            if(x0_pred is None): x0_pred = (img - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
+            if t[0] == 0: out = x0_pred
+            else:
+                t_next = t-1
+                sqrt_alphas_cumprod_t_next = extract(self.sqrt_alphas_cumprod, t_next, img.shape)
+
+                c1 =  torch.sqrt(1. - sqrt_alphas_cumprod_t_next **2 - posterior_variance_t **2)
+                out = sqrt_alphas_cumprod_t_next * x0_pred + c1 * noise_pred + sqrt_alphas_cumprod_t * noise
+                print(torch.mean(out), torch.mean(x0_pred), torch.mean(c1 * noise_pred), torch.mean(sqrt_alphas_cumprod_t * noise))
 
         elif(sample_algo == 'cold_step'):
             post_mean = img - noise_pred * sqrt_one_minus_alphas_cumprod_t
@@ -332,7 +407,7 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def Sample(self, E, num_steps = 200, cold_noise_scale = 0., sample_algo = 'euler', debug = False, sample_offset = 0):
+    def Sample(self, E, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0, sample_step = 1):
         """Generate samples from diffusion model.
         
         Args:
@@ -364,33 +439,40 @@ class CaloDiffu(nn.Module):
 
 
         start = time.time()
-        #for i in tqdm(reversed(range(0, num_steps)), desc='sampling loop time step', total=num_steps):
-        #time_steps = list(range(num_steps -50))
-        time_steps = list(range(num_steps - sample_offset))
-        time_steps.reverse()
 
-        batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
-        batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
+        if(sample_algo == 'euler' or sample_algo == 'edm'):
+            S_churn = 40
+            S_min = 0.01
+            S_max = 50
+            S_noise = 1.005
+            sigma_min = 0.002
+            sigma_max = 1.0
 
-        img = img_start
-        fixed_noise = None
-        print("Start", torch.mean(img_start), torch.std(img_start))
-        if('fixed' in sample_algo): 
-            print("Fixing noise to constant for sampling!")
-            fixed_noise = img_start
-        imgs = []
-        x0s = []
-        self.prev_noise = img_start
-        for time_step in time_steps:      
-            times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
-            if(self.R_Z_inputs): x_in = torch.cat([img, batch_R_image, batch_Z_image], axis = 1)
-            else: x_in = img
-            out = self.p_sample(x_in, img, E, times, noise = fixed_noise, cold_noise_scale = cold_noise_scale, sample_algo = sample_algo, debug = debug)
-            if(debug): 
-                img, x0_pred = out
-                imgs.append(img.detach().cpu().numpy())
-                x0s.append(x0_pred.detach().cpu().numpy())
-            else: img = out
+            img = self.edm_sampler(img_start,E, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
+                    S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise)
+
+        else:
+            img = img_start
+            fixed_noise = None
+            if('fixed' in sample_algo): 
+                print("Fixing noise to constant for sampling!")
+                fixed_noise = img_start
+            imgs = []
+            x0s = []
+            self.prev_noise = img_start
+
+            time_steps = list(range(0, num_steps - sample_offset, sample_step))
+            time_steps.reverse()
+
+            for time_step in time_steps:      
+                times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
+                x_in = self.add_RZ(img)
+                out = self.p_sample(x_in, img, E, times, noise = fixed_noise, cold_noise_scale = cold_noise_scale, sample_algo = sample_algo, debug = debug)
+                if(debug): 
+                    img, x0_pred = out
+                    imgs.append(img.detach().cpu().numpy())
+                    x0s.append(x0_pred.detach().cpu().numpy())
+                else: img = out
 
         end = time.time()
         print("Time for sampling {} events is {} seconds".format(gen_size,end - start))
@@ -400,55 +482,4 @@ class CaloDiffu(nn.Module):
             return img.detach().cpu().numpy()
 
     
-    @torch.no_grad()
-    def Sample_v2(self, cond, num_steps = 1000):
-
-        # Full sample (all steps)
-        device = next(self.parameters()).device
-
-
-        gen_size = cond.shape[0]
-        # start from pure noise (for each example in the batch)
-        gen_shape = list(copy.copy(self._data_shape))
-        gen_shape.insert(0,gen_size)
-
-
-        img = torch.randn(gen_shape, device=device)
-        imgs = []
-
-        start = time.time()
-        #for i in tqdm(reversed(range(0, num_steps)), desc='sampling loop time step', total=num_steps):
-        time_steps = list(range(num_steps))
-        time_steps.reverse()
-
-        batch_R_image = self.R_image.repeat([gen_size, 1,1,1,1]).to(device=device)
-        batch_Z_image = self.Z_image.repeat([gen_size, 1,1,1,1]).to(device=device)
-
-        train_steps = torch.linspace(0, self.nsteps, self.nsteps + 1)
-        C1 = 0.001
-        C2 = 0.008
-        j0 = 8
-        alphas = torch.sin((np.pi/2.0) * train_steps / self.nsteps / (C2 + 1.0)) **2
-        Us = [0.]*num_steps
-        for j in range(self.nsteps-1, 0, -1):
-            Us[j-1] = ( (Us[j]**2 + 1.0) / max((alphas[j-1]/ alphas[j]).item(), C1) - 1.0)**0.5
-
-        Us.reverse()
-
-        print("us", Us[-10:])
-        print("self.betas", self.betas[-10:]**0.5)
-        print('alphas', 1. - alphas[-10:])
-        print('self.alphas_cumprod', self.alphas_cumprod[-10:])
-        num_steps = 500
-        ts_sample = [np.floor(j0 + (self.nsteps - 1 - j0)/(num_steps -1) * i + 0.5) for i in range(num_steps)]
-        ts_sample.reverse()
-        print(ts_sample)
-        exit(1)
-
-
-
-            
-
-
-
         

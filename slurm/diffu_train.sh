@@ -4,14 +4,14 @@
 #SBATCH --partition=gpu_gce
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --constraint=(a100|v100|p100)
+#SBATCH --mem=MEMORY
+#SBATCH --constraint=(CONSTRAINT)
 #SBATCH  --time=08:00:00
-#x SBATCH --constraint=(a100|v100)
 
 
 unset LD_PRELOAD
  
-max_restarts=5
+max_restarts=10
  
 # just gather some information about the job
 scontext=$(scontrol show job $SLURM_JOB_ID)
@@ -53,23 +53,22 @@ EOF
  
 # the actual computation
 module load singularity
-export SINGULARITY_CACHEDIR=/work1/cms_mlsim/
-export HOME=/work1/cms_mlsim/CaloDiffusion/ 
+export SINGULARITY_CACHEDIR=/work1/cms_mlsim/oamram/
+export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/ 
 torchexec() {
 singularity exec --no-home -p --nv --bind `pwd` --bind /cvmfs --bind /cvmfs/unpacked.cern.ch --bind /work1/cms_mlsim/ --bind /wclustre/cms_mlsim/ /cvmfs/unpacked.cern.ch/registry.hub.docker.com/fnallpc/fnallpc-docker:pytorch-1.9.0-cuda11.1-cudnn8-runtime-singularity "$@"
 }
 
 
 echo "starting computation at $(date)"
-cd /work1/cms_mlsim/CaloDiffusion/scripts
+cd /work1/cms_mlsim/oamram/CaloDiffusion/scripts
 
-export HOME=/work1/cms_mlsim/CaloDiffusion/ 
 
 if [[ $restarts -eq 0 ]]; then
 # Timeout command to catch / resubmit before 8h max
-torchexec bash -c "export HOME=/work1/cms_mlsim/CaloDiffusion/; timeout 7.8h python3 train_diffu.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load --reset_training"
+torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; timeout 7.8h python3 train_diffu.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load --reset_training"
 else 
-torchexec bash -c "export HOME=/work1/cms_mlsim/CaloDiffusion/; timeout 7.8h python3 train_diffu.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load "
+torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; timeout 7.8h python3 train_diffu.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load "
 fi
 
 #resubmit

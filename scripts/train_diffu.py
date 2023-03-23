@@ -24,7 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', default='Diffu', help='Diffusion model to train. Options are: VPSDE, VESDE and subVPSDE')
     parser.add_argument('-c', '--config', default='configs/test.json', help='Config file with training parameters')
     parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
-    parser.add_argument('--frac', type=float,default=0.8, help='Fraction of total events used for training')
+    parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
     parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
@@ -42,11 +42,14 @@ if __name__ == '__main__':
     cold_diffu = dataset_config.get('COLD_DIFFU', False)
     cold_noise_scale = dataset_config.get('COLD_NOISE', 1.0)
 
+    nholdout  = dataset_config.get('HOLDOUT', 0)
+
     batch_size = dataset_config['BATCH']
     num_epochs = dataset_config['MAXEPOCH']
     early_stop = dataset_config['EARLYSTOP']
     training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
     loss_type = dataset_config.get("LOSS_TYPE", "l2")
+    dataset_num = dataset_config.get('DATASET_NUM', 2)
 
 
     for i, dataset in enumerate(dataset_config['FILES']):
@@ -58,7 +61,8 @@ if __name__ == '__main__':
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
-            nholdout = 5000 if (i == len(dataset_config['FILES']) -1 ) else 0,
+            nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
+            dataset_num  = dataset_num,
         )
 
 
@@ -78,25 +82,27 @@ if __name__ == '__main__':
         E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
         
 
+    dshape = dataset_config['SHAPE_PAD']
     energies = np.reshape(energies,(-1))    
-    data = np.reshape(data,dataset_config['SHAPE_PAD'])
+    data = np.reshape(data,dshape)
+    num_data = data.shape[0]
     print("Data Shape " + str(data.shape))
     data_size = data.shape[0]
-    print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
+    #print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
     torch_data_tensor = torch.from_numpy(data)
     torch_E_tensor = torch.from_numpy(energies)
+    del data
     #train_data, val_data = utils.split_data_np(data,flags.frac)
 
     torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_data_tensor)
-    nTrain = int(round(flags.frac * data.shape[0]))
-    nVal = data.shape[0] - nTrain
+    nTrain = int(round(flags.frac * num_data))
+    nVal = num_data - nTrain
     train_dataset, val_dataset = torch.utils.data.random_split(torch_dataset, [nTrain, nVal])
 
     loader_train = torchdata.DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
     loader_val = torchdata.DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
 
-
-    del data,torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
+    del torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     if not os.path.exists(checkpoint_folder):
         os.makedirs(checkpoint_folder)
@@ -138,7 +144,7 @@ if __name__ == '__main__':
     os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
 
-    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 1e-5)
+    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], mode = 'diff', min_delta = 1e-5)
     if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
     print(early_stopper.__dict__)
     
@@ -219,9 +225,10 @@ if __name__ == '__main__':
             torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
             min_validation_loss = val_loss
 
-        if(early_stopper.early_stop(val_loss)):
+        if(early_stopper.early_stop(val_loss - train_loss)):
             print("Early stopping!")
             break
+        print(early_stopper.__dict__)
 
         # save the model
         model.eval()

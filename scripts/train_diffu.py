@@ -144,7 +144,7 @@ if __name__ == '__main__':
     os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
 
-    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], min_delta = 1e-5)
+    early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], mode = 'diff', min_delta = 1e-5)
     if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
     print(early_stopper.__dict__)
     
@@ -225,9 +225,10 @@ if __name__ == '__main__':
             torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
             min_validation_loss = val_loss
 
-        if(early_stopper.early_stop(val_loss)):
+        if(early_stopper.early_stop(val_loss - train_loss)):
             print("Early stopping!")
             break
+        print(early_stopper.__dict__)
 
         # save the model
         model.eval()

@@ -8,6 +8,8 @@ parser.add_argument('--model', default='Diffu', help='Diffusion model to train')
 parser.add_argument('-c', '--config', default='config_dataset2.json', help='Config file with training parameters')
 parser.add_argument('-n', '--name', default='test', help='job name')
 parser.add_argument("--resubmit", default = False, action='store_true')
+parser.add_argument("--constraint", default = "a100|v100|p100" , help='gpu resources')
+parser.add_argument("--memory", default = 16000 , help='RAM')
 flags = parser.parse_args()
 
 if(flags.name[-1] =="/"): flags.name = flags.name[:-1]
@@ -23,6 +25,8 @@ if(flags.model == 'Diffu'):
         os.system("cp diffu_train.sh %s" % (script_loc))
         os.system("sed -i 's/JOB_NAME/%s/' %s" % (flags.name, script_loc))
         os.system("sed -i 's/JOB_OUT/%s/' %s" % (flags.name, script_loc))
+        os.system("sed -i 's/CONSTRAINT/%s/' %s" % (flags.constraint, script_loc))
+        os.system("sed -i 's/MEMORY/%s/' %s" % (flags.memory, script_loc))
         os.system("sed -i 's/CONFIG/%s/' %s" % (base_dir + flags.name + "\/config.json", script_loc) )
     os.system("sbatch %s" % script_loc)
 

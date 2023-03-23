@@ -19,13 +19,14 @@ def default(val, d):
         return val
     return d() if isfunction(d) else d
 
-def cosine_beta_schedule(timesteps, s=0.008):
+
+
+def cosine_beta_schedule(nsteps, s=0.008):
     """
     cosine schedule as proposed in https://arxiv.org/abs/2102.09672
     """
-    steps = timesteps + 1
-    x = torch.linspace(0, timesteps, steps)
-    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * np.pi * 0.5) ** 2
+    x = torch.linspace(0, nsteps, nsteps+1)
+    alphas_cumprod = torch.cos(((x / nsteps) + s) / (1 + s) * np.pi * 0.5) ** 2
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0.0001, 0.9999)
@@ -312,7 +313,7 @@ class CondUnet(nn.Module):
         cur_data_shape = data_shape[-3:]
 
         for ind, (dim_in, dim_out) in enumerate(in_out):
-            is_last = ind >= (num_resolutions - 1)
+            is_last = (ind >= (num_resolutions - 1))
             if(not is_last):
                 extra_upsample_dim = (0, cur_data_shape[1]%2, cur_data_shape[2]%2)
                 cur_data_shape = (cur_data_shape[0], cur_data_shape[1] // 2, cur_data_shape[2] //2)

@@ -35,6 +35,7 @@ parser.add_argument('--nrank', type=int,default=0, help='Rank of the files gener
 parser.add_argument('--batch_size', type=int,default=50, help='Batch size for generation')
 parser.add_argument('--model', default='Diffu', help='Diffusion model to load. Options are: Diffu, AE, VPSDE, VESDE,  subVPSDE, all')
 parser.add_argument('--sample', action='store_true', default=False,help='Sample from learned model')
+parser.add_argument('--sample_steps', default = -1, type = int, help='How many steps for sampling (override config)')
 parser.add_argument('--sample_offset', default = 0, type = int, help='Skip some iterations in the sampling (noisiest iters most unstable)')
 parser.add_argument('--sample_algo', default = 'ddpm', help = 'What sampling algorithm (ddpm, ddim, cold, cold2)')
 parser.add_argument('--comp_eps', action='store_true', default=False,help='Load files with different eps')
@@ -53,6 +54,8 @@ cold_diffu = dataset_config.get('COLD_DIFFU', False)
 cold_noise_scale = dataset_config.get("COLD_NOISE", 1.0)
 training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
 dataset_num = dataset_config.get('DATASET_NUM', 2)
+
+sample_steps = dataset_config["NSTEPS"] if flags.sample_steps < 0 else flags.sample_steps
 
 batch_size = flags.batch_size
 
@@ -80,6 +83,7 @@ if flags.sample:
         
         data.append(data_)
         energies.append(e_)
+        if(flags.nevts > 0 and data_.shape[0] == flags.nevts): break
 
     energies = np.reshape(energies,(-1,))
     data = np.reshape(data,dataset_config['SHAPE_PAD'])
@@ -122,6 +126,7 @@ if flags.sample:
 
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
+        dataset_config['NOISE_SCHED'] = 'cosine'
         model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config , training_obj = training_obj,
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
 
@@ -135,7 +140,7 @@ if flags.sample:
             E = E.to(device=device)
             d_batch = d_batch.to(device=device)
 
-            out = model.Sample(E, num_steps = dataset_config["NSTEPS"], cold_noise_scale = cold_noise_scale, sample_algo = flags.sample_algo,
+            out = model.Sample(E, num_steps = sample_steps, cold_noise_scale = cold_noise_scale, sample_algo = flags.sample_algo,
                     debug = flags.debug, sample_offset = flags.sample_offset)
             if(flags.debug):
                 gen, all_gen, x0s = out
@@ -148,8 +153,6 @@ if flags.sample:
                     make_histogram([x0s[j].reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                                     num_bins = 40, normalize = True, fname = fout_ex)
             else: gen = out
-
-            #gen = model.Sample_v2(E, num_steps = dataset_config["NSTEPS"]).detach().cpu().numpy()
 
         
             if(i == 0): generated = gen
@@ -178,7 +181,7 @@ if flags.sample:
 
     print("GENERATED", np.mean(generated), np.std(generated), np.amax(generated), np.amin(generated))
 
-    generated = generated.reshape(dataset_config["SHAPE"])
+    generated = generated.reshape(dataset_config["SHAPE_ORIG"])
 
     if(flags.debug):
         fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext)
@@ -186,7 +189,7 @@ if flags.sample:
                         num_bins = 40, normalize = True, fname = fout_ex)
 
     generated,energies = utils.ReverseNorm(generated,energies[:nevts],
-                                           shape=dataset_config['SHAPE'],
+                                           shape=dataset_config['SHAPE_ORIG'],
                                            logE=dataset_config['logE'],
                                            max_deposit=dataset_config['MAXDEP'],
                                            emax = dataset_config['EMAX'],
@@ -224,7 +227,7 @@ def LoadSamples(fname,nrank=16):
         generated.append(h5f['showers'][:]/1000.)
         energies.append(h5f['incident_energies'][:]/1000.)
     energies = np.reshape(energies,(-1,1))
-    generated = np.reshape(generated,dataset_config['SHAPE'])
+    generated = np.reshape(generated,dataset_config['SHAPE_ORIG'])
     return generated,energies
 
 
@@ -265,9 +268,10 @@ for dataset in dataset_config['EVAL']:
             end = total_evts
         data.append(h5f['showers'][start:end]/1000.)
         true_energies.append(h5f['incident_energies'][start:end]/1000.)
+        if(data[-1].shape[0] == total_evts): break
 
 
-data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE'])
+data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE_ORIG'])
 print(data_dict['Geant4'].shape)
 print("Geant Avg", np.mean(data_dict['Geant4']))
 print("Generated Avg", np.mean(data_dict[utils.name_translate[model]]))
@@ -314,7 +318,7 @@ def ScatterESplit(data_dict,true_energies):
 
 
 def AverageShowerWidth(data_dict):
-    eta_bins = dataset_config['SHAPE'][2]
+    eta_bins = dataset_config['SHAPE_ORIG'][2]
     eta_binning = np.linspace(-1,1,eta_bins+1)
     eta_coord = [(eta_binning[i] + eta_binning[i+1])/2.0 for i in range(len(eta_binning)-1)]
 
@@ -329,11 +333,11 @@ def AverageShowerWidth(data_dict):
     #TODO : Use radial bins
     #r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
 
-    eta_matrix = GetMatrix(dataset_config['SHAPE'][2],dataset_config['SHAPE'][3])
+    eta_matrix = GetMatrix(dataset_config['SHAPE_ORIG'][2],dataset_config['SHAPE_ORIG'][3])
     eta_matrix = np.reshape(eta_matrix,(1,1,eta_matrix.shape[0],eta_matrix.shape[1],1))
     
     
-    phi_matrix = np.transpose(GetMatrix(dataset_config['SHAPE'][3],dataset_config['SHAPE'][2]))
+    phi_matrix = np.transpose(GetMatrix(dataset_config['SHAPE_ORIG'][3],dataset_config['SHAPE_ORIG'][2]))
     phi_matrix = np.reshape(phi_matrix,(1,1,phi_matrix.shape[0],phi_matrix.shape[1],1))
 
     def GetCenter(matrix,energies,power=1):
@@ -385,7 +389,7 @@ def AverageShowerWidth(data_dict):
 def AverageELayer(data_dict):
     
     def _preprocess(data):
-        preprocessed = np.reshape(data,(total_evts,dataset_config['SHAPE'][1],-1))
+        preprocessed = np.reshape(data,(total_evts,dataset_config['SHAPE_ORIG'][1],-1))
         preprocessed = np.sum(preprocessed,-1)
         #preprocessed = np.mean(preprocessed,0)
         return preprocessed
@@ -402,7 +406,7 @@ def AverageEX(data_dict):
 
     def _preprocess(data):
         preprocessed = np.transpose(data,(0,3,1,2,4))
-        preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE'][3],-1))
+        preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE_ORIG'][3],-1))
         preprocessed = np.sum(preprocessed,-1)
         return preprocessed
         
@@ -425,7 +429,7 @@ def AverageEY(data_dict):
 
     def _preprocess(data):
         preprocessed = np.transpose(data,(0,2,1,3,4))
-        preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE'][2],-1))
+        preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE_ORIG'][2],-1))
         preprocessed = np.sum(preprocessed,-1)
         return preprocessed
 
@@ -481,7 +485,7 @@ def HistNhits(data_dict):
 def HistMaxELayer(data_dict):
 
     def _preprocess(data):
-        preprocessed = np.reshape(data,(data.shape[0],dataset_config['SHAPE'][1],-1))
+        preprocessed = np.reshape(data,(data.shape[0],dataset_config['SHAPE_ORIG'][1],-1))
         preprocessed = np.ma.divide(np.max(preprocessed,-1),np.sum(preprocessed,-1)).filled(0)
         return preprocessed
 
@@ -593,7 +597,7 @@ plot_routines['Energy per phi']=AverageEY
 if(do_cart_plots):
     plot_routines['2D average shower']=Plot_Shower_2D
 
-print("Saving plots to "  + flags.plot_folder) 
+print("Saving plots to "  + os.path.abspath(flags.plot_folder) )
 for plot in plot_routines:
     if '2D' in plot and flags.model == 'all':continue #skip scatter plots superimposed
     print(plot)

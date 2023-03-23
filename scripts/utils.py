@@ -16,13 +16,13 @@ else:
     def tqdm(iterable, **kwargs):
         return iterable
 
-
 def split_data_np(data, frac=0.8):
     np.random.shuffle(data)
     split = int(frac * data.shape[0])
     train_data =data[:split]
     test_data = data[split:]
     return train_data,test_data
+
 
 def create_R_Z_image(device, scaled = False, shape = (1,45,16,9)):
 
@@ -522,21 +522,32 @@ def polar_to_cart(polar_data,nr=9,nalpha=16,nx=12,ny=12):
     return cart_img
 
 class EarlyStopper:
-    def __init__(self, patience=1, min_delta=0):
+    def __init__(self, patience=1, mode = 'loss', min_delta=0):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
         self.min_validation_loss = np.inf
+        self.mode = mode
 
-    def early_stop(self, validation_loss):
-        if validation_loss < self.min_validation_loss:
-            self.min_validation_loss = validation_loss
-            self.counter = 0
-        elif validation_loss > (self.min_validation_loss + self.min_delta):
-            self.counter += 1
-            if self.counter >= self.patience:
-                return True
-        return False
+    def early_stop(self, var):
+        if(self.mode == 'val_loss'):
+            validation_loss = var
+            if validation_loss < self.min_validation_loss:
+                self.min_validation_loss = validation_loss
+                self.counter = 0
+            elif validation_loss > (self.min_validation_loss + self.min_delta):
+                self.counter += 1
+                if self.counter >= self.patience:
+                    return True
+            return False
+        elif(self.mode == 'diff'):
+            if(var < 0):
+                self.counter = 0
+            else:
+                self.counter += 1
+                if( self.counter >= self.patience):
+                    return True
+            return False
 
 
 

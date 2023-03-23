@@ -4,9 +4,8 @@
 #SBATCH --partition=gpu_gce
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --constraint=(a100|p100|v100)
-#SBATCH --mem=20000
-#BATCH  --time=23:45:00
+#SBATCH --constraint=(CONSTRAINT)
+#SBATCH --mem=MEMORY
 set -x
 
 

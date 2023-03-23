@@ -4,10 +4,9 @@
 #SBATCH --partition=gpu_gce
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --mem=80000
-#SBATCH --constraint=(a100|v100|p100)
+#SBATCH --mem=MEMORY
+#SBATCH --constraint=(CONSTRAINT)
 #SBATCH  --time=08:00:00
-#x SBATCH --constraint=(a100|v100)
 
 
 unset LD_PRELOAD

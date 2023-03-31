@@ -52,11 +52,11 @@ Restarts:             $restarts
 EOF
  
 # the actual computation
-module load singularity
+module load apptainer
 export SINGULARITY_CACHEDIR=/work1/cms_mlsim/oamram/
 export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/ 
 torchexec() {
-singularity exec --no-home -p --nv --bind `pwd` --bind /cvmfs --bind /cvmfs/unpacked.cern.ch --bind /work1/cms_mlsim/ --bind /wclustre/cms_mlsim/ /cvmfs/unpacked.cern.ch/registry.hub.docker.com/fnallpc/fnallpc-docker:pytorch-1.9.0-cuda11.1-cudnn8-runtime-singularity "$@"
+apptainer exec --no-home -p --nv --bind `pwd` --bind /cvmfs --bind /cvmfs/unpacked.cern.ch --bind /work1/cms_mlsim/ --bind /wclustre/cms_mlsim/ /cvmfs/unpacked.cern.ch/registry.hub.docker.com/fnallpc/fnallpc-docker:pytorch-1.9.0-cuda11.1-cudnn8-runtime-singularity "$@"
 }
 
 

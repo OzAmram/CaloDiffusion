@@ -34,11 +34,11 @@
     'NSTEPS': 400,
     'COLD_DIFFU' : False,
     'COLD_NOISE' : 1.0,
-    'TRAINING_OBJ' : 'mean_pred_weight',
+    'TRAINING_OBJ' : 'noise_pred',
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'sigma',
     'COND_EMBED' : 'id',
-    'CHECKPOINT_NAME':'dataset2_mar21_mean_pred_weight_n400',
+    'CHECKPOINT_NAME':'dataset2_mar31_test',
 
 
 }

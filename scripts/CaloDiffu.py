@@ -184,9 +184,10 @@ class CaloDiffu(nn.Module):
 
         t_emb = self.do_time_embed(t, self.time_embed, sigma)
 
-        pred = self.model(self.add_RZ(x_input), energy, t_emb)
+        pred = self.model(self.add_RZ(data), energy, t_emb)
 
-        if( 'hybrid' in self.training_obj ):
+        weight = 1.
+        if('hybrid' in self.training_obj ):
 
             c_skip = torch.reshape(1. / (sigma2 + 1.), (data.shape[0], 1,1,1,1))
             c_out = torch.reshape(1./ (1. + 1./sigma2).sqrt(), (data.shape[0], 1,1,1,1))
@@ -198,10 +199,10 @@ class CaloDiffu(nn.Module):
             pred = c_skip * x_noisy + c_out * pred
             target = data
 
-        elif(self.training_obj == 'noise_pred'):
+        elif('noise_pred' in self.training_obj):
             target = noise
             weight = 1.
-        elif(self.training_obj == 'mean_pred'):
+        elif('mean_pred' in self.training_obj):
             target = data
             weight = 1./ sigma2
 
@@ -227,15 +228,17 @@ class CaloDiffu(nn.Module):
 
     def do_time_embed(self, t = None, embed_type = "identity",  sigma = None,):
         if(self.discrete_time):
+            if(sigma is None): sigma = self.sqrt_one_minus_alphas_cumprod[t]
+
             if(embed_type == "identity" or embed_type == 'sin'):
                 return t
             if(embed_type == "scaled"):
                 return t/self.nsteps
             if(embed_type == "sigma"):
                 #return torch.sqrt(self.betas[t]).to(t.device)
-                return self.sqrt_one_minus_alphas_cumprod[t].to(t.device)
+                return sigma.to(t.device)
             if(embed_type == "log"):
-                return 0.5 * torch.log(self.betas[t]).to(t.device)
+                return 0.5 * torch.log(sigma).to(t.device)
         else:
             if(embed_type == "log"):
                 return 0.5 * torch.log(sigma).to(t.device)
@@ -300,42 +303,41 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def p_sample(self, x, img, E, t, cold_noise_scale = 0., noise = None, sample_algo = 'ddpm', debug = False):
+    def p_sample(self, x, E, t, cold_noise_scale = 0., noise = None, sample_algo = 'ddpm', debug = False):
         #reverse the diffusion process (one step)
 
 
 
         if(noise is None): 
-            noise = torch.randn(img.shape, device = x.device)
+            noise = torch.randn(x.shape, device = x.device)
             if(self.cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
                 noise = self.gen_cold_image(E, cold_noise_scale, noise)
 
-        betas_t = extract(self.betas, t, img.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, img.shape)
-        sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, img.shape)
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, img.shape)
-        posterior_variance_t = extract(self.posterior_variance, t, img.shape)
+        betas_t = extract(self.betas, t, x.shape)
+        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
+        sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, x.shape)
+        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, x.shape)
+        posterior_variance_t = extract(self.posterior_variance, t, x.shape)
 
         t_emb = self.do_time_embed(t, self.time_embed)
 
 
-        pred = self.model(x, E, t_emb)
+        pred = self.model(self.add_RZ(x), E, t_emb)
         if('noise_pred' in self.training_obj):
             noise_pred = pred
             x0_pred = None
         elif('mean_pred' in self.training_obj):
             x0_pred = pred
-            noise_pred = (img - sqrt_alphas_cumprod_t * x0_pred)/sqrt_one_minus_alphas_cumprod_t
+            noise_pred = (x - sqrt_alphas_cumprod_t * x0_pred)/sqrt_one_minus_alphas_cumprod_t
         elif('hybrid' in self.training_obj):
 
-            #sigma2 = extract(self.sqrt_one_minus_alphas_cumprod, t, img.shape)**2
-            sigma2 = extract(self.betas, t, img.shape)**2
+            #sigma2 = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)**2
+            sigma2 = extract(self.betas, t, x.shape)**2
             c_skip = 1. / (sigma2 + 1.)
             c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
 
-            x0_pred = c_skip * img + c_out * pred
-            noise_pred = (img - sqrt_alphas_cumprod_t * x0_pred)/sqrt_one_minus_alphas_cumprod_t
-            print(torch.mean(noise_pred), torch.std(noise_pred))
+            x0_pred = c_skip * x + c_out * pred
+            noise_pred = (x - sqrt_alphas_cumprod_t * x0_pred)/sqrt_one_minus_alphas_cumprod_t
 
         
 
@@ -343,24 +345,24 @@ class CaloDiffu(nn.Module):
         if(sample_algo == 'ddpm'):
             # Sampling algo from https://arxiv.org/abs/2006.11239
             # Use results from our model (noise predictor) to predict the mean of posterior distribution of prev step
-            post_mean = sqrt_recip_alphas_t * ( img - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
+            post_mean = sqrt_recip_alphas_t * ( x - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
             out = post_mean + torch.sqrt(posterior_variance_t) * noise 
             if t[0] == 0: out = post_mean
 
         elif(sample_algo == 'ddim'):
-            if(x0_pred is None): x0_pred = (img - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
+            if(x0_pred is None): x0_pred = (x - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
             if t[0] == 0: out = x0_pred
             else:
                 t_next = t-1
-                sqrt_alphas_cumprod_t_next = extract(self.sqrt_alphas_cumprod, t_next, img.shape)
+                sqrt_alphas_cumprod_t_next = extract(self.sqrt_alphas_cumprod, t_next, x.shape)
 
                 c1 =  torch.sqrt(1. - sqrt_alphas_cumprod_t_next **2 - posterior_variance_t **2)
                 out = sqrt_alphas_cumprod_t_next * x0_pred + c1 * noise_pred + sqrt_alphas_cumprod_t * noise
                 print(torch.mean(out), torch.mean(x0_pred), torch.mean(c1 * noise_pred), torch.mean(sqrt_alphas_cumprod_t * noise))
 
         elif(sample_algo == 'cold_step'):
-            post_mean = img - noise_pred * sqrt_one_minus_alphas_cumprod_t
-            post_mean = sqrt_recip_alphas_t * ( img - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
+            post_mean = x - noise_pred * sqrt_one_minus_alphas_cumprod_t
+            post_mean = sqrt_recip_alphas_t * ( x - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
             out = post_mean
             #out = post_mean + torch.sqrt(posterior_variance_t) * noise 
 
@@ -368,13 +370,13 @@ class CaloDiffu(nn.Module):
         elif('cold' in sample_algo):
 
             if(x0_pred is None):
-                x0_pred = (img - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
+                x0_pred = (x - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
 
             #algo 2 from cold diffu paper
             # x_t-1 = x(t, eps_t) - D(x0, t, eps_t) + D(x0, t-1, eps_t-1)
             #Must use same eps for x_t and D(x0, t), otherwise unstable
             if('cold2' in sample_algo):
-                out = img - self.noise_image(x0_pred, t, noise = self.prev_noise) + self.noise_image(x0_pred, t-1, noise = noise)
+                out = x - self.noise_image(x0_pred, t, noise = self.prev_noise) + self.noise_image(x0_pred, t-1, noise = noise)
                 self.prev_noise = noise
             else:
             #algo 1
@@ -385,7 +387,7 @@ class CaloDiffu(nn.Module):
 
         if(debug): 
             if(x0_pred is None):
-                x0_pred = (img - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
+                x0_pred = (x - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
             return out, x0_pred
         return out
 
@@ -431,11 +433,11 @@ class CaloDiffu(nn.Module):
         gen_shape.insert(0,gen_size)
 
         #start from pure noise
-        img_start = torch.randn(gen_shape, device=device)
+        x_start = torch.randn(gen_shape, device=device)
 
         avg_shower = std_shower = None
         if(self.cold_diffu): #cold diffu starts using avg images
-            img_start = self.gen_cold_image(E, cold_noise_scale)
+            x_start = self.gen_cold_image(E, cold_noise_scale)
 
 
         start = time.time()
@@ -448,38 +450,37 @@ class CaloDiffu(nn.Module):
             sigma_min = 0.002
             sigma_max = 1.0
 
-            img = self.edm_sampler(img_start,E, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
+            x = self.edm_sampler(x_start,E, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
                     S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise)
 
         else:
-            img = img_start
+            x = x_start
             fixed_noise = None
             if('fixed' in sample_algo): 
                 print("Fixing noise to constant for sampling!")
-                fixed_noise = img_start
-            imgs = []
+                fixed_noise = x_start
+            xs = []
             x0s = []
-            self.prev_noise = img_start
+            self.prev_noise = x_start
 
             time_steps = list(range(0, num_steps - sample_offset, sample_step))
             time_steps.reverse()
 
             for time_step in time_steps:      
                 times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
-                x_in = self.add_RZ(img)
-                out = self.p_sample(x_in, img, E, times, noise = fixed_noise, cold_noise_scale = cold_noise_scale, sample_algo = sample_algo, debug = debug)
+                out = self.p_sample(x, E, times, noise = fixed_noise, cold_noise_scale = cold_noise_scale, sample_algo = sample_algo, debug = debug)
                 if(debug): 
-                    img, x0_pred = out
-                    imgs.append(img.detach().cpu().numpy())
+                    x, x0_pred = out
+                    xs.append(x.detach().cpu().numpy())
                     x0s.append(x0_pred.detach().cpu().numpy())
-                else: img = out
+                else: x = out
 
         end = time.time()
         print("Time for sampling {} events is {} seconds".format(gen_size,end - start))
         if(debug):
-            return img.detach().cpu().numpy(), imgs, x0s
+            return x.detach().cpu().numpy(), xs, x0s
         else:   
-            return img.detach().cpu().numpy()
+            return x.detach().cpu().numpy()
 
     
         

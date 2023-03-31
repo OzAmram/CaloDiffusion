@@ -208,7 +208,6 @@ class CaloDiffu(nn.Module):
 
 
 
-
         if loss_type == 'l1':
             loss = torch.nn.functional.l1_loss(target, pred)
         elif loss_type == 'l2':
@@ -221,6 +220,10 @@ class CaloDiffu(nn.Module):
             loss =torch.nn.functional.smooth_l1_loss(target, pred)
         else:
             raise NotImplementedError()
+
+        print(torch.mean(pred), torch.std(pred))
+        print(torch.mean(target), torch.std(target))
+        print(loss)
 
         return loss
         

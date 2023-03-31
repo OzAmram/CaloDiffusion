@@ -184,7 +184,7 @@ class CaloDiffu(nn.Module):
 
         t_emb = self.do_time_embed(t, self.time_embed, sigma)
 
-        pred = self.model(self.add_RZ(data), energy, t_emb)
+        pred = self.model(self.add_RZ(x_noisy), energy, t_emb)
 
         weight = 1.
         if('hybrid' in self.training_obj ):
@@ -220,10 +220,6 @@ class CaloDiffu(nn.Module):
             loss =torch.nn.functional.smooth_l1_loss(target, pred)
         else:
             raise NotImplementedError()
-
-        print(torch.mean(pred), torch.std(pred))
-        print(torch.mean(target), torch.std(target))
-        print(loss)
 
         return loss
         

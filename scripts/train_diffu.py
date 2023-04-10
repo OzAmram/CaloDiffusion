@@ -160,7 +160,7 @@ if __name__ == '__main__':
     val_losses = np.zeros(num_epochs)
     start_epoch = 0
     min_validation_loss = 99999.
-    if('train_loss_hist' in checkpoint.keys()): 
+    if('train_loss_hist' in checkpoint.keys() and not flags.reset_training): 
         training_losses = checkpoint['train_loss_hist']
         val_losses = checkpoint['val_loss_hist']
         start_epoch = checkpoint['epoch'] + 1

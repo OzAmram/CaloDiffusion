@@ -330,8 +330,8 @@ class CaloDiffu(nn.Module):
             noise_pred = (x - sqrt_alphas_cumprod_t * x0_pred)/sqrt_one_minus_alphas_cumprod_t
         elif('hybrid' in self.training_obj):
 
-            #sigma2 = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)**2
-            sigma2 = extract(self.betas, t, x.shape)**2
+            sigma2 = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)**2
+            #sigma2 = extract(self.betas, t, x.shape)**2
             c_skip = 1. / (sigma2 + 1.)
             c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
 

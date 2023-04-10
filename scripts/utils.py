@@ -28,7 +28,7 @@ def create_R_Z_image(device, scaled = False, shape = (1,45,16,9)):
 
     if(shape[-1] == 9): #dataset 2
         r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
-    else:
+    else:#dataset 3
         r_bins = [0,2.325,4.65,6.975,9.3,11.625,13.95,16.275,18.6,20.925,23.25,25.575,27.9,30.225,32.55,34.875,37.2,39.525,41.85]
 
     r_avgs = [(r_bins[i] + r_bins[i+1]) / 2.0 for i in range(len(r_bins) -1) ]

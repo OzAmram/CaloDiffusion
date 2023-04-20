@@ -15,6 +15,7 @@ class CaloDiffu(nn.Module):
                     cold_diffu = False, E_bins = None, avg_showers = None, std_showers = None):
         super(CaloDiffu, self).__init__()
         self._data_shape = data_shape
+        self.nvoxels = np.prod(self._data_shape)
         self._num_batch = num_batch
         self.config = config
         self._num_embed = self.config['EMBED']
@@ -25,6 +26,7 @@ class CaloDiffu(nn.Module):
         self.avg_showers = avg_showers
         self.std_showers = std_showers
         self.training_obj = training_obj
+        self.fully_connected = self.config.get('FCN', False)
         supported = ['noise_pred', 'mean_pred', 'hybrid']
         is_obj = [s in self.training_obj for s in supported]
         if(not any(is_obj)):
@@ -39,8 +41,8 @@ class CaloDiffu(nn.Module):
         self.verbose = 1
 
         
-
-        #Convolutional model for 3D images and dense for flatten inputs
+        if(torch.cuda.is_available()): device = torch.device('cuda')
+        else: device = torch.device('cpu')
 
         #Minimum and maximum maximum variance of noise
         self.beta_start = 0.0001
@@ -76,36 +78,45 @@ class CaloDiffu(nn.Module):
 
             self.posterior_variance = self.betas * (1. - alphas_cumprod_prev) / (1. - self.alphas_cumprod)
 
-        self.R_Z_inputs = config.get('R_Z_INPUT', False)
-        in_channels = 1
-
-        if(torch.cuda.is_available()): device = torch.device('cuda')
-        else: device = torch.device('cpu')
-        self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = self._data_shape)
-
-        if(self.R_Z_inputs):
-
-            self.batch_R_image = self.R_image.repeat([num_batch, 1,1,1,1])
-            self.batch_Z_image = self.Z_image.repeat([num_batch, 1,1,1,1])
-
-            in_channels = 3
-
-        layer_sizes = config['LAYER_SIZE_UNET']
-        cond_dim = config['COND_SIZE_UNET']
-
-        calo_summary_shape = list(copy.copy(self._data_shape))
-        calo_summary_shape.insert(0, self._num_batch)
-        calo_summary_shape[1] = in_channels
-
-        calo_summary_shape[0] = 1
-        summary_shape = [calo_summary_shape, [1], [1]]
-
         self.time_embed = config.get("TIME_EMBED", 'sin')
         self.E_embed = config.get("COND_EMBED", 'sin')
+        cond_dim = config['COND_SIZE_UNET']
+        layer_sizes = config['LAYER_SIZE_UNET']
 
-        self.model = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, 
-                cylindrical =  config.get('CYLINDRICAL', False), data_shape = calo_summary_shape,
-                cond_embed = (self.E_embed == 'sin'), time_embed = (self.time_embed == 'sin') )
+        if(self.fully_connected):
+            #fully connected network architecture
+            self.model = FCN(cond_dim = cond_dim, dim_in = config['SHAPE_ORIG'][1], num_layers = config['NUM_LAYERS_LINEAR'],
+                    cond_embed = (self.E_embed == 'sin'), time_embed = (self.time_embed == 'sin') )
+
+            self.R_Z_inputs = False
+
+            summary_shape = [[1,config['SHAPE_ORIG'][1]], [1], [1]]
+
+        else:
+            self.R_Z_inputs = config.get('R_Z_INPUT', False)
+            in_channels = 1
+
+            self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = self._data_shape)
+
+            if(self.R_Z_inputs):
+
+                self.batch_R_image = self.R_image.repeat([num_batch, 1,1,1,1])
+                self.batch_Z_image = self.Z_image.repeat([num_batch, 1,1,1,1])
+
+                in_channels = 3
+
+
+            calo_summary_shape = list(copy.copy(self._data_shape))
+            calo_summary_shape.insert(0, self._num_batch)
+            calo_summary_shape[1] = in_channels
+
+            calo_summary_shape[0] = 1
+            summary_shape = [calo_summary_shape, [1], [1]]
+
+
+            self.model = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, 
+                    cylindrical =  config.get('CYLINDRICAL', False), data_shape = calo_summary_shape,
+                    cond_embed = (self.E_embed == 'sin'), time_embed = (self.time_embed == 'sin') )
 
         print("\n\n Model: \n")
         summary(self.model, summary_shape)
@@ -162,7 +173,7 @@ class CaloDiffu(nn.Module):
             exit(1)
 
 
-    def compute_loss(self, data, energy, noise = None, t = None, loss_type = "l2", rnd_normal = None):
+    def compute_loss(self, data, energy, noise = None, t = None, loss_type = "l2", rnd_normal = None, energy_loss_scale = 1e-2):
         if noise is None:
             noise = torch.randn_like(data)
         
@@ -187,6 +198,7 @@ class CaloDiffu(nn.Module):
         pred = self.model(self.add_RZ(x_noisy), energy, t_emb)
 
         weight = 1.
+        x0_pred = None
         if('hybrid' in self.training_obj ):
 
             c_skip = torch.reshape(1. / (sigma2 + 1.), (data.shape[0], 1,1,1,1))
@@ -198,21 +210,26 @@ class CaloDiffu(nn.Module):
 
             pred = c_skip * x_noisy + c_out * pred
             target = data
+            if('energy' in self.training_obj): x0_pred = c_skip * x_noisy + c_out * pred
 
         elif('noise_pred' in self.training_obj):
             target = noise
             weight = 1.
+            if('energy' in self.training_obj): 
+                sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
+                sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
+                x0_pred = (x_noisy - sqrt_one_minus_alphas_cumprod_t * pred)/sqrt_alphas_cumprod_t
         elif('mean_pred' in self.training_obj):
             target = data
             weight = 1./ sigma2
-
+            x0_pred = pred
 
 
         if loss_type == 'l1':
             loss = torch.nn.functional.l1_loss(target, pred)
         elif loss_type == 'l2':
             if('weight' in self.training_obj):
-                loss = (weight * ((pred - data) ** 2)).sum() / weight.sum()
+                loss = (weight * ((pred - data) ** 2)).sum() / (torch.mean(weight) * self.nvoxels)
             else:
                 loss = torch.nn.functional.mse_loss(target, pred)
 
@@ -220,6 +237,14 @@ class CaloDiffu(nn.Module):
             loss =torch.nn.functional.smooth_l1_loss(target, pred)
         else:
             raise NotImplementedError()
+
+        if('energy' in self.training_obj):
+            #sum total energy
+            dims = [i for i in range(1,len(data.shape))]
+            tot_energy_pred = torch.sum(x0_pred, dim = dims)
+            tot_energy_data = torch.sum(data, dim = dims)
+            loss_en = energy_loss_scale * torch.nn.functional.mse_loss(tot_energy_data, tot_energy_pred) / self.nvoxels
+            loss += loss_en
 
         return loss
         

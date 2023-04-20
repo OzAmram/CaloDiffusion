@@ -31,8 +31,6 @@ if __name__ == '__main__':
     flags = parser.parse_args()
 
     dataset_config = utils.LoadJson(flags.config)
-    data = []
-    energies = []
 
     print("TRAINING OPTIONS")
     print(dataset_config, flush = True)
@@ -50,7 +48,11 @@ if __name__ == '__main__':
     training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
     loss_type = dataset_config.get("LOSS_TYPE", "l2")
     dataset_num = dataset_config.get('DATASET_NUM', 2)
+    fully_connected = dataset_config.get('FCN', False)
+    energy_loss_scale = dataset_config.get('ENERGY_LOSS_SCALE', 0.0)
 
+    data = []
+    energies = []
 
     for i, dataset in enumerate(dataset_config['FILES']):
         data_,e_ = utils.DataLoader(
@@ -63,6 +65,7 @@ if __name__ == '__main__':
             showerMap = dataset_config['SHOWERMAP'],
             nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
             dataset_num  = dataset_num,
+            fully_connected = fully_connected,
         )
 
 
@@ -84,7 +87,9 @@ if __name__ == '__main__':
 
     dshape = dataset_config['SHAPE_PAD']
     energies = np.reshape(energies,(-1))    
-    data = np.reshape(data,dshape)
+    if(not fully_connected): data = np.reshape(data,dshape)
+    else: data = np.reshape(data, (len(data), -1))
+
     num_data = data.shape[0]
     print("Data Shape " + str(data.shape))
     data_size = data.shape[0]
@@ -116,8 +121,10 @@ if __name__ == '__main__':
 
 
     if(flags.model == "Diffu"):
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config, training_obj = training_obj,
+        shape = dataset_config['SHAPE_PAD'][1:] if (not fully_connected) else dataset_config['SHAPE_ORIG'][1:]
+        model = CaloDiffu(shape, batch_size, config=dataset_config, training_obj = training_obj,
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
+
         #sometimes save only weights, sometimes save other info
         if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
         elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
@@ -187,7 +194,7 @@ if __name__ == '__main__':
                 noise = model.gen_cold_image(E, cold_noise_scale, noise)
                 
 
-            batch_loss = model.compute_loss(data, E, noise = noise, t = t, loss_type = loss_type)
+            batch_loss = model.compute_loss(data, E, noise = noise, t = t, loss_type = loss_type, energy_loss_scale = energy_loss_scale)
             batch_loss.backward()
 
             optimizer.step()
@@ -209,7 +216,7 @@ if __name__ == '__main__':
             noise = torch.randn_like(vdata)
             if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)
 
-            batch_loss = model.compute_loss(vdata, vE, noise = noise, t = t, loss_type = loss_type)
+            batch_loss = model.compute_loss(vdata, vE, noise = noise, t = t, loss_type = loss_type, energy_loss_scale = energy_loss_scale)
 
             val_loss+=batch_loss.item()
             del vdata,vE, noise, batch_loss
@@ -228,7 +235,6 @@ if __name__ == '__main__':
         if(early_stopper.early_stop(val_loss - train_loss)):
             print("Early stopping!")
             break
-        print(early_stopper.__dict__)
 
         # save the model
         model.eval()

@@ -58,6 +58,7 @@ dataset_num = dataset_config.get('DATASET_NUM', 2)
 sample_steps = dataset_config["NSTEPS"] if flags.sample_steps < 0 else flags.sample_steps
 
 batch_size = flags.batch_size
+fully_connected = dataset_config.get('FCN', False)
 
 if(not os.path.exists(flags.plot_folder)): 
     print("Creating plot directory " + flags.plot_folder)
@@ -68,7 +69,7 @@ if flags.sample:
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     energies = []
     data = []
-    for dataset in dataset_config['EVAL']:
+    for i, dataset in enumerate(dataset_config['EVAL']):
         data_,e_ = utils.DataLoader(
             os.path.join(flags.data_folder,dataset),
             dataset_config['SHAPE_PAD'],
@@ -79,19 +80,25 @@ if flags.sample:
             showerMap = dataset_config['SHOWERMAP'],
             from_end = flags.holdout,
             dataset_num  = dataset_num,
+            fully_connected = fully_connected,
         )
         
-        data.append(data_)
-        energies.append(e_)
+        if(i ==0): 
+            data = data_
+            energies = e_
+        else:
+            data = np.concatenate((data, data_))
+            energies = np.concatenate((energies, e_))
         if(flags.nevts > 0 and data_.shape[0] == flags.nevts): break
 
     energies = np.reshape(energies,(-1,))
-    data = np.reshape(data,dataset_config['SHAPE_PAD'])
+    if(not fully_connected): data = np.reshape(data,dataset_config['SHAPE_PAD'])
+    else: data = np.reshape(data, (len(data), -1))
 
     torch_data_tensor = torch.from_numpy(data)
     torch_E_tensor = torch.from_numpy(energies)
 
-    print("DATA", torch.mean(torch_data_tensor), torch.std(torch_data_tensor))
+    print("DATA mean, std", torch.mean(torch_data_tensor), torch.std(torch_data_tensor))
 
     torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_data_tensor)
     data_loader = torchdata.DataLoader(torch_dataset, batch_size = batch_size, shuffle = False)
@@ -104,7 +111,6 @@ if flags.sample:
         std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
         E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
 
-    #print(energies)
     if(flags.model == "AE"):
         print("Loading AE from " + flags.model_loc)
         model = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device=device)
@@ -127,7 +133,8 @@ if flags.sample:
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
         dataset_config['NOISE_SCHED'] = 'cosine'
-        model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config , training_obj = training_obj,
+        shape = dataset_config['SHAPE_PAD'][1:] if (not fully_connected) else dataset_config['SHAPE_ORIG'][1:]
+        model = CaloDiffu(shape, nevts,config=dataset_config , training_obj = training_obj,
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
 
         saved_model = torch.load(flags.model_loc, map_location = device)
@@ -181,7 +188,7 @@ if flags.sample:
 
     print("GENERATED", np.mean(generated), np.std(generated), np.amax(generated), np.amin(generated))
 
-    generated = generated.reshape(dataset_config["SHAPE_ORIG"])
+    if(not fully_connected): generated = generated.reshape(dataset_config["SHAPE"])
 
     if(flags.debug):
         fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext)
@@ -189,29 +196,29 @@ if flags.sample:
                         num_bins = 40, normalize = True, fname = fout_ex)
 
     generated,energies = utils.ReverseNorm(generated,energies[:nevts],
-                                           shape=dataset_config['SHAPE_ORIG'],
+                                           shape=dataset_config['SHAPE'],
                                            logE=dataset_config['logE'],
                                            max_deposit=dataset_config['MAXDEP'],
                                            emax = dataset_config['EMAX'],
                                            emin = dataset_config['EMIN'],
                                            showerMap = dataset_config['SHOWERMAP'],
-                                            dataset_num  = dataset_num
+                                            dataset_num  = dataset_num,
+                                            fully_connected = fully_connected,
                                            )
     generated[generated<dataset_config['ECUT']] = 0 #min from samples
 
-    print("GENERATED-reversenorm", np.mean(generated), np.std(generated), np.amax(generated), np.amin(generated))
-
     energies = np.reshape(energies,(-1,1))
-    #mask file for voxels that are always empty
-    mask_file = os.path.join(flags.data_folder,dataset_config['EVAL'][0].replace('.hdf5','_mask.hdf5'))
-    if(not os.path.exists(mask_file)):
-        print("Creating mask based on data batch")
-        mask = np.sum(data,0)==0
+    if(dataset_num > 1):
+        #mask for voxels that are always empty
+        mask_file = os.path.join(flags.data_folder,dataset_config['EVAL'][0].replace('.hdf5','_mask.hdf5'))
+        if(not os.path.exists(mask_file)):
+            print("Creating mask based on data batch")
+            mask = np.sum(data,0)==0
 
-    else:
-        with h5.File(mask_file,"r") as h5f:
-            mask = h5f['mask'][:]
-    generated = generated*(np.reshape(mask,(1,-1))==0)
+        else:
+            with h5.File(mask_file,"r") as h5f:
+                mask = h5f['mask'][:]
+        generated = generated*(np.reshape(mask,(1,-1))==0)
     
     fout = os.path.join(checkpoint_folder,'generated_{}_{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.model))
     print("Creating " + fout)
@@ -220,14 +227,20 @@ if flags.sample:
         dset = h5f.create_dataset("incident_energies", data=1000*energies)
 
 
+geom_conv = None
+if(dataset_num <= 1):
+    bins = XMLHandler(dataset_config['PART_TYPE'], dataset_config['BIN_FILE'])
+    geom_conv = GeomConverter(bins)
+
 def LoadSamples(fname,nrank=16):
-    generated = []
-    energies = []
     with h5.File(fname,"r") as h5f:
-        generated.append(h5f['showers'][:]/1000.)
-        energies.append(h5f['incident_energies'][:]/1000.)
+        generated = h5f['showers'][:]/1000.
+        energies = h5f['incident_energies'][:]/1000.
     energies = np.reshape(energies,(-1,1))
-    generated = np.reshape(generated,dataset_config['SHAPE_ORIG'])
+    if(dataset_num <= 1):
+        generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy()
+    generated = np.reshape(generated,dataset_config['SHAPE'])
+
     return generated,energies
 
 
@@ -266,12 +279,15 @@ for dataset in dataset_config['EVAL']:
         else: 
             start = 0
             end = total_evts
-        data.append(h5f['showers'][start:end]/1000.)
+        show = h5f['showers'][start:end]/1000.
+        if(dataset_num <=1 ):
+            show = geom_conv.convert(geom_conv.reshape(show)).detach().numpy()
+        data.append(show)
         true_energies.append(h5f['incident_energies'][start:end]/1000.)
         if(data[-1].shape[0] == total_evts): break
 
 
-data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE_ORIG'])
+data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE'])
 print(data_dict['Geant4'].shape)
 print("Geant Avg", np.mean(data_dict['Geant4']))
 print("Generated Avg", np.mean(data_dict[utils.name_translate[model]]))
@@ -318,7 +334,7 @@ def ScatterESplit(data_dict,true_energies):
 
 
 def AverageShowerWidth(data_dict):
-    eta_bins = dataset_config['SHAPE_ORIG'][2]
+    eta_bins = dataset_config['SHAPE'][2]
     eta_binning = np.linspace(-1,1,eta_bins+1)
     eta_coord = [(eta_binning[i] + eta_binning[i+1])/2.0 for i in range(len(eta_binning)-1)]
 
@@ -333,11 +349,11 @@ def AverageShowerWidth(data_dict):
     #TODO : Use radial bins
     #r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
 
-    eta_matrix = GetMatrix(dataset_config['SHAPE_ORIG'][2],dataset_config['SHAPE_ORIG'][3])
+    eta_matrix = GetMatrix(dataset_config['SHAPE'][2],dataset_config['SHAPE'][3])
     eta_matrix = np.reshape(eta_matrix,(1,1,eta_matrix.shape[0],eta_matrix.shape[1],1))
     
     
-    phi_matrix = np.transpose(GetMatrix(dataset_config['SHAPE_ORIG'][3],dataset_config['SHAPE_ORIG'][2]))
+    phi_matrix = np.transpose(GetMatrix(dataset_config['SHAPE'][3],dataset_config['SHAPE'][2]))
     phi_matrix = np.reshape(phi_matrix,(1,1,phi_matrix.shape[0],phi_matrix.shape[1],1))
 
     def GetCenter(matrix,energies,power=1):
@@ -389,7 +405,7 @@ def AverageShowerWidth(data_dict):
 def AverageELayer(data_dict):
     
     def _preprocess(data):
-        preprocessed = np.reshape(data,(total_evts,dataset_config['SHAPE_ORIG'][1],-1))
+        preprocessed = np.reshape(data,(total_evts,dataset_config['SHAPE'][1],-1))
         preprocessed = np.sum(preprocessed,-1)
         #preprocessed = np.mean(preprocessed,0)
         return preprocessed
@@ -406,7 +422,7 @@ def AverageEX(data_dict):
 
     def _preprocess(data):
         preprocessed = np.transpose(data,(0,3,1,2,4))
-        preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE_ORIG'][3],-1))
+        preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE'][3],-1))
         preprocessed = np.sum(preprocessed,-1)
         return preprocessed
         
@@ -429,7 +445,7 @@ def AverageEY(data_dict):
 
     def _preprocess(data):
         preprocessed = np.transpose(data,(0,2,1,3,4))
-        preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE_ORIG'][2],-1))
+        preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE'][2],-1))
         preprocessed = np.sum(preprocessed,-1)
         return preprocessed
 
@@ -485,7 +501,7 @@ def HistNhits(data_dict):
 def HistMaxELayer(data_dict):
 
     def _preprocess(data):
-        preprocessed = np.reshape(data,(data.shape[0],dataset_config['SHAPE_ORIG'][1],-1))
+        preprocessed = np.reshape(data,(data.shape[0],dataset_config['SHAPE'][1],-1))
         preprocessed = np.ma.divide(np.max(preprocessed,-1),np.sum(preprocessed,-1)).filled(0)
         return preprocessed
 

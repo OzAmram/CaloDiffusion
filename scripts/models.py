@@ -247,6 +247,58 @@ def Downsample(dim, cylindrical = False):
     #return nn.AvgPool3d(kernel_size = (1,2,2), stride = (1,2,2), padding =0)
 
 
+class FCN(nn.Module):
+    #Fully connected network
+    def __init__(self,
+            dim_in = 356,
+            num_layers = 4, 
+            cond_dim = 64,
+            time_embed = True,
+            cond_embed = True,
+            ):
+
+        super().__init__()
+
+
+
+        # time and energy embeddings
+        half_cond_dim = cond_dim // 2
+        time_layers = []
+        if(time_embed): time_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
+        else: time_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU() ]
+        time_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
+
+
+        cond_layers = []
+        if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
+        else: cond_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU()]
+        cond_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
+
+
+        self.time_mlp = nn.Sequential(*time_layers)
+        self.cond_mlp = nn.Sequential(*cond_layers)
+
+
+        out_layers = [nn.Linear(dim_in + cond_dim, dim_in)]
+        for i in range(num_layers-1):
+            out_layers.append(nn.GELU())
+            out_layers.append(nn.Linear(dim_in, dim_in))
+
+        self.main_mlp = nn.Sequential(*out_layers)
+
+
+
+    def forward(self, x, cond, time):
+
+        t = self.time_mlp(time)
+        c = self.cond_mlp(cond)
+        x = torch.cat([x, t,c], axis = -1)
+
+        x = self.main_mlp(x)
+        return x
+
+
+
 class CondUnet(nn.Module):
 #Unet with conditional layers
     def __init__(

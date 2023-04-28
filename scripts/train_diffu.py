@@ -23,7 +23,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_folder', default='/wclustre/cms_mlsim/denoise/CaloChallenge/', help='Folder containing data and MC files')
     parser.add_argument('--model', default='Diffu', help='Diffusion model to train. Options are: VPSDE, VESDE and subVPSDE')
     parser.add_argument('-c', '--config', default='configs/test.json', help='Config file with training parameters')
-    parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
+    parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
@@ -48,7 +48,8 @@ if __name__ == '__main__':
     training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
     loss_type = dataset_config.get("LOSS_TYPE", "l2")
     dataset_num = dataset_config.get('DATASET_NUM', 2)
-    fully_connected = dataset_config.get('FCN', False)
+    shower_embed = dataset_config.get('SHOWER_EMBED', '')
+    orig_shape = ('orig' in shower_embed)
     energy_loss_scale = dataset_config.get('ENERGY_LOSS_SCALE', 0.0)
 
     data = []
@@ -63,9 +64,10 @@ if __name__ == '__main__':
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
+
             nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
             dataset_num  = dataset_num,
-            fully_connected = fully_connected,
+            orig_shape = orig_shape,
         )
 
 
@@ -83,11 +85,22 @@ if __name__ == '__main__':
         avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
         std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
         E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
+
+    NN_embed = None
+    if('NN' in shower_embed):
+        if(dataset_num == 1):
+            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
+            bins = XMLHandler("photon", binning_file)
+        else: 
+            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
+            bins = XMLHandler("pion", binning_file)
+
+        NN_embed = NNConverter(bins = bins).to(device = device)
         
 
     dshape = dataset_config['SHAPE_PAD']
     energies = np.reshape(energies,(-1))    
-    if(not fully_connected): data = np.reshape(data,dshape)
+    if(not orig_shape): data = np.reshape(data,dshape)
     else: data = np.reshape(data, (len(data), -1))
 
     num_data = data.shape[0]
@@ -121,9 +134,10 @@ if __name__ == '__main__':
 
 
     if(flags.model == "Diffu"):
-        shape = dataset_config['SHAPE_PAD'][1:] if (not fully_connected) else dataset_config['SHAPE_ORIG'][1:]
-        model = CaloDiffu(shape, batch_size, config=dataset_config, training_obj = training_obj,
+        shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
+        model = CaloDiffu(shape, batch_size, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed,
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
+
 
         #sometimes save only weights, sometimes save other info
         if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])

@@ -79,11 +79,17 @@ print("CONV")
 
 print("UNDO")
 unconv = g.unconvert(conv)
-og = g.unreshape(unconv)
+og = g.unreshape(unconv).detach().numpy()
+
+n1 = NNConverter(g)
+n_enc = n1.enc(torch.FloatTensor(raw_shower))
+print('NN layer avgs', torch.mean(n_enc, axis = (0,2,3)))
+n_dec = n1.dec(n_enc).detach().numpy()
 
 assert( np.allclose(raw_shower, og))
 
 print("CLOSE : ", np.allclose(raw_shower, og))
+print("NN CLOSE : ", np.allclose(raw_shower, n_dec))
 
 
 
@@ -115,7 +121,7 @@ shower_reshape2 = g2.reshape(raw_shower2)
 conv2 = g2.convert(shower_reshape2)
 print('conv', conv2.shape)
 unconv2 = g2.unconvert(conv2)
-og2 = g2.unreshape(unconv2)
+og2 = g2.unreshape(unconv2).detach().numpy()
 print("all_R:")
 for r in g2.all_r_edges.numpy():
     print("%.2f, " % r, end ="")

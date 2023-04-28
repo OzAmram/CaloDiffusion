@@ -12,7 +12,7 @@ from models import *
 class CaloDiffu(nn.Module):
     """Diffusion based generative model"""
     def __init__(self, data_shape,num_batch,name='SGM',config=None, cylindrical = False, R_Z_inputs = False, training_obj = 'noise_pred',
-                    cold_diffu = False, E_bins = None, avg_showers = None, std_showers = None):
+                    cold_diffu = False, E_bins = None, avg_showers = None, std_showers = None, NN_embed = None):
         super(CaloDiffu, self).__init__()
         self._data_shape = data_shape
         self.nvoxels = np.prod(self._data_shape)
@@ -26,7 +26,10 @@ class CaloDiffu(nn.Module):
         self.avg_showers = avg_showers
         self.std_showers = std_showers
         self.training_obj = training_obj
-        self.fully_connected = self.config.get('FCN', False)
+        self.shower_embed = self.config.get('SHOWER_EMBED', '')
+        self.fully_connected = ('FCN' in self.shower_embed)
+        self.NN_embed = NN_embed
+
         supported = ['noise_pred', 'mean_pred', 'hybrid']
         is_obj = [s in self.training_obj for s in supported]
         if(not any(is_obj)):
@@ -83,6 +86,7 @@ class CaloDiffu(nn.Module):
         cond_dim = config['COND_SIZE_UNET']
         layer_sizes = config['LAYER_SIZE_UNET']
 
+
         if(self.fully_connected):
             #fully connected network architecture
             self.model = FCN(cond_dim = cond_dim, dim_in = config['SHAPE_ORIG'][1], num_layers = config['NUM_LAYERS_LINEAR'],
@@ -92,11 +96,15 @@ class CaloDiffu(nn.Module):
 
             summary_shape = [[1,config['SHAPE_ORIG'][1]], [1], [1]]
 
+
         else:
+            RZ_shape = config['SHAPE_PAD'][1:]
+
             self.R_Z_inputs = config.get('R_Z_INPUT', False)
+
             in_channels = 1
 
-            self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = self._data_shape)
+            self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = RZ_shape)
 
             if(self.R_Z_inputs):
 
@@ -106,7 +114,7 @@ class CaloDiffu(nn.Module):
                 in_channels = 3
 
 
-            calo_summary_shape = list(copy.copy(self._data_shape))
+            calo_summary_shape = list(copy.copy(RZ_shape))
             calo_summary_shape.insert(0, self._num_batch)
             calo_summary_shape[1] = in_channels
 
@@ -144,17 +152,6 @@ class CaloDiffu(nn.Module):
     def lookup_avg_std_shower(self, inputEs):
         idxs = torch.bucketize(inputEs, self.E_bins)  - 1 #NP indexes bins starting at 1 
         return self.avg_showers[idxs], self.std_showers[idxs]
-
-    def adapt_cold_noise_scale(self, inputEs, shape):
-        idxs = torch.bucketize(inputEs, self.E_bins)  - 1 #NP indexes bins starting at 1 
-        nbins = len(self.E_bins)
-        cold_scales = torch.ones(inputEs.shape[0])
-        cold_scales[idxs < nbins/2] = 1.2
-        cold_scales[idxs < nbins/4] = 1.3
-        cold_scales[idxs < nbins/8] = 1.4
-        cold_scales[idxs > 3*nbins/4] = 0.9
-        cold_scales[idxs > 7*nbins/8] = 0.8
-        return torch.reshape(cold_scales, (shape[0], * ((1,) * (len(shape) - 1)) ))
 
     
     def noise_image(self, data = None, t = None, noise = None):
@@ -195,7 +192,8 @@ class CaloDiffu(nn.Module):
 
         t_emb = self.do_time_embed(t, self.time_embed, sigma)
 
-        pred = self.model(self.add_RZ(x_noisy), energy, t_emb)
+
+        pred = self.pred(x_noisy, energy, t_emb)
 
         weight = 1.
         x0_pred = None
@@ -205,12 +203,11 @@ class CaloDiffu(nn.Module):
             c_out = torch.reshape(1./ (1. + 1./sigma2).sqrt(), (data.shape[0], 1,1,1,1))
             weight = torch.reshape(1. + (1./ sigma2), (data.shape[0], 1,1,1,1))
 
-            target = (data - c_skip * x_noisy)/c_out
+            #target = (data - c_skip * x_noisy)/c_out
 
 
-            pred = c_skip * x_noisy + c_out * pred
+            x0_pred = pred = c_skip * x_noisy + c_out * pred
             target = data
-            if('energy' in self.training_obj): x0_pred = c_skip * x_noisy + c_out * pred
 
         elif('noise_pred' in self.training_obj):
             target = noise
@@ -313,8 +310,15 @@ class CaloDiffu(nn.Module):
         return x_next
 
 
+    def pred(self, x, E, t_emb):
+
+        if(self.NN_embed is not None): x = self.NN_embed.enc(x).to(x.device)
+        out = self.model(self.add_RZ(x), E, t_emb)
+        if(self.NN_embed is not None): out = self.NN_embed.dec(out).to(x.device)
+        return out
+
     def denoise(self, x, E,t_emb):
-        pred = self.model(self.add_RZ(x), E, t_emb)
+        pred = self.pred(x, E, t_emb)
         if('mean_pred' in self.training_obj):
             return pred
         elif('hybrid' in self.training_obj):
@@ -346,7 +350,7 @@ class CaloDiffu(nn.Module):
         t_emb = self.do_time_embed(t, self.time_embed)
 
 
-        pred = self.model(self.add_RZ(x), E, t_emb)
+        pred = self.pred(x, E, t_emb)
         if('noise_pred' in self.training_obj):
             noise_pred = pred
             x0_pred = None
@@ -422,10 +426,7 @@ class CaloDiffu(nn.Module):
         if(noise is None):
             noise = torch.randn_like(avg_shower, dtype = torch.float32)
 
-        if(cold_noise_scale == 'ADAPT'): #special string
-            cold_scales = self.adapt_cold_noise_scale(E, avg_shower.shape)
-        else: #float
-            cold_scales = cold_noise_scale
+        cold_scales = cold_noise_scale
 
         return torch.add(avg_shower, cold_scales * (noise * std_shower))
 

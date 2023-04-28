@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=JOB_NAME
-#SBATCH --output=JOB_OUT/log_plot.txt
+#SBATCH --output=JOB_OUT/log_plot_JOBIDX.txt
 #SBATCH --partition=gpu_gce
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
@@ -17,7 +17,7 @@ apptainer exec --no-home -p --nv --bind `pwd` --bind /cvmfs --bind /cvmfs/unpack
 }
 
 cd /work1/cms_mlsim/oamram/CaloDiffusion/scripts
-torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; python plot.py --config MDIR/config.json --model MODEL --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --model_loc MDIR/MNAME --plot_folder ../plots/JOB_NAME --nevts NEVTS  --batch_size 100 --sample --sample_algo SAMPLE_ALGO --sample_offset SAMPLE_OFFSET"
+torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; python plot.py --config MDIR/config.json --model MODEL --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --model_loc MDIR/MNAME --plot_folder ../plots/JOB_NAME --nevts NEVTS  --batch_size 100 --sample --sample_algo SAMPLE_ALGO --sample_offset SAMPLE_OFFSET --job_idx JOBIDX"
 
 EVAL=EVAL_VAR
 

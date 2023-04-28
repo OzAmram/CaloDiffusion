@@ -10,6 +10,7 @@ import torch.nn as nn
 import sys
 sys.path.append("..")
 from CaloChallenge.code.XMLHandler import *
+from CaloChallenge.code.HighLevelFeatures import *
 from consts import *
 
 #use tqdm if local, skip if batch job
@@ -28,7 +29,7 @@ def split_data_np(data, frac=0.8):
     return train_data,test_data
 
 
-def create_R_Z_image(device, scaled = False, shape = (1,45,16,9)):
+def create_R_Z_image(device, scaled = True, shape = (1,45,16,9)):
 
     if(shape[-1] == 30): #dataset 1, photons
         r_bins =  [ 0.,  2.,  4.,  5.,  6.,  8., 10., 12., 15., 20., 25., 30., 40., 50., 60., 70., 80., 90.,  100.,  
@@ -335,18 +336,19 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
 
 
 
-def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, fully_connected = False):
+def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
+        evt_start = 0):
 
-    start = 0
     with h5.File(file_name,"r") as h5f:
         #holdout events for testing
         if(nevts == -1 and nholdout > 0): nevts = -(nholdout)
-        end = int(nevts)
+        end = evt_start + int(nevts)
         if(from_end):
-            start = -int(nevts)
+            evt_start = -int(nevts)
             end = None
-        e = h5f['incident_energies'][start:end].astype(np.float32)/1000.0
-        shower = h5f['showers'][start:end].astype(np.float32)/1000.0
+        print("Event start, stop: ", evt_start, end)
+        e = h5f['incident_energies'][evt_start:end].astype(np.float32)/1000.0
+        shower = h5f['showers'][evt_start:end].astype(np.float32)/1000.0
 
         
     e = np.reshape(e,(-1,1))
@@ -354,7 +356,7 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, sh
     shower = shower/(max_deposit*e)
 
 
-    shower_preprocessed = preprocess_shower(shower, shape, showerMap, dataset_num = dataset_num, fully_connected = fully_connected)
+    shower_preprocessed = preprocess_shower(shower, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape)
 
     if logE:        
         E_preprocessed = np.log10(e/emin)/np.log10(emax/emin)
@@ -362,12 +364,14 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, sh
         E_preprocessed = (e-emin)/(emax-emin)
 
     return shower_preprocessed, E_preprocessed 
+
+
     
-def preprocess_shower(shower, shape, showerMap = 'log-norm', dataset_num = 2, fully_connected = False):
+def preprocess_shower(shower, shape, showerMap = 'log-norm', dataset_num = 2, orig_shape = False):
 
     if(dataset_num > 1): 
         shower = shower.reshape(shape)
-    elif(not fully_connected):
+    elif(not orig_shape):
         if(dataset_num == 1): 
             binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
             bins = XMLHandler("photon", binning_file)
@@ -384,7 +388,7 @@ def preprocess_shower(shower, shape, showerMap = 'log-norm', dataset_num = 2, fu
         print("Invalid dataset %i!" % dataset_num)
         exit(1)
 
-    if(fully_connected and dataset_num <= 1): dataset_num +=10 
+    if(orig_shape and dataset_num <= 1): dataset_num +=10 
 
     print('dset', dataset_num)
 
@@ -421,13 +425,13 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='log', dataset_num = 2, fully_connected = False):
+def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='log', dataset_num = 2, orig_shape = False):
     '''Revert the transformations applied to the training set'''
 
     if(dataset_num > 3 or dataset_num <0 ): 
         print("Invalid dataset %i!" % dataset_num)
         exit(1)
-    if(fully_connected and dataset_num <= 1): dataset_num +=10 
+    if(orig_shape and dataset_num <= 1): dataset_num +=10 
     print('dset', dataset_num)
     c = dataset_params[dataset_num]
 
@@ -467,7 +471,7 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
 
 
 
-    if(dataset_num > 1 or fully_connected): 
+    if(dataset_num > 1 or orig_shape): 
         print("reshape")
         data = data.reshape(voxels.shape[0],-1)*max_deposit*energy.reshape(-1,1)
     else:
@@ -508,6 +512,73 @@ def polar_to_cart(polar_data,nr=9,nalpha=16,nx=12,ny=12):
                 cart_img[binx,biny]+=polar_data[alpha,r]
     return cart_img
 
+
+class NNConverter(nn.Module):
+    "Convert irregular geometry to regular one, initialized with regular geometric conversion, but uses trainable linear map"
+    def __init__(self, geomconverter = None, bins = None):
+        super().__init__()
+        if(geomconverter is None):
+            geomconverter = GeomConverter(bins)
+
+        self.gc = geomconverter
+
+        self.encs = nn.ModuleList([])
+        self.decs = nn.ModuleList([])
+        eps = 1e-5 
+        for i in range(len(self.gc.weight_mats)):
+
+            rdim_in = len(self.gc.lay_r_edges[i]) - 1
+            lay = nn.Linear(rdim_in, self.gc.dim_r_out, bias = False)
+            noise = torch.randn_like(self.gc.weight_mats[i])
+            lay.weight.data = self.gc.weight_mats[i] + eps * noise
+            self.encs.append(lay)
+
+            inv_lay = nn.Linear(self.gc.dim_r_out, rdim_in, bias = False)
+            inv_init = torch.linalg.pinv(self.gc.weight_mats[i])
+            noise = torch.randn_like(inv_init)
+            inv_lay.weight.data =  inv_init + eps*noise
+            self.decs.append(inv_lay)
+
+    def enc(self, x):
+        n_shower = x.shape[0]
+        x = self.gc.reshape(x)
+
+        out = torch.zeros((n_shower, 1, self.gc.num_layers, self.gc.alpha_out, self.gc.dim_r_out))
+        for i in range(len(x)):
+            o = self.encs[i](x[i])
+            if(self.gc.lay_alphas is not None):
+                if(self.gc.lay_alphas[i]  == 1):
+                    #distribute evenly in phi
+                    o = torch.repeat_interleave(o, self.gc.alpha_out, dim = -2)/self.gc.alpha_out
+                elif(self.gc.lay_alphas[i]  != self.gc.alpha_out):
+                    print("Num alpha bins for layer %i is %i. Don't know how to handle" % (i, self.gc.lay_alphas[i]))
+                    exit(1)
+            out[:,0,i] = o
+        return out
+
+    def dec(self, x):
+        out = []
+        x = torch.squeeze(x)
+        for i in range(self.gc.num_layers):
+            o = self.decs[i](x[:,i])
+
+            if(self.gc.lay_alphas is not None):
+                if(self.gc.lay_alphas[i]  == 1):
+                    #Only works for converting 1 alpha bin into multiple, ok for dataset1 but maybe should generalize
+                    o = torch.sum(o, dim = -2, keepdim = True)
+                elif(self.gc.lay_alphas[i]  != self.gc.alpha_out):
+                    print("Num alpha bins for layer %i is %i. Don't know how to handle" % (i, self.gc.lay_alphas[i]))
+                    exit(1)
+            out.append(o)
+        out = self.gc.unreshape(out)
+        return out
+
+
+    def forward(x):
+        return self.enc(x)
+
+
+
 class GeomConverter:
     "Convert irregular geometry to regular one (ala CaloChallenge Dataset 1)"
     def __init__(self, bins = None, all_r_edges = None, lay_r_edges = None, alpha_out = 1, lay_alphas = None):
@@ -545,6 +616,7 @@ class GeomConverter:
         self.weight_mats = []
         for ilay in range(len(lay_r_edges)):
             dim_in = len(lay_r_edges[ilay]) - 1
+            lay = nn.Linear(dim_in, self.dim_r_out, bias = False)
             weight_mat = torch.zeros((self.dim_r_out, dim_in))
             for ir in range(dim_in):
                 o_idx_start = torch.nonzero(self.all_r_edges == self.lay_r_edges[ilay][ir])[0][0]
@@ -571,7 +643,7 @@ class GeomConverter:
     def unreshape(self, raw_shower):
         #convert jagged back to original flat format
         n_show = raw_shower[0].shape[0]
-        out = np.zeros((n_show, self.layer_boundaries[-1]))
+        out = torch.zeros((n_show, self.layer_boundaries[-1]))
         for idx in range(len(self.layer_boundaries)-1):
             out[:, self.layer_boundaries[idx]:self.layer_boundaries[idx+1]] = raw_shower[idx].reshape(n_show, -1)
         return out
@@ -580,7 +652,8 @@ class GeomConverter:
     def convert(self, d):
         out = torch.zeros((len(d[0]), self.num_layers, self.alpha_out, self.dim_r_out))
         for i in range(len(d)):
-            o = torch.einsum( '...ij,...j->...i', self.weight_mats[i], torch.FloatTensor(d[i]))
+            if(not isinstance(d[i], torch.FloatTensor)): d[i] = torch.FloatTensor(d[i])
+            o = torch.einsum( '...ij,...j->...i', self.weight_mats[i], d[i])
             if(self.lay_alphas is not None):
                 if(self.lay_alphas[i]  == 1):
                     #distribute evenly in phi
@@ -595,7 +668,10 @@ class GeomConverter:
     def unconvert(self, d):
         out = []
         for i in range(self.num_layers):
-            o = torch.einsum( '...ij,...j->...i', torch.linalg.pinv(self.weight_mats[i]), torch.FloatTensor(d[:,i]))
+            weight_mat_inv = torch.linalg.pinv(self.weight_mats[i])
+            x = torch.FloatTensor(d[:,i])
+            o = torch.einsum( '...ij,...j->...i', weight_mat_inv, x)
+
             if(self.lay_alphas is not None):
                 if(self.lay_alphas[i]  == 1):
                     #Only works for converting 1 alpha bin into multiple, ok for dataset1 but maybe should generalize
@@ -651,6 +727,11 @@ def SetFig(xlabel,ylabel):
 
     ax0.minorticks_on()
     return fig, ax0
+
+def draw_shower(shower, dataset_num, fout, title = None):
+    binning_file = "../CaloChallenge/code/binning_dataset_2.xml"
+    hf = HighLevelFeatures("electron", binning_file)
+    hf.DrawSingleShower(shower, fout, title = title)
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ print("orig:\n")
 for d in shower_reshape: print(d.shape)
 
 conv = g.convert(shower_reshape)
-print(conv.shape)
+print("GLAM SHAPE", conv.shape)
 print('layer avgs', torch.mean(conv, axis = (0,2,3)))
 print('phi avgs', torch.mean(conv, axis = (0,1,3)))
 for i in range(5):
@@ -115,11 +115,12 @@ print('raw', raw_shower2.shape)
 
 shower_reshape2 = g2.reshape(raw_shower2)
 
+for d in shower_reshape2: print(d.shape)
 
 
 
 conv2 = g2.convert(shower_reshape2)
-print('conv', conv2.shape)
+print('GLAM shape: ', conv2.shape)
 unconv2 = g2.unconvert(conv2)
 og2 = g2.unreshape(unconv2).detach().numpy()
 print("all_R:")

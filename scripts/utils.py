@@ -10,7 +10,6 @@ import torch.nn as nn
 import sys
 sys.path.append("..")
 from CaloChallenge.code.XMLHandler import *
-from CaloChallenge.code.HighLevelFeatures import *
 from consts import *
 
 #use tqdm if local, skip if batch job
@@ -27,6 +26,17 @@ def split_data_np(data, frac=0.8):
     train_data =data[:split]
     test_data = data[split:]
     return train_data,test_data
+
+
+def create_phi_image(device, shape = (1,45,16,9)):
+
+    n_phi = shape[-2]
+    phi_bins = torch.linspace(0., 1., n_phi)
+    phi_image = torch.zeros(shape, device = device)
+    for i in range(n_phi):
+        phi_image[:,:,i,:] = phi_bins[i]
+    print('phi', phi_image[0,0,:,0])
+    return phi_image
 
 
 def create_R_Z_image(device, scaled = True, shape = (1,45,16,9)):
@@ -71,24 +81,8 @@ line_style = {
     'CaloScore: VE':'-',
     'CaloScore: subVP':'-',
 
-    'VP 50 steps':'v',
-    'VE 50 steps':'v',
-    'subVP 50 steps':'v',
-
-    'VP 500 steps':'^',
-    'VE 500 steps':'^',
-    'subVP 500 steps':'^',
-
-    'VP r=0.0':'v',
-    'VE r=0.0':'v',
-    'subVP r=0.0':'v',
-
-    'VP r=0.3':'^',
-    'VE r=0.3':'^',
-    'subVP r=0.3':'^',
-
     'Autoencoder' : '-',
-    'Diffu' : '-',
+    'CaloDiffusion' : '-',
     'Avg Shower' : '-',
     'LatentDiffu' : '-',
 
@@ -96,28 +90,9 @@ line_style = {
 
 colors = {
     'Geant4':'black',
-    'CaloScore: VP':'#7570b3',
-    'CaloScore: VE':'#d95f02',
-    'CaloScore: subVP':'#1b9e77',
-
-    'VP 50 steps':'#e7298a',
-    'VE 50 steps':'#e7298a',
-    'subVP 50 steps':'#e7298a',
-
-    'VP 500 steps':'#e7298a',
-    'VE 500 steps':'#e7298a',
-    'subVP 500 steps':'#e7298a',
-
-    'VP r=0.0':'#e7298a',
-    'VE r=0.0':'#e7298a',
-    'subVP r=0.0':'#e7298a',
-
-    'VP r=0.3':'#e7298a',
-    'VE r=0.3':'#e7298a',
-    'subVP r=0.3':'#e7298a',
     
     'Autoencoder': 'purple',
-    'Diffu': 'blue',
+    'CaloDiffusion': 'blue',
     'Avg Shower': 'blue',
     'LatentDiffu': 'green',
 
@@ -126,30 +101,10 @@ colors = {
 name_translate={
 
     'AE' : "Autoencoder",
-    'Diffu' : "Diffu",
+    'Diffu' : "CaloDiffusion",
     'LatentDiffu' : "LatentDiffu",
     'Avg' : "Avg Shower",
 
-
-    'VPSDE':'CaloScore: VP',
-    'VESDE':'CaloScore: VE',
-    'subVPSDE':'CaloScore: subVP',
-
-    '50_VPSDE':'VP 50 steps',
-    '50_VESDE':'VE 50 steps',
-    '50_subVPSDE':'subVP 50 steps',
-
-    '500_VPSDE':'VP 500 steps',
-    '500_VESDE':'VE 500 steps',
-    '500_subVPSDE':'subVP 500 steps',
-
-    '0p0_VPSDE':'VP r=0.0',
-    '0p0_VESDE':'VE r=0.0',
-    '0p0_subVPSDE':'subVP r=0.0',
-
-    '0p3_VPSDE':'VP r=0.3',
-    '0p3_VESDE':'VE r=0.3',
-    '0p3_subVPSDE':'subVP r=0.3',
 
     
     }
@@ -163,17 +118,26 @@ def SetStyle():
     rc('font', size=22)
     rc('xtick', labelsize=15)
     rc('ytick', labelsize=15)
-    rc('legend', fontsize=15)
+    rc('legend', fontsize=24)
 
     # #
-    mpl.rcParams.update({'font.size': 19})
+    mpl.rcParams.update({'font.size': 26})
     #mpl.rcParams.update({'legend.fontsize': 18})
     mpl.rcParams['text.usetex'] = False
+    mpl.rcParams.update({'xtick.major.size': 8}) 
+    mpl.rcParams.update({'xtick.major.width': 1.5}) 
+    mpl.rcParams.update({'xtick.minor.size': 4}) 
+    mpl.rcParams.update({'xtick.minor.width': 0.8}) 
+    mpl.rcParams.update({'ytick.major.size': 8}) 
+    mpl.rcParams.update({'ytick.major.width': 1.5}) 
+    mpl.rcParams.update({'ytick.minor.size': 4}) 
+    mpl.rcParams.update({'ytick.minor.width': 0.8}) 
+
     mpl.rcParams.update({'xtick.labelsize': 18}) 
     mpl.rcParams.update({'ytick.labelsize': 18}) 
-    mpl.rcParams.update({'axes.labelsize': 18}) 
+    mpl.rcParams.update({'axes.labelsize': 26}) 
     mpl.rcParams.update({'legend.frameon': False}) 
-    mpl.rcParams.update({'lines.linewidth': 2})
+    mpl.rcParams.update({'lines.linewidth': 4})
     
     import matplotlib.pyplot as plt
     #import mplhep as hep
@@ -205,24 +169,35 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4'):
         else:
             ax0.plot(np.mean(feed_dict[plot],0),label=plot,linestyle=line_style[plot],color=colors[plot])
         if reference_name!=plot:
+
+            ax0.get_xaxis().set_visible(False)
+            ax0.set_ymargin(0)
+
             eps = 1e-8
             ratio = 100*np.divide(np.mean(feed_dict[reference_name],0)-np.mean(feed_dict[plot],0),np.mean(feed_dict[reference_name],0) + eps)
             #ax1.plot(ratio,color=colors[plot],marker='o',ms=10,lw=0,markerfacecolor='none',markeredgewidth=3)
+
+            plt.axhline(y=0.0, color='black', linestyle='-',linewidth=2)
+            plt.axhline(y=10, color='gray', linestyle='--',linewidth=2)
+            plt.axhline(y=-10, color='gray', linestyle='--',linewidth=2)
+
+            
             if 'steps' in plot or 'r=' in plot:
-                ax1.plot(ratio,color=colors[plot],markeredgewidth=1,marker=line_style[plot],lw=0)
+                ax1.plot(ratio,color=colors[plot],markeredgewidth=4,marker=line_style[plot],lw=0)
             else:
-                ax1.plot(ratio,color=colors[plot],linewidth=2,linestyle=line_style[plot])
+                ax1.plot(ratio,color=colors[plot],linestyle=line_style[plot])
                 
         
     FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0)
-    ax0.legend(loc='best',fontsize=16,ncol=1)
+    ax0.legend(loc='best',fontsize=24,ncol=1)
 
-    plt.ylabel('Difference. (%)')
+    plt.ylabel('Diff. (%)')
     plt.xlabel(xlabel)
-    plt.axhline(y=0.0, color='r', linestyle='--',linewidth=1)
-    plt.axhline(y=10, color='r', linestyle='--',linewidth=1)
-    plt.axhline(y=-10, color='r', linestyle='--',linewidth=1)
+    loc = mtick.MultipleLocator(base=10.0) 
+    ax1.yaxis.set_minor_locator(loc)
     plt.ylim([-50,50])
+
+    plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
 
     return fig,ax0
 
@@ -237,8 +212,8 @@ def FormatFig(xlabel,ylabel,ax0):
     # y_loc, _ = plt.yticks()
     # y_update = ['%.1f' % y for y in y_loc]
     # plt.yticks(y_loc, y_update) 
-    ax0.set_xlabel(xlabel,fontsize=20)
-    ax0.set_ylabel(ylabel)
+    ax0.set_xlabel(xlabel)
+    ax0.set_ylabel(ylabel, labelpad=10)
         
 
     # xposition = 0.9
@@ -285,13 +260,14 @@ def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins 
     return fig
 
 
-def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False,binning=None,label_loc='best'):
+def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
-    fig,gs = SetGrid() 
+    fig,gs = SetGrid(ratio) 
     ax0 = plt.subplot(gs[0])
-    plt.xticks(fontsize=0)
-    ax1 = plt.subplot(gs[1],sharex=ax0)
+    if(ratio):
+        plt.xticks(fontsize=0)
+        ax1 = plt.subplot(gs[1],sharex=ax0)
 
     
     if binning is None:
@@ -300,34 +276,39 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
     xaxis = [(binning[i] + binning[i+1])/2.0 for i in range(len(binning)-1)]
     reference_hist,_ = np.histogram(feed_dict[reference_name],bins=binning,density=True)
     
-    for ip,plot in enumerate(feed_dict.keys()):
+    for ip,plot in enumerate(reversed(list(feed_dict.keys()))):
         if 'steps' in plot or 'r=' in plot:
-            dist,_ = np.histogram(feed_dict[plot],bins=binning,density=True)
-            ax0.plot(xaxis,dist,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=3,label=plot)
+            dist,_ = np.histogram(feed_dict[plot],bins=binning,density=normalize)
+            ax0.plot(xaxis,dist, histtype='stepfilled', facecolor = 'silver',lw =2,label=plot, alpha = 1.0)
             #dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,marker=line_style[plot],color=colors[plot],density=True,histtype="step")
+        elif( 'Geant' in plot):
+            dist,_,_ = ax0.hist(feed_dict[plot], bins = binning, label = plot, density = True, histtype='stepfilled', facecolor = 'silver',lw =2, alpha = 1.0)
         else:
-            dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,linestyle=line_style[plot],color=colors[plot],density=True,histtype="step")
+            dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,linestyle=line_style[plot],color=colors[plot],density=True,histtype="step", lw =4 )
             
-        if reference_name!=plot:
+        if reference_name!=plot and ratio:
             eps = 1e-8
-            ratio = 100*np.divide(dist - reference_hist,reference_hist + eps)
+            h_ratio = 100*np.divide(dist - reference_hist,reference_hist + eps)
             if 'steps' in plot or 'r=' in plot:
-                ax1.plot(xaxis,ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=3)
+                ax1.plot(xaxis,h_ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=4)
             else:
-                ax1.plot(xaxis,ratio,color=colors[plot],marker='o',ms=10,lw=0)
+                ax1.plot(xaxis,h_ratio,color=colors[plot],marker='o',ms=10,lw=0)
         
-    ax0.legend(loc=label_loc,fontsize=16,ncol=1)        
-    FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0) 
+    ax0.legend(loc=label_loc,fontsize=24,ncol=1)        
 
     if logy:
         ax0.set_yscale('log')
     
-    plt.ylabel('Difference. (%)')
-    plt.xlabel(xlabel)
-    plt.axhline(y=0.0, color='r', linestyle='-',linewidth=1)
-    plt.axhline(y=10, color='r', linestyle='--',linewidth=1)
-    plt.axhline(y=-10, color='r', linestyle='--',linewidth=1)
-    plt.ylim([-50,50])
+    if(ratio):
+        FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0) 
+        plt.ylabel('Diff. (%)')
+        plt.xlabel(xlabel)
+        plt.axhline(y=0.0, color='r', linestyle='-',linewidth=1)
+        plt.axhline(y=10, color='r', linestyle='--',linewidth=1)
+        plt.axhline(y=-10, color='r', linestyle='--',linewidth=1)
+        plt.ylim([-50,50])
+    else:
+        FormatFig(xlabel = xlabel, ylabel = ylabel,ax0=ax0) 
 
     return fig,ax0
 
@@ -472,7 +453,6 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
 
 
     if(dataset_num > 1 or orig_shape): 
-        print("reshape")
         data = data.reshape(voxels.shape[0],-1)*max_deposit*energy.reshape(-1,1)
     else:
         if(dataset_num == 1): 
@@ -512,10 +492,12 @@ def polar_to_cart(polar_data,nr=9,nalpha=16,nx=12,ny=12):
                 cart_img[binx,biny]+=polar_data[alpha,r]
     return cart_img
 
+    
+
 
 class NNConverter(nn.Module):
     "Convert irregular geometry to regular one, initialized with regular geometric conversion, but uses trainable linear map"
-    def __init__(self, geomconverter = None, bins = None):
+    def __init__(self, geomconverter = None, bins = None, hidden_size = 32):
         super().__init__()
         if(geomconverter is None):
             geomconverter = GeomConverter(bins)
@@ -528,15 +510,24 @@ class NNConverter(nn.Module):
         for i in range(len(self.gc.weight_mats)):
 
             rdim_in = len(self.gc.lay_r_edges[i]) - 1
+            #lay = nn.Sequential(*[nn.Linear(rdim_in, hidden_size), nn.GELU(), nn.Linear(hidden_size, hidden_size), 
+            #    nn.GELU(), nn.Linear(hidden_size, self.gc.dim_r_out)])
+
             lay = nn.Linear(rdim_in, self.gc.dim_r_out, bias = False)
             noise = torch.randn_like(self.gc.weight_mats[i])
             lay.weight.data = self.gc.weight_mats[i] + eps * noise
+
             self.encs.append(lay)
 
+
+            #inv_lay = nn.Sequential(*[nn.Linear(self.gc.dim_r_out, hidden_size), nn.GELU(), nn.Linear(hidden_size, hidden_size), 
+                #nn.GELU(), nn.Linear(hidden_size, rdim_in)])
             inv_lay = nn.Linear(self.gc.dim_r_out, rdim_in, bias = False)
+
             inv_init = torch.linalg.pinv(self.gc.weight_mats[i])
-            noise = torch.randn_like(inv_init)
-            inv_lay.weight.data =  inv_init + eps*noise
+            noise2 = torch.randn_like(inv_init)
+            inv_lay.weight.data =  inv_init + eps*noise2
+
             self.decs.append(inv_lay)
 
     def enc(self, x):
@@ -729,6 +720,7 @@ def SetFig(xlabel,ylabel):
     return fig, ax0
 
 def draw_shower(shower, dataset_num, fout, title = None):
+    from CaloChallenge.code.HighLevelFeatures import HighLevelFeatures
     binning_file = "../CaloChallenge/code/binning_dataset_2.xml"
     hf = HighLevelFeatures("electron", binning_file)
     hf.DrawSingleShower(shower, fout, title = title)

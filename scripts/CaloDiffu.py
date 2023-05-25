@@ -101,18 +101,16 @@ class CaloDiffu(nn.Module):
             RZ_shape = config['SHAPE_PAD'][1:]
 
             self.R_Z_inputs = config.get('R_Z_INPUT', False)
+            self.phi_inputs = config.get('PHI_INPUT', False)
 
             in_channels = 1
 
             self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = RZ_shape)
+            self.phi_image = create_phi_image(device, shape = RZ_shape)
 
-            if(self.R_Z_inputs):
+            if(self.R_Z_inputs): in_channels = 3
 
-                self.batch_R_image = self.R_image.repeat([num_batch, 1,1,1,1])
-                self.batch_Z_image = self.Z_image.repeat([num_batch, 1,1,1,1])
-
-                in_channels = 3
-
+            if(self.phi_inputs): in_channels += 1
 
             calo_summary_shape = list(copy.copy(RZ_shape))
             calo_summary_shape.insert(0, self._num_batch)
@@ -140,12 +138,22 @@ class CaloDiffu(nn.Module):
 
         return super().load_state_dict(d_new)
 
-    def add_RZ(self, x):
+    def add_RZPhi(self, x):
+        cats = [x]
         if(self.R_Z_inputs):
+
             batch_R_image = self.R_image.repeat([x.shape[0], 1,1,1,1]).to(device=x.device)
             batch_Z_image = self.Z_image.repeat([x.shape[0], 1,1,1,1]).to(device=x.device)
-            return torch.cat([x, batch_R_image, batch_Z_image], axis = 1)
-        else:
+
+            cats+= [batch_R_image, batch_Z_image]
+        if(self.phi_inputs):
+            batch_phi_image = self.phi_image.repeat([x.shape[0], 1,1,1,1]).to(device=x.device)
+
+            cats += [batch_phi_image]
+
+        if(len(cats) > 1):
+            return torch.cat(cats, axis = 1)
+        else: 
             return x
             
     
@@ -313,7 +321,7 @@ class CaloDiffu(nn.Module):
     def pred(self, x, E, t_emb):
 
         if(self.NN_embed is not None): x = self.NN_embed.enc(x).to(x.device)
-        out = self.model(self.add_RZ(x), E, t_emb)
+        out = self.model(self.add_RZPhi(x), E, t_emb)
         if(self.NN_embed is not None): out = self.NN_embed.dec(out).to(x.device)
         return out
 
@@ -501,7 +509,7 @@ class CaloDiffu(nn.Module):
                 else: x = out
 
         end = time.time()
-        print("Time for sampling {} events is {} seconds".format(gen_size,end - start))
+        print("Time for sampling {} events is {} seconds".format(gen_size,end - start), flush=True)
         if(debug):
             return x.detach().cpu().numpy(), xs, x0s
         else:   

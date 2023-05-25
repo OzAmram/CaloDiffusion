@@ -6,11 +6,10 @@ import argparse
 import h5py as h5
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+import time, sys, copy
 import utils
-import copy
 import torch
 import torch.utils.data as torchdata
-import sys
 from CaloAE import *
 from CaloDiffu import *
 import h5py
@@ -18,7 +17,8 @@ import h5py
 if(torch.cuda.is_available()): device = torch.device('cuda')
 else: device = torch.device('cpu')
 
-plt_ext = "png"
+plt_exts = ["png", "pdf"]
+#plt_ext = "pdf"
 rank = 0
 size = 1
 
@@ -29,6 +29,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--data_folder', default='/wclustre/cms/denoise/CaloChallenge/', help='Folder containing data and MC files')
 parser.add_argument('--plot_folder', default='../plots', help='Folder to save results')
+parser.add_argument('--generated', '-g', default='', help='Generated showers')
 parser.add_argument('--model_loc', default='test', help='Location of model')
 parser.add_argument('--config', default='config_dataset2.json', help='Training parameters')
 parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
@@ -82,7 +83,7 @@ if flags.sample:
     data = None
     for i, dataset in enumerate(dataset_config['EVAL']):
         n_dataset = h5py.File(os.path.join(flags.data_folder,dataset))['showers'].shape[0]
-        if(evt_start > n_dataset):
+        if(evt_start >= n_dataset):
             evt_start -= n_dataset
             continue
 
@@ -162,7 +163,9 @@ if flags.sample:
 
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
+
         dataset_config['NOISE_SCHED'] = 'cosine'
+
         shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
         model = CaloDiffu(shape, nevts,config=dataset_config , training_obj = training_obj,NN_embed = NN_embed,
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
@@ -172,6 +175,7 @@ if flags.sample:
         elif(len(saved_model.keys()) > 1): model.load_state_dict(saved_model)
 
         generated = []
+        start_time = time.time()
         for i,(E,d_batch) in enumerate(data_loader):
             if(E.shape[0] == 0): continue
             E = E.to(device=device)
@@ -179,14 +183,16 @@ if flags.sample:
 
             out = model.Sample(E, num_steps = sample_steps, cold_noise_scale = cold_noise_scale, sample_algo = flags.sample_algo,
                     debug = flags.debug, sample_offset = flags.sample_offset)
+
+
             if(flags.debug):
                 gen, all_gen, x0s = out
                 for j in [0,len(all_gen)//4, len(all_gen)//2, 3*len(all_gen)//4, 9*len(all_gen)//10, len(all_gen)-10, len(all_gen)-5,len(all_gen)-1]:
-                    fout_ex = '{}/{}_{}_norm_voxels_gen_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_ext)
+                    fout_ex = '{}/{}_{}_norm_voxels_gen_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
                     make_histogram([all_gen[j].reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                                     num_bins = 40, normalize = True, fname = fout_ex)
 
-                    fout_ex = '{}/{}_{}_norm_voxels_x0_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_ext)
+                    fout_ex = '{}/{}_{}_norm_voxels_x0_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
                     make_histogram([x0s[j].reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                                     num_bins = 40, normalize = True, fname = fout_ex)
             else: gen = out
@@ -195,6 +201,8 @@ if flags.sample:
             if(i == 0): generated = gen
             else: generated = np.concatenate((generated, gen))
             del E, d_batch
+        end_time = time.time()
+        print("Total sampling time %.3f seconds" % (end_time - start_time))
     elif(flags.model == "Avg"):
         #define model just for useful fns
         model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
@@ -221,7 +229,7 @@ if flags.sample:
     if(not orig_shape): generated = generated.reshape(dataset_config["SHAPE"])
 
     if(flags.debug):
-        fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext)
+        fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_exts[0])
         make_histogram([generated.reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                         num_bins = 40, normalize = True, fname = fout_ex)
 
@@ -253,8 +261,8 @@ if flags.sample:
     fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.model, job_label))
     print("Creating " + fout)
     with h5.File(fout,"w") as h5f:
-        dset = h5f.create_dataset("showers", data=1000*np.reshape(generated,(generated.shape[0],-1)))
-        dset = h5f.create_dataset("incident_energies", data=1000*energies)
+        dset = h5f.create_dataset("showers", data=1000*np.reshape(generated,(generated.shape[0],-1)), compression = 'gzip')
+        dset = h5f.create_dataset("incident_energies", data=1000*energies, compression = 'gzip')
 
 
 if(not flags.sample or flags.job_idx < 0):
@@ -267,8 +275,8 @@ if(not flags.sample or flags.job_idx < 0):
 
     def LoadSamples(fname):
         with h5.File(fname,"r") as h5f:
-            generated = h5f['showers'][:]/1000.
-            energies = h5f['incident_energies'][:]/1000.
+            generated = h5f['showers'][:flags.nevts]/1000.
+            energies = h5f['incident_energies'][:flags.nevts]/1000.
         energies = np.reshape(energies,(-1,1))
         if(dataset_num <= 1):
             generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy()
@@ -284,7 +292,10 @@ if(not flags.sample or flags.job_idx < 0):
     for model in models:
 
         checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'], model)
-        f_sample = os.path.join(checkpoint_folder,'generated_{}_{}.h5'.format(dataset_config['CHECKPOINT_NAME'], model))
+        if(flags.generated == ""):
+            f_sample = os.path.join(checkpoint_folder,'generated_{}_{}.h5'.format(dataset_config['CHECKPOINT_NAME'], model))
+        else:
+            f_sample = flags.generated
         if np.size(energies) == 0:
             data,energies = LoadSamples(f_sample)
             data_dict[utils.name_translate[model]]=data
@@ -316,11 +327,13 @@ if(not flags.sample or flags.job_idx < 0):
     print("Geant Avg", np.mean(data_dict['Geant4']))
     print("Generated Avg", np.mean(data_dict[utils.name_translate[model]]))
     true_energies = np.reshape(true_energies,(-1,1))
+    model_energies = np.reshape(energies,(-1,1))
+    #assert(np.allclose(data_energies, model_energies))
 
 
 
     #Plot high level distributions and compare with real values
-    assert np.allclose(true_energies,energies), 'ERROR: Energies between samples dont match'
+    #assert np.allclose(true_energies,energies), 'ERROR: Energies between samples dont match'
 
 
 
@@ -331,12 +344,13 @@ if(not flags.sample or flags.job_idx < 0):
         feed_dict = {}
         for key in data_dict:
             dep = np.sum(data_dict[key].reshape(data_dict[key].shape[0],-1),-1)
-            feed_dict[key] = dep / true_energies.reshape(-1)
+            if('Geant' in key): feed_dict[key] = dep / true_energies.reshape(-1)
+            else: feed_dict[key] = dep / model_energies.reshape(-1)
 
-        binning = np.linspace(0.5, 1.5, 101)
+        binning = np.linspace(0.5, 1.5, 51)
 
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Deposited energy / Generated Energy', ylabel= 'Normalized entries',logy=False,binning=binning)
-        fig.savefig('{}/FCC_ERatio_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Dep. E / Gen. Energy', ylabel= '',logy=False,binning=binning, ratio = False)
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_ERatio_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
 
@@ -346,25 +360,23 @@ if(not flags.sample or flags.job_idx < 0):
 
         fig,ax = SetFig("Gen. energy [GeV]","Dep. energy [GeV]")
         for key in data_dict:
-            ax.scatter(true_energies[0:500],
-                       np.sum(data_dict[key].reshape(data_dict[key].shape[0],-1),-1)[0:500],
-                       label=key)
+            x = true_energies[0:500] if 'Geant' in key else model_energies[0:500]
+            y = np.sum(data_dict[key].reshape(data_dict[key].shape[0],-1),-1)[0:500]
+
+            ax.scatter(x, y, label=key)
 
         ax.set_yscale("log")
         ax.set_xscale("log")
         ax.legend(loc='best',fontsize=16,ncol=1)
-        fig.savefig('{}/FCC_Scatter_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_Scatter_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
 
 
 
     def AverageShowerWidth(data_dict):
-        eta_bins = dataset_config['SHAPE'][2]
-        eta_binning = np.linspace(-1,1,eta_bins+1)
-        eta_coord = [(eta_binning[i] + eta_binning[i+1])/2.0 for i in range(len(eta_binning)-1)]
 
-        def GetMatrix(sizex,sizey, minval=-1,maxval=1):
+        def GetMatrix(sizex,sizey, minval=-1,maxval=1, binning = None):
             nbins = sizex
-            binning = np.linspace(minval,maxval,nbins+1)
+            if(binning is None): binning = np.linspace(minval,maxval,nbins+1)
             coord = [(binning[i] + binning[i+1])/2.0 for i in range(len(binning)-1)]
             matrix = np.repeat(np.expand_dims(coord,-1),sizey,-1)
             return matrix
@@ -373,12 +385,12 @@ if(not flags.sample or flags.job_idx < 0):
         #TODO : Use radial bins
         #r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
 
-        eta_matrix = GetMatrix(dataset_config['SHAPE'][2],dataset_config['SHAPE'][3])
-        eta_matrix = np.reshape(eta_matrix,(1,1,eta_matrix.shape[0],eta_matrix.shape[1],1))
-        
-        
-        phi_matrix = np.transpose(GetMatrix(dataset_config['SHAPE'][3],dataset_config['SHAPE'][2]))
+        phi_matrix = GetMatrix(dataset_config['SHAPE'][2],dataset_config['SHAPE'][3])
         phi_matrix = np.reshape(phi_matrix,(1,1,phi_matrix.shape[0],phi_matrix.shape[1],1))
+        
+        
+        r_matrix = np.transpose(GetMatrix(dataset_config['SHAPE'][3],dataset_config['SHAPE'][2]))
+        r_matrix = np.reshape(r_matrix,(1,1,r_matrix.shape[0],r_matrix.shape[1],1))
 
         def GetCenter(matrix,energies,power=1):
             ec = energies*np.power(matrix,power)
@@ -395,14 +407,14 @@ if(not flags.sample or flags.job_idx < 0):
         
         feed_dict_phi = {}
         feed_dict_phi2 = {}
-        feed_dict_eta = {}
-        feed_dict_eta2 = {}
+        feed_dict_r = {}
+        feed_dict_r2 = {}
         
         for key in data_dict:
             feed_dict_phi[key] = GetCenter(phi_matrix,data_dict[key])
             feed_dict_phi2[key] = GetWidth(feed_dict_phi[key],GetCenter(phi_matrix,data_dict[key],2))
-            feed_dict_eta[key] = GetCenter(eta_matrix,data_dict[key])
-            feed_dict_eta2[key] = GetWidth(feed_dict_eta[key],GetCenter(eta_matrix,data_dict[key],2))
+            feed_dict_r[key] = GetCenter(r_matrix,data_dict[key])
+            feed_dict_r2[key] = GetWidth(feed_dict_r[key],GetCenter(r_matrix,data_dict[key],2))
             
 
         if(dataset_config['cartesian_plot']): 
@@ -415,16 +427,16 @@ if(not flags.sample or flags.job_idx < 0):
             f_str1 = "R"
             xlabel2 = 'alpha'
             f_str2 = "Alpha"
-        fig,ax0 = utils.PlotRoutine(feed_dict_eta,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel1)
-        fig.savefig('{}/FCC_{}EC_{}_{}.{}'.format(flags.plot_folder,f_str1,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.PlotRoutine(feed_dict_r,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel1)
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_{}EC_{}_{}.{}'.format(flags.plot_folder,f_str1,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         fig,ax0 = utils.PlotRoutine(feed_dict_phi,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel2)
-        fig.savefig('{}/FCC_{}EC_{}_{}.{}'.format(flags.plot_folder,f_str2,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
-        fig,ax0 = utils.PlotRoutine(feed_dict_eta2,xlabel='Layer number', ylabel= '%s-width' % xlabel1)
-        fig.savefig('{}/FCC_{}W_{}_{}.{}'.format(flags.plot_folder,f_str1,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_{}EC_{}_{}.{}'.format(flags.plot_folder,f_str2,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.PlotRoutine(feed_dict_r2,xlabel='Layer number', ylabel= '%s-width' % xlabel1)
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_{}W_{}_{}.{}'.format(flags.plot_folder,f_str1,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         fig,ax0 = utils.PlotRoutine(feed_dict_phi2,xlabel='Layer number', ylabel= '%s-width' % xlabel2)
-        fig.savefig('{}/FCC_{}W_{}_{}.{}'.format(flags.plot_folder,f_str2,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_{}W_{}_{}.{}'.format(flags.plot_folder,f_str2,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
 
-        return feed_dict_eta2
+        return feed_dict_r2
 
     def AverageELayer(data_dict):
         
@@ -438,11 +450,11 @@ if(not flags.sample or flags.job_idx < 0):
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
 
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Mean deposited energy [GeV]')
-        fig.savefig('{}/FCC_EnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Mean dep. energy [GeV]')
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_EnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
-    def AverageEX(data_dict):
+    def AverageER(data_dict):
 
         def _preprocess(data):
             preprocessed = np.transpose(data,(0,3,1,2,4))
@@ -462,10 +474,10 @@ if(not flags.sample or flags.job_idx < 0):
             f_str = "R"
 
         fig,ax0 = utils.PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]')
-        fig.savefig('{}/FCC_Energy{}_{}_{}.{}'.format(flags.plot_folder,f_str, dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_Energy{}_{}_{}.{}'.format(flags.plot_folder,f_str, dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
         
-    def AverageEY(data_dict):
+    def AverageEPhi(data_dict):
 
         def _preprocess(data):
             preprocessed = np.transpose(data,(0,2,1,3,4))
@@ -486,7 +498,7 @@ if(not flags.sample or flags.job_idx < 0):
 
 
         fig,ax0 = utils.PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]')
-        fig.savefig('{}/FCC_Energy{}_{}_{}.{}'.format(flags.plot_folder, f_str, dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_Energy{}_{}_{}.{}'.format(flags.plot_folder, f_str, dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
     def HistEtot(data_dict):
@@ -499,10 +511,10 @@ if(not flags.sample or flags.job_idx < 0):
             feed_dict[key] = _preprocess(data_dict[key])
 
             
-        binning = np.geomspace(np.quantile(feed_dict['Geant4'],0.01),np.quantile(feed_dict['Geant4'],1.0),10)
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Deposited energy [GeV]', ylabel= 'Normalized entries',logy=True,binning=binning)
+        binning = np.geomspace(np.quantile(feed_dict['Geant4'],0.01),np.quantile(feed_dict['Geant4'],1.0),20)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Deposited energy [GeV]', ylabel= '',logy=True,binning=binning)
         ax0.set_xscale("log")
-        fig.savefig('{}/FCC_TotalE_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_TotalE_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
         
     def HistNhits(data_dict):
@@ -516,12 +528,30 @@ if(not flags.sample or flags.job_idx < 0):
             feed_dict[key] = _preprocess(data_dict[key])
             
         binning = np.linspace(np.quantile(feed_dict['Geant4'],0.0),np.quantile(feed_dict['Geant4'],1),20)
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits', ylabel= 'Normalized entries',label_loc='upper right', binning = binning)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits', ylabel= '',label_loc='upper right', binning = binning, ratio = False)
         yScalarFormatter = utils.ScalarFormatterClass(useMathText=True)
         yScalarFormatter.set_powerlimits((0,0))
         ax0.yaxis.set_major_formatter(yScalarFormatter)
-        fig.savefig('{}/FCC_Nhits_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_Nhits_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
+
+    def HistVoxelE(data_dict):
+
+        def _preprocess(data):
+            return np.reshape(data, (-1))
+        
+        feed_dict = {}
+        for key in data_dict:
+            feed_dict[key] = _preprocess(data_dict[key])
+            
+        vmin = np.amin(feed_dict['Geant4'][feed_dict['Geant4'] > 0])
+        binning = np.geomspace(vmin,np.quantile(feed_dict['Geant4'],1.0),50)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Voxel Energy [GeV]', ylabel= '',logy= True, binning = binning, ratio = False, normalize = False)
+        ax0.set_xscale("log")
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_VoxelE_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        return feed_dict
+
+
     def HistMaxELayer(data_dict):
 
         def _preprocess(data):
@@ -534,8 +564,8 @@ if(not flags.sample or flags.job_idx < 0):
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
 
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Max. voxel/Dep. energy')
-        fig.savefig('{}/FCC_MaxEnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Max voxel/Dep. energy')
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_MaxEnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
     def HistMaxE(data_dict):
@@ -551,8 +581,8 @@ if(not flags.sample or flags.job_idx < 0):
             feed_dict[key] = _preprocess(data_dict[key])
 
         binning = np.linspace(0,1,10)
-        fig,ax0 = utils.HistRoutine(feed_dict,ylabel='Normalized entries', xlabel= 'Max. voxel/Dep. energy',binning=binning,logy=True)
-        fig.savefig('{}/FCC_MaxEnergy_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+        fig,ax0 = utils.HistRoutine(feed_dict,ylabel='', xlabel= 'Max. voxel/Dep. energy',binning=binning,logy=True)
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_MaxEnergy_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
         
 
@@ -605,13 +635,13 @@ if(not flags.sample or flags.job_idx < 0):
             for ik,key in enumerate(['Geant4',utils.name_translate[flags.model]]):
                 average = _preprocess(data_dict[key])
 
-                fout_avg = '{}/FCC_{}2D_{}_{}_{}.{}'.format(flags.plot_folder,key,layer,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext)
+                fout_avg = '{}/FCC_{}2D_{}_{}_{}.{}'.format(flags.plot_folder,key,layer,dataset_config['CHECKPOINT_NAME'],flags.model, plt_exts[0])
                 title = "{}, layer number {}".format(key,layer)
                 plot_shower(average, fout = fout_avg, title = title)
 
                 for i in range(nShowers):
                     shower = data_dict[key][i,layer]
-                    fout_ex = '{}/FCC_{}2D_{}_{}_{}_shower{}.{}'.format(flags.plot_folder,key,layer,dataset_config['CHECKPOINT_NAME'],flags.model, i, plt_ext)
+                    fout_ex = '{}/FCC_{}2D_{}_{}_{}_shower{}.{}'.format(flags.plot_folder,key,layer,dataset_config['CHECKPOINT_NAME'],flags.model, i, plt_exts[0])
                     title = "{} Shower {}, layer number {}".format(key, i, layer)
                     vmax, vmin = plot_shower(shower, fout = fout_ex, title = title, vmax = vmax, vmin = vmin)
 
@@ -628,12 +658,13 @@ if(not flags.sample or flags.job_idx < 0):
          '2D Energy scatter split':ScatterESplit,
          'Energy Ratio split':HistERatio,
          'Nhits':HistNhits,
+         'VoxelE':HistVoxelE,
     }
 
     plot_routines['Shower width']=AverageShowerWidth        
     plot_routines['Max voxel']=HistMaxELayer
-    plot_routines['Energy per eta']=AverageEX
-    plot_routines['Energy per phi']=AverageEY
+    plot_routines['Energy per radius']=AverageER
+    plot_routines['Energy per phi']=AverageEPhi
     if(do_cart_plots):
         plot_routines['2D average shower']=Plot_Shower_2D
 

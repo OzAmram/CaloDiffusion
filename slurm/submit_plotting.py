@@ -15,6 +15,8 @@ parser.add_argument('--eval', default=False, action = 'store_true', help='Run Ca
 parser.add_argument("--constraint", default = "a100|v100|p100" , help='gpu resources')
 parser.add_argument("--memory", default = 16000 , help='RAM')
 parser.add_argument("--num_jobs", type = int, default = 1 , help='How many jobs to split among')
+parser.add_argument("--batch_size", type = int, default = 100 , help='Batch size for sampling')
+parser.add_argument("--chip_type",  default = 'gpu' , help='gpu or cpu')
 flags = parser.parse_args()
 
 
@@ -48,12 +50,14 @@ if(flags.model == 'Diffu'):
         os.system("sed -i 's/SAMPLE_ALGO/%s/g' %s" % (flags.sample_algo, script_loc) )
         os.system("sed -i 's/SAMPLE_OFFSET/%s/g' %s" % (flags.sample_offset, script_loc) )
         os.system("sed -i 's/NEVTS/%s/g' %s" % (str(flags.nevts), script_loc) )
+        os.system("sed -i 's/BATCH_SIZE/%s/g' %s" % (str(flags.batch_size), script_loc) )
 
         os.system("sed -i 's/JOBIDX/%s/g' %s" % (str(job_idx), script_loc) )
 
         os.system("sed -i 's/EVAL_VAR/%s/g' %s" % (str(flags.eval).lower(), script_loc) )
         os.system("sed -i 's/MTAG/%s/g' %s" % (model_dir_tail, script_loc) )
 
+        os.system("sed -i 's/TYPE/%s/' %s" % (flags.chip_type, script_loc))
         os.system("sed -i 's/CONSTRAINT/%s/' %s" % (flags.constraint, script_loc))
         os.system("sed -i 's/MEMORY/%s/' %s" % (flags.memory, script_loc))
 

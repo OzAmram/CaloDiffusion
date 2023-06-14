@@ -23,7 +23,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_folder', default='/wclustre/cms_mlsim/denoise/CaloChallenge/', help='Folder containing data and MC files')
     parser.add_argument('--model', default='Diffu', help='Diffusion model to train. Options are: VPSDE, VESDE and subVPSDE')
     parser.add_argument('-c', '--config', default='configs/test.json', help='Config file with training parameters')
-    parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
+    parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
@@ -31,6 +31,8 @@ if __name__ == '__main__':
     flags = parser.parse_args()
 
     dataset_config = utils.LoadJson(flags.config)
+    data = []
+    energies = []
 
     print("TRAINING OPTIONS")
     print(dataset_config, flush = True)
@@ -48,12 +50,7 @@ if __name__ == '__main__':
     training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
     loss_type = dataset_config.get("LOSS_TYPE", "l2")
     dataset_num = dataset_config.get('DATASET_NUM', 2)
-    shower_embed = dataset_config.get('SHOWER_EMBED', '')
-    orig_shape = ('orig' in shower_embed)
-    energy_loss_scale = dataset_config.get('ENERGY_LOSS_SCALE', 0.0)
 
-    data = []
-    energies = []
 
     for i, dataset in enumerate(dataset_config['FILES']):
         data_,e_ = utils.DataLoader(
@@ -64,10 +61,8 @@ if __name__ == '__main__':
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
-
             nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
             dataset_num  = dataset_num,
-            orig_shape = orig_shape,
         )
 
 
@@ -78,31 +73,9 @@ if __name__ == '__main__':
             data = np.concatenate((data, data_))
             energies = np.concatenate((energies, e_))
         
-    avg_showers = std_showers = E_bins = None
-    if(cold_diffu):
-        f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
-        #Already pre-processed
-        avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
-        std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
-        E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
-
-    NN_embed = None
-    if('NN' in shower_embed):
-        if(dataset_num == 1):
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
-            bins = XMLHandler("photon", binning_file)
-        else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
-            bins = XMLHandler("pion", binning_file)
-
-        NN_embed = NNConverter(bins = bins).to(device = device)
-        
-
     dshape = dataset_config['SHAPE_PAD']
     energies = np.reshape(energies,(-1))    
-    if(not orig_shape): data = np.reshape(data,dshape)
-    else: data = np.reshape(data, (len(data), -1))
-
+    data = np.reshape(data,dshape)
     num_data = data.shape[0]
     print("Data Shape " + str(data.shape))
     data_size = data.shape[0]
@@ -121,6 +94,28 @@ if __name__ == '__main__':
     loader_val = torchdata.DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
 
     del torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
+
+
+
+
+
+    #load diffusion model
+    diffu_checkpoint_path = os.path.join(flags.diffu_model, "checkpoint.pth")
+    diffu_checkpoint = torch.load(diffu_checkpoint_path, map_location = device)
+
+    diffu_model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config, training_obj = training_obj,
+            cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
+
+    if('model_state_dict' in diffu_checkpoint.keys()): diffu_model.load_state_dict(diffu_checkpoint['model_state_dict'])
+    elif(len(diffu_checkpoint.keys()) > 1): diffu_model.load_state_dict(diffu_checkpoint)
+
+
+
+
+    #init consistency model
+    model = ConsistencyModel(dataset_config, diffu_model)
+
+
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     if not os.path.exists(checkpoint_folder):
         os.makedirs(checkpoint_folder)
@@ -132,36 +127,28 @@ if __name__ == '__main__':
         checkpoint = torch.load(checkpoint_path, map_location = device)
         print(checkpoint.keys())
 
+    else: #init from diffusion model
+        model.load_state_dict(diffu_model.state_dict())
 
-    if(flags.model == "Diffu"):
-        shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
-        model = CaloDiffu(shape, batch_size, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed,
-                cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
+    #sometimes save only weights, sometimes save other info
+    if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
+    elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
 
+    #consistency model with exponential moving average of weights
+    ema_model = ConsistencyModel(dataset_config, diffu_model)
+    ema_model.to(device)
 
-        #sometimes save only weights, sometimes save other info
-        if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
-        elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
+    ema_checkpoint_path = os.path.join(checkpoint_folder, "ema_checkpoint.pth")
+    if(flags.load and os.path.exists(ema_checkpoint_path)): 
+        print("Loading training EMA checkpoint from %s" % ema_checkpoint_path, flush = True)
+        ema_checkpoint = torch.load(ema_checkpoint_path, map_location = device)
+        ema_model.load_state_dict(ema_checkpoint)
 
-
-    elif(flags.model == "LatentDiffu"):
-        AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
-        AE.load_state_dict(torch.load(dataset_config['AE'], map_location = device))
-
-        print("ENC shape", AE.encoded_shape)
-        model = CaloDiffu(AE.encoded_shape,energies.shape[1],batch_size, config=dataset_config).to(device=device)
-
-        #encode data to latent space
-        data = AE.encoder_model.predict(data, batch_size = 256)
-
-
-
-    else:
-        print("Model %s not supported!" % flags.model)
-        exit(1)
+    else: ema_model.load_state_dict(model.state_dict())
 
 
     os.system('cp CaloDiffu.py {}'.format(checkpoint_folder)) # bkp of model def
+    os.system('cp ConsistencyModel.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
 
@@ -181,13 +168,14 @@ if __name__ == '__main__':
     val_losses = np.zeros(num_epochs)
     start_epoch = 0
     min_validation_loss = 99999.
-    if('train_loss_hist' in checkpoint.keys() and not flags.reset_training): 
+    if('train_loss_hist' in checkpoint.keys()): 
         training_losses = checkpoint['train_loss_hist']
         val_losses = checkpoint['val_loss_hist']
         start_epoch = checkpoint['epoch'] + 1
 
     #training loop
     for epoch in range(start_epoch, num_epochs):
+        N = math.ceil(math.sqrt((epoch * (150**2 - 4) / n_epoch) + 4) - 1) + 1
         print("Beginning epoch %i" % epoch, flush=True)
         for i, param in enumerate(model.parameters()):
             break
@@ -203,12 +191,27 @@ if __name__ == '__main__':
 
             t = torch.randint(0, model.nsteps, (data.size()[0],), device=device).long()
             noise = torch.randn_like(data)
-            #print('data', torch.mean(data), torch.std(data))
-            if(cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
-                noise = model.gen_cold_image(E, cold_noise_scale, noise)
-                
 
-            batch_loss = model.compute_loss(data, E, noise = noise, t = t, loss_type = loss_type, energy_loss_scale = energy_loss_scale)
+
+
+
+            loss = model.loss(x, z, t_0, t_1, ema_model=ema_model)
+
+            loss.backward()
+            if loss_ema is None:
+                loss_ema = loss.item()
+            else:
+                loss_ema = 0.9 * loss_ema + 0.1 * loss.item()
+
+            optim.step()
+            with torch.no_grad():
+                mu = math.exp(2 * math.log(0.95) / N)
+                # update \theta_{-}
+                for p, ema_p in zip(model.parameters(), ema_model.parameters()):
+                    ema_p.mul_(mu).add_(p, alpha=1 - mu)
+         
+
+            batch_loss = model.compute_loss(data, E, noise = noise, t = t, loss_type = loss_type)
             batch_loss.backward()
 
             optimizer.step()
@@ -230,7 +233,7 @@ if __name__ == '__main__':
             noise = torch.randn_like(vdata)
             if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)
 
-            batch_loss = model.compute_loss(vdata, vE, noise = noise, t = t, loss_type = loss_type, energy_loss_scale = energy_loss_scale)
+            batch_loss = model.compute_loss(vdata, vE, noise = noise, t = t, loss_type = loss_type)
 
             val_loss+=batch_loss.item()
             del vdata,vE, noise, batch_loss
@@ -249,6 +252,7 @@ if __name__ == '__main__':
         if(early_stopper.early_stop(val_loss - train_loss)):
             print("Early stopping!")
             break
+        print(early_stopper.__dict__)
 
         # save the model
         model.eval()

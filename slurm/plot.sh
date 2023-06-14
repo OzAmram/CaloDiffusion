@@ -3,8 +3,8 @@
 #SBATCH --output=JOB_OUT/log_plot_JOBIDX.txt
 #SBATCH --partition=TYPE_gce
 #SBATCH --nodes=1
-#XSBATCH --gres=TYPE:1
-#XSBATCH --constraint=(CONSTRAINT)
+#SBATCH --gres=TYPE:1
+#SBATCH --constraint=(CONSTRAINT)
 #SBATCH --mem=MEMORY
 set -x
 

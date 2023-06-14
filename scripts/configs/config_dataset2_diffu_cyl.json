@@ -38,7 +38,7 @@
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'sigma',
     'COND_EMBED' : 'id',
-    'CHECKPOINT_NAME':'dataset2_mar31_test',
+    'CHECKPOINT_NAME':'dataset2_may30',
 
 
 }

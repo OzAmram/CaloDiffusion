@@ -11,7 +11,7 @@ from models import *
 
 class CaloDiffu(nn.Module):
     """Diffusion based generative model"""
-    def __init__(self, data_shape,num_batch,name='SGM',config=None, cylindrical = False, R_Z_inputs = False, training_obj = 'noise_pred',
+    def __init__(self, data_shape,num_batch,name='SGM',config=None, R_Z_inputs = False, training_obj = 'noise_pred',
                     cold_diffu = False, E_bins = None, avg_showers = None, std_showers = None, NN_embed = None):
         super(CaloDiffu, self).__init__()
         self._data_shape = data_shape
@@ -353,6 +353,7 @@ class CaloDiffu(nn.Module):
         sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
         sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, x.shape)
         sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, x.shape)
+        #print(t, self.sqrt_one_minus_alphas_cumprod[t])
         posterior_variance_t = extract(self.posterior_variance, t, x.shape)
 
         t_emb = self.do_time_embed(t, self.time_embed)

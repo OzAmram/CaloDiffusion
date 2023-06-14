@@ -303,9 +303,9 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
         FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0) 
         plt.ylabel('Diff. (%)')
         plt.xlabel(xlabel)
-        plt.axhline(y=0.0, color='r', linestyle='-',linewidth=1)
-        plt.axhline(y=10, color='r', linestyle='--',linewidth=1)
-        plt.axhline(y=-10, color='r', linestyle='--',linewidth=1)
+        plt.axhline(y=0.0, color='black', linestyle='-',linewidth=1)
+        plt.axhline(y=10, color='gray', linestyle='--',linewidth=1)
+        plt.axhline(y=-10, color='gray', linestyle='--',linewidth=1)
         plt.ylim([-50,50])
     else:
         FormatFig(xlabel = xlabel, ylabel = ylabel,ax0=ax0) 
@@ -549,7 +549,7 @@ class NNConverter(nn.Module):
 
     def dec(self, x):
         out = []
-        x = torch.squeeze(x)
+        x = torch.squeeze(x, dim=1)
         for i in range(self.gc.num_layers):
             o = self.decs[i](x[:,i])
 

@@ -27,7 +27,7 @@ utils.SetStyle()
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--data_folder', default='/wclustre/cms/denoise/CaloChallenge/', help='Folder containing data and MC files')
+parser.add_argument('--data_folder', default='/wclustre/cms_mlsim/denoise/CaloChallenge/', help='Folder containing data and MC files')
 parser.add_argument('--plot_folder', default='../plots', help='Folder to save results')
 parser.add_argument('--generated', '-g', default='', help='Generated showers')
 parser.add_argument('--model_loc', default='test', help='Location of model')
@@ -35,6 +35,7 @@ parser.add_argument('--config', default='config_dataset2.json', help='Training p
 parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
 parser.add_argument('--batch_size', type=int, default=100, help='Batch size for generation')
 parser.add_argument('--model', default='Diffu', help='Diffusion model to load. Options are: Diffu, AE, VPSDE, VESDE,  subVPSDE, all')
+parser.add_argument('--plot_label', default='', help='Add to plot')
 parser.add_argument('--sample', action='store_true', default=False,help='Sample from learned model')
 parser.add_argument('--sample_steps', default = -1, type = int, help='How many steps for sampling (override config)')
 parser.add_argument('--sample_offset', default = 0, type = int, help='Skip some iterations in the sampling (noisiest iters most unstable)')
@@ -164,10 +165,8 @@ if flags.sample:
     elif(flags.model == "Diffu"):
         print("Loading Diffu model from " + flags.model_loc)
 
-        dataset_config['NOISE_SCHED'] = 'cosine'
-
         shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
-        model = CaloDiffu(shape, nevts,config=dataset_config , training_obj = training_obj,NN_embed = NN_embed,
+        model = CaloDiffu(shape, config=dataset_config , training_obj = training_obj,NN_embed = NN_embed, nsteps = sample_steps,
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
 
         saved_model = torch.load(flags.model_loc, map_location = device)
@@ -242,8 +241,8 @@ if flags.sample:
                                            showerMap = dataset_config['SHOWERMAP'],
                                            dataset_num  = dataset_num,
                                            orig_shape = orig_shape,
+                                           ecut = dataset_config['ECUT'],
                                            )
-    generated[generated<dataset_config['ECUT']] = 0 #min from samples
 
     energies = np.reshape(energies,(-1,1))
     if(dataset_num > 1):
@@ -258,7 +257,11 @@ if flags.sample:
                 mask = h5f['mask'][:]
         generated = generated*(np.reshape(mask,(1,-1))==0)
     
-    fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.model, job_label))
+    if(flags.generated == ""):
+        fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.model, job_label))
+    else:
+        fout = flags.generated
+
     print("Creating " + fout)
     with h5.File(fout,"w") as h5f:
         dset = h5f.create_dataset("showers", data=1000*np.reshape(generated,(generated.shape[0],-1)), compression = 'gzip')
@@ -349,7 +352,7 @@ if(not flags.sample or flags.job_idx < 0):
 
         binning = np.linspace(0.5, 1.5, 51)
 
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Dep. E / Gen. Energy', ylabel= '',logy=False,binning=binning, ratio = False)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Dep. energy / Gen. energy', logy=False,binning=binning, ratio = True, plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_ERatio_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
@@ -368,6 +371,8 @@ if(not flags.sample or flags.job_idx < 0):
         ax.set_yscale("log")
         ax.set_xscale("log")
         ax.legend(loc='best',fontsize=16,ncol=1)
+        plt.tight_layout()
+        if(len(flags.plot_label) > 0): ax.set_title(flags.plot_label, fontsize = 20, loc = 'right', style = 'italic')
         for plt_ext in plt_exts: fig.savefig('{}/FCC_Scatter_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
 
 
@@ -385,25 +390,41 @@ if(not flags.sample or flags.job_idx < 0):
         #TODO : Use radial bins
         #r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
 
-        phi_matrix = GetMatrix(dataset_config['SHAPE'][2],dataset_config['SHAPE'][3])
+        phi_matrix = GetMatrix(dataset_config['SHAPE'][2],dataset_config['SHAPE'][3], minval = -math.pi, maxval = math.pi)
         phi_matrix = np.reshape(phi_matrix,(1,1,phi_matrix.shape[0],phi_matrix.shape[1],1))
         
         
         r_matrix = np.transpose(GetMatrix(dataset_config['SHAPE'][3],dataset_config['SHAPE'][2]))
         r_matrix = np.reshape(r_matrix,(1,1,r_matrix.shape[0],r_matrix.shape[1],1))
 
+
         def GetCenter(matrix,energies,power=1):
             ec = energies*np.power(matrix,power)
             sum_energies = np.sum(np.reshape(energies,(energies.shape[0],energies.shape[1],-1)),-1)
             ec = np.reshape(ec,(ec.shape[0],ec.shape[1],-1)) #get value per layer
             ec = np.ma.divide(np.sum(ec,-1),sum_energies).filled(0)
-
             return ec
+
+        def ang_center_spread(matrix, energies):
+            #weighted average over periodic variabel (angle)
+            #https://github.com/scipy/scipy/blob/v1.11.1/scipy/stats/_morestats.py#L4614
+            #https://en.wikipedia.org/wiki/Directional_statistics#The_fundamental_difference_between_linear_and_circular_statistics
+            cos_matrix = np.cos(matrix)
+            sin_matrix = np.sin(matrix)
+            cos_ec = GetCenter(cos_matrix, energies)
+            sin_ec = GetCenter(sin_matrix, energies)
+            ang_mean  = np.arctan2(sin_ec, cos_ec)
+            R = sin_ec**2 + cos_ec**2
+            eps = 1e-8
+            R = np.clip(R, eps, 1.)
+
+            ang_std = np.sqrt(-np.log(R))
+            return ang_mean, ang_std
+
 
         def GetWidth(mean,mean2):
             width = np.ma.sqrt(mean2-mean**2).filled(0)
             return width
-
         
         feed_dict_phi = {}
         feed_dict_phi2 = {}
@@ -411,8 +432,7 @@ if(not flags.sample or flags.job_idx < 0):
         feed_dict_r2 = {}
         
         for key in data_dict:
-            feed_dict_phi[key] = GetCenter(phi_matrix,data_dict[key])
-            feed_dict_phi2[key] = GetWidth(feed_dict_phi[key],GetCenter(phi_matrix,data_dict[key],2))
+            feed_dict_phi[key], feed_dict_phi2[key] = ang_center_spread(phi_matrix, data_dict[key])
             feed_dict_r[key] = GetCenter(r_matrix,data_dict[key])
             feed_dict_r2[key] = GetWidth(feed_dict_r[key],GetCenter(r_matrix,data_dict[key],2))
             
@@ -427,13 +447,13 @@ if(not flags.sample or flags.job_idx < 0):
             f_str1 = "R"
             xlabel2 = 'alpha'
             f_str2 = "Alpha"
-        fig,ax0 = utils.PlotRoutine(feed_dict_r,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel1)
+        fig,ax0 = utils.PlotRoutine(feed_dict_r,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel1, plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_{}EC_{}_{}.{}'.format(flags.plot_folder,f_str1,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
-        fig,ax0 = utils.PlotRoutine(feed_dict_phi,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel2)
+        fig,ax0 = utils.PlotRoutine(feed_dict_phi,xlabel='Layer number', ylabel= '%s-center of energy' % xlabel2, plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_{}EC_{}_{}.{}'.format(flags.plot_folder,f_str2,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
-        fig,ax0 = utils.PlotRoutine(feed_dict_r2,xlabel='Layer number', ylabel= '%s-width' % xlabel1)
+        fig,ax0 = utils.PlotRoutine(feed_dict_r2,xlabel='Layer number', ylabel= '%s-width' % xlabel1, plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_{}W_{}_{}.{}'.format(flags.plot_folder,f_str1,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
-        fig,ax0 = utils.PlotRoutine(feed_dict_phi2,xlabel='Layer number', ylabel= '%s-width' % xlabel2)
+        fig,ax0 = utils.PlotRoutine(feed_dict_phi2,xlabel='Layer number', ylabel= '%s-width (radians)' % xlabel2, plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_{}W_{}_{}.{}'.format(flags.plot_folder,f_str2,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
 
         return feed_dict_r2
@@ -450,7 +470,7 @@ if(not flags.sample or flags.job_idx < 0):
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
 
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Mean dep. energy [GeV]')
+        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Mean dep. energy [GeV]', plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_EnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
@@ -473,7 +493,7 @@ if(not flags.sample or flags.job_idx < 0):
             xlabel = 'R-bin'
             f_str = "R"
 
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]')
+        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]', plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_Energy{}_{}_{}.{}'.format(flags.plot_folder,f_str, dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
         
@@ -497,7 +517,7 @@ if(not flags.sample or flags.job_idx < 0):
             f_str = "Alpha"
 
 
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]')
+        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]', plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_Energy{}_{}_{}.{}'.format(flags.plot_folder, f_str, dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
@@ -512,7 +532,7 @@ if(not flags.sample or flags.job_idx < 0):
 
             
         binning = np.geomspace(np.quantile(feed_dict['Geant4'],0.01),np.quantile(feed_dict['Geant4'],1.0),20)
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Deposited energy [GeV]', ylabel= '',logy=True,binning=binning)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Deposited energy [GeV]', logy=True,binning=binning, plot_label = flags.plot_label)
         ax0.set_xscale("log")
         for plt_ext in plt_exts: fig.savefig('{}/FCC_TotalE_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
@@ -528,7 +548,7 @@ if(not flags.sample or flags.job_idx < 0):
             feed_dict[key] = _preprocess(data_dict[key])
             
         binning = np.linspace(np.quantile(feed_dict['Geant4'],0.0),np.quantile(feed_dict['Geant4'],1),20)
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits', ylabel= '',label_loc='upper right', binning = binning, ratio = False)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits', label_loc='upper right', binning = binning, ratio = True, plot_label = flags.plot_label )
         yScalarFormatter = utils.ScalarFormatterClass(useMathText=True)
         yScalarFormatter.set_powerlimits((0,0))
         ax0.yaxis.set_major_formatter(yScalarFormatter)
@@ -546,7 +566,7 @@ if(not flags.sample or flags.job_idx < 0):
             
         vmin = np.amin(feed_dict['Geant4'][feed_dict['Geant4'] > 0])
         binning = np.geomspace(vmin,np.quantile(feed_dict['Geant4'],1.0),50)
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Voxel Energy [GeV]', ylabel= '',logy= True, binning = binning, ratio = False, normalize = False)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Voxel Energy [GeV]', logy= True, binning = binning, ratio = True, normalize = False, plot_label = flags.plot_label)
         ax0.set_xscale("log")
         for plt_ext in plt_exts: fig.savefig('{}/FCC_VoxelE_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
@@ -564,7 +584,7 @@ if(not flags.sample or flags.job_idx < 0):
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
 
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Max voxel/Dep. energy')
+        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Max voxel/Dep. energy', plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_MaxEnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
 
@@ -581,7 +601,7 @@ if(not flags.sample or flags.job_idx < 0):
             feed_dict[key] = _preprocess(data_dict[key])
 
         binning = np.linspace(0,1,10)
-        fig,ax0 = utils.HistRoutine(feed_dict,ylabel='', xlabel= 'Max. voxel/Dep. energy',binning=binning,logy=True)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel= 'Max. voxel/Dep. energy',binning=binning,logy=True, plot_label = flags.plot_label)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_MaxEnergy_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
         

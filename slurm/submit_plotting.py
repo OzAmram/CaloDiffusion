@@ -10,6 +10,7 @@ parser.add_argument('-n', '--name', default='test', help='job name')
 parser.add_argument('-v', '--model_version', default='checkpoint.pth', help='Which model to plot (best_val.pth, checkpoint.pth, final.pth)')
 parser.add_argument('--sample_algo', default='euler', help='Sampling algo')
 parser.add_argument('--sample_offset', default=0, type = int, help='Offset for sampling')
+parser.add_argument('--sample_steps', default=-1, type = int, help='Number of sampling steps')
 parser.add_argument('--nevts', default=1000, type = int, help='Offset for sampling')
 parser.add_argument('--eval', default=False, action = 'store_true', help='Run CaloChallenge eval metrics')
 parser.add_argument("--constraint", default = "a100|v100|p100" , help='gpu resources')
@@ -42,6 +43,10 @@ if(flags.model == 'Diffu'):
 
         os.system("cp plot.sh %s" % (script_loc))
 
+        #some options only for gpu
+        if(flags.chip_type == 'gpu'):
+            os.system("sed -i 's/DOGPU/SBATCH/g' %s" % (script_loc))
+
         os.system("sed -i 's/JOB_NAME/%s/g' %s" % (flags.name, script_loc))
         os.system("sed -i 's/JOB_OUT/%s/g' %s" % (flags.name, script_loc))
         os.system("sed -i 's/MODEL/%s/g' %s" % (flags.model, script_loc) )
@@ -49,6 +54,7 @@ if(flags.model == 'Diffu'):
         os.system("sed -i 's/MNAME/%s/g' %s" % (flags.model_version, script_loc) )
         os.system("sed -i 's/SAMPLE_ALGO/%s/g' %s" % (flags.sample_algo, script_loc) )
         os.system("sed -i 's/SAMPLE_OFFSET/%s/g' %s" % (flags.sample_offset, script_loc) )
+        os.system("sed -i 's/SAMPLE_STEPS/%s/g' %s" % (flags.sample_steps, script_loc) )
         os.system("sed -i 's/NEVTS/%s/g' %s" % (str(flags.nevts), script_loc) )
         os.system("sed -i 's/BATCH_SIZE/%s/g' %s" % (str(flags.batch_size), script_loc) )
 

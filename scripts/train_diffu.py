@@ -26,7 +26,7 @@ if __name__ == '__main__':
     parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
-    parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
+    parser.add_argument('--seed', type=int, default=1234,help='Pytorch seed')
     parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
 
@@ -135,25 +135,13 @@ if __name__ == '__main__':
 
     if(flags.model == "Diffu"):
         shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
-        model = CaloDiffu(shape, batch_size, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed,
+        model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = dataset_config['NSTEPS'],
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
 
 
         #sometimes save only weights, sometimes save other info
         if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
         elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
-
-
-    elif(flags.model == "LatentDiffu"):
-        AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device = device)
-        AE.load_state_dict(torch.load(dataset_config['AE'], map_location = device))
-
-        print("ENC shape", AE.encoded_shape)
-        model = CaloDiffu(AE.encoded_shape,energies.shape[1],batch_size, config=dataset_config).to(device=device)
-
-        #encode data to latent space
-        data = AE.encoder_model.predict(data, batch_size = 256)
-
 
 
     else:

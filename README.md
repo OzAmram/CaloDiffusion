@@ -1,15 +1,6 @@
-# Caloscore official repository
+# CaloDiffusion official repository
 
 Repo for diffusion based calorimeter generation.
-
-Started as an offshoot of
-[CaloScore](https://github.com/ViniciusMikuni/CaloScore).
-
-Following the approach of [Denoising Diffusion Probabilistic
-Models](https://arxiv.org/abs/2006.11239) and [High-Resolution Image Synthesis
-with Latent Diffusion Models](http://arxiv.org/abs/2112.10752).
-
-
 
 Pytorch v1.9  was used to implement all models. 
 
@@ -24,14 +15,11 @@ Results are presented using the [Fast Calorimeter Data Challenge dataset](https:
 
 ```bash
 cd scripts
-python train.py  --config CONFIG --model MODEL
+python train_diffu.py  --config CONFIG
 ```
-* MODEL options are: subVPSDE/VESDE/VPSDE (Original CaloScore)
-* For training an autoencoder or training a diffusion model, use `train_ae.py` or `train_diffu.py`
+* Example configs in ```[config_dataset1.json/config_dataset2.json/config_dataset3.json]```
 
-* CONFIG options are ```[config_dataset1.json/config_dataset2.json/config_dataset3.json]```
-
-# Sampling from the learned score function
+# Sampling with the learned model
 
 ```bash
 python plot.py  --nevts N  --sample  --config CONFIG --model MODEL

@@ -1,6 +1,7 @@
 #some pytorch modules & useful functions
 from einops import rearrange
 import copy
+import math
 
 import torch
 import torch.nn as nn
@@ -30,6 +31,31 @@ def cosine_beta_schedule(nsteps, s=0.008):
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0.0001, 0.9999)
+
+
+class CylindricalConvTrans(nn.Module):
+    #assumes format of channels,zbin,phi_bin,rbin
+    def __init__(self, dim_in, dim_out, kernel_size = (3,4,4), stride= (1,2,2), groups = 1, padding = 1, output_padding = 0):
+        super().__init__()
+        if(type(padding) != int):
+            self.padding_orig = copy.copy(padding)
+            padding = list(padding)
+        else:
+            padding = [padding]*3
+            self.padding_orig = copy.copy(padding)
+            
+        padding[1] = kernel_size[1] - 1
+        self.convTrans = nn.ConvTranspose3d(dim_in, dim_out, kernel_size = kernel_size, stride = stride, padding = padding, output_padding = output_padding)
+
+    def forward(self, x):
+        #out size is : O = (i-1)*S + K - 2P
+        #to achieve 'same' use padding P = ((S-1)*W-S+F)/2, with F = filter size, S = stride, W = input size
+        #pad last dim with nothing, 2nd to last dim is circular one
+        circ_pad = self.padding_orig[1]
+        x = F.pad(x, pad = (0,0, circ_pad, circ_pad, 0, 0), mode = 'circular')
+        x = self.convTrans(x)
+        return x
+
 
 class CylindricalConv(nn.Module):
     #assumes format of channels,zbin,phi_bin,rbin
@@ -168,49 +194,57 @@ class ConvNextBlock(nn.Module):
         h = self.net(h)
         return h + self.res_conv(x)
 
-#TODO Fix to work in 3D
 class Attention(nn.Module):
-    def __init__(self, dim, heads=4, dim_head=32):
+    def __init__(self, dim, heads=4, dim_head=32, cylindrical = False):
         super().__init__()
         self.scale = dim_head**-0.5
         self.heads = heads
         hidden_dim = dim_head * heads
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
-        self.to_out = nn.Conv2d(hidden_dim, dim, 1)
+
+        debug = False
+
+        if(cylindrical): 
+            self.to_qkv = CylindricalConv(dim, hidden_dim * 3, kernel_size = 1, bias=False)
+            self.to_out = CylindricalConv(hidden_dim, dim, kernel_size = 1)
+        else: 
+            self.to_qkv = nn.Conv3d(dim, hidden_dim * 3, kernel_size = 1, bias=False)
+            self.to_out = nn.Conv3d(hidden_dim, dim, kernel_size = 1)
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        b, c, l, h, w = x.shape
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
+            lambda t: rearrange(t, "b (h c) x y z -> b h c (x y z)", h=self.heads), qkv
         )
         q = q * self.scale
 
-        sim = einsum("b h d i, b h d j -> b h i j", q, k)
+        sim = torch.einsum("b h d i, b h d j -> b h i j", q, k)
         sim = sim - sim.amax(dim=-1, keepdim=True).detach()
         attn = sim.softmax(dim=-1)
 
-        out = einsum("b h i j, b h d j -> b h i d", attn, v)
-        out = rearrange(out, "b h (x y) d -> b (h d) x y", x=h, y=w)
+        out = torch.einsum("b h i j, b h d j -> b h i d", attn, v)
+        out = rearrange(out, "b h (x y z) d -> b (h d) x y z", x=l, y=h, z=w)
         return self.to_out(out)
 
-#TODO Fix to work in 3D
 class LinearAttention(nn.Module):
-    def __init__(self, dim, heads=4, dim_head=32):
+    def __init__(self, dim, heads=1, dim_head=32, cylindrical = False):
         super().__init__()
         self.scale = dim_head**-0.5
         self.heads = heads
         hidden_dim = dim_head * heads
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
 
-        self.to_out = nn.Sequential(nn.Conv2d(hidden_dim, dim, 1), 
-                                    nn.GroupNorm(1, dim))
+        if(cylindrical):
+            self.to_qkv = CylindricalConv(dim, hidden_dim * 3, kernel_size = 1, bias=False)
+            self.to_out = nn.Sequential(CylindricalConv(hidden_dim, dim, kernel_size = 1), nn.GroupNorm(1,dim))
+        else: 
+            self.to_qkv = nn.Conv3d(dim, hidden_dim * 3, kernel_size = 1, bias=False)
+            self.to_out = nn.Sequential(nn.Conv3d(hidden_dim, dim, kernel_size = 1), nn.GroupNorm(1,dim))
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        b, c, l, h, w = x.shape
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
+            lambda t: rearrange(t, "b (h c) x y z -> b h c (x y z)", h=self.heads), qkv
         )
 
         q = q.softmax(dim=-2)
@@ -220,7 +254,7 @@ class LinearAttention(nn.Module):
         context = torch.einsum("b h d n, b h e n -> b h d e", k, v)
 
         out = torch.einsum("b h d e, b h d n -> b h e n", context, q)
-        out = rearrange(out, "b h c (x y) -> b (h c) x y", h=self.heads, x=h, y=w)
+        out = rearrange(out, "b h c (x y z) -> b (h c) x y z", h=self.heads, x=l, y=h, z = w)
         return self.to_out(out)
 
 class PreNorm(nn.Module):
@@ -236,14 +270,18 @@ class PreNorm(nn.Module):
 
 #up and down sample in 2 dims but keep z dimm
 
-def Upsample(dim, extra_upsample = (0,0,0), cylindrical = False):
-    #TODO make cylindrical ? 
-    return nn.ConvTranspose3d(dim, dim, kernel_size = (3,4,4), stride = (1,2,2), padding = 1, output_padding = extra_upsample)
-    #return nn.Upsample(scale_factor = (1,2,2))
+def Upsample(dim, extra_upsample = [0,0,0], cylindrical = False, compress_Z = False):
+    Z_stride = 2 if compress_Z else 1
+    Z_kernel = 4 if extra_upsample[0] > 0 else 3
 
-def Downsample(dim, cylindrical = False):
-    if(cylindrical): return CylindricalConv(dim, dim, kernel_size = (3,4,4), stride = (1,2,2), padding = 1)
-    else: return nn.Conv3d(dim, dim, kernel_size = (3,4,4), stride = (1,2,2), padding = 1)
+    extra_upsample[0] = 0
+    if(cylindrical): return CylindricalConvTrans(dim, dim, kernel_size = (Z_kernel,4,4), stride = (Z_stride,2,2), padding = 1, output_padding = extra_upsample)
+    else: return nn.ConvTranspose3d(dim, dim, kernel_size = (Z_kernel,4,4), stride = (Z_stride,2,2), padding = 1, output_padding = extra_upsample)
+
+def Downsample(dim, cylindrical = False, compress_Z = False):
+    Z_stride = 2 if compress_Z else 1
+    if(cylindrical): return CylindricalConv(dim, dim, kernel_size = (3,4,4), stride = (Z_stride,2,2), padding = 1)
+    else: return nn.Conv3d(dim, dim, kernel_size = (3,4,4), stride = (Z_stride,2,2), padding = 1)
     #return nn.AvgPool3d(kernel_size = (1,2,2), stride = (1,2,2), padding =0)
 
 
@@ -309,7 +347,9 @@ class CondUnet(nn.Module):
         cond_dim = 64,
         resnet_block_groups=8,
         use_convnext=False,
-        use_attn = False,
+        mid_attn = False,
+        block_attn = False,
+        compress_Z = False,
         convnext_mult=2,
         cylindrical = False,
         data_shape = (-1,1,45, 16,9),
@@ -320,14 +360,14 @@ class CondUnet(nn.Module):
 
         # determine dimensions
         self.channels = channels
-        self.use_attn = use_attn
+        self.block_attn = block_attn
+        self.mid_attn = mid_attn
 
 
 
         #dims = [channels, *map(lambda m: dim * m, dim_mults)]
         #layer_sizes.insert(0, channels)
         in_out = list(zip(layer_sizes[:-1], layer_sizes[1:])) 
-        #print(in_out)
         
         if(not cylindrical): self.init_conv = nn.Conv3d(channels, layer_sizes[0], kernel_size = 3, padding = 1)
         else: self.init_conv = CylindricalConv(channels, layer_sizes[0], kernel_size = 3, padding = 1)
@@ -359,7 +399,10 @@ class CondUnet(nn.Module):
         # layers
         self.downs = nn.ModuleList([])
         self.ups = nn.ModuleList([])
+        self.downs_attn = nn.ModuleList([])
+        self.ups_attn = nn.ModuleList([])
         self.extra_upsamples = []
+        self.Z_even = []
         num_resolutions = len(in_out)
 
         cur_data_shape = data_shape[-3:]
@@ -367,8 +410,9 @@ class CondUnet(nn.Module):
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = (ind >= (num_resolutions - 1))
             if(not is_last):
-                extra_upsample_dim = (0, cur_data_shape[1]%2, cur_data_shape[2]%2)
-                cur_data_shape = (cur_data_shape[0], cur_data_shape[1] // 2, cur_data_shape[2] //2)
+                extra_upsample_dim = [(cur_data_shape[0] + 1)%2, cur_data_shape[1]%2, cur_data_shape[2]%2]
+                Z_dim = cur_data_shape[0] if not compress_Z else math.ceil(cur_data_shape[0]/2.0)
+                cur_data_shape = (Z_dim, cur_data_shape[1] // 2, cur_data_shape[2] //2)
                 self.extra_upsamples.append(extra_upsample_dim)
 
             self.downs.append(
@@ -376,19 +420,19 @@ class CondUnet(nn.Module):
                     [
                         block_klass(dim_in, dim_out, cond_emb_dim=cond_dim),
                         block_klass(dim_out, dim_out, cond_emb_dim=cond_dim),
-                        Residual(PreNorm(dim_out, LinearAttention(dim_out))),
-                        Downsample(dim_out, cylindrical) if not is_last else nn.Identity(),
+                        Downsample(dim_out, cylindrical, compress_Z = compress_Z) if not is_last else nn.Identity(),
                     ]
                 )
             )
+            if(self.block_attn) : self.downs_attn.append(Residual(PreNorm(dim_out, LinearAttention(dim_out, cylindrical = cylindrical))))
 
         mid_dim = layer_sizes[-1]
         self.mid_block1 = block_klass(mid_dim, mid_dim, cond_emb_dim=cond_dim)
-        self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
+        if(self.mid_attn): self.mid_attn = Residual(PreNorm(mid_dim, LinearAttention(mid_dim, cylindrical = cylindrical)))
         self.mid_block2 = block_klass(mid_dim, mid_dim, cond_emb_dim=cond_dim)
 
-        for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
-            is_last = ind >= (num_resolutions - 1)
+        for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
+            is_last = (ind >= (num_resolutions - 1))
 
             if(not is_last): 
                 extra_upsample = self.extra_upsamples.pop()
@@ -399,11 +443,11 @@ class CondUnet(nn.Module):
                     [
                         block_klass(dim_out * 2, dim_in, cond_emb_dim=cond_dim),
                         block_klass(dim_in, dim_in, cond_emb_dim=cond_dim),
-                        Residual(PreNorm(dim_in, LinearAttention(dim_in))),
-                        Upsample(dim_in, extra_upsample, cylindrical) if not is_last else nn.Identity(),
+                        Upsample(dim_in, extra_upsample, cylindrical, compress_Z = compress_Z) if not is_last else nn.Identity(),
                     ]
                 )
             )
+            if(self.block_attn): self.ups_attn.append( Residual(PreNorm(dim_in, LinearAttention(dim_in, cylindrical = cylindrical))) )
 
         if(not cylindrical): final_lay = nn.Conv3d(layer_sizes[0], out_dim, 1)
         else:  final_lay = CylindricalConv(layer_sizes[0], out_dim, 1)
@@ -421,24 +465,25 @@ class CondUnet(nn.Module):
         h = []
 
         # downsample
-        for block1, block2, attn, downsample in self.downs:
+        for i, (block1, block2, downsample) in enumerate(self.downs):
             x = block1(x, conditions)
             x = block2(x, conditions)
-            if(self.use_attn): x = attn(x)
+            if(self.block_attn): x = self.downs_attn[i](x)
             h.append(x)
             x = downsample(x)
 
         # bottleneck
         x = self.mid_block1(x, conditions)
-        if(self.use_attn): x = self.mid_attn(x)
+        if(self.mid_attn): x = self.mid_attn(x)
         x = self.mid_block2(x, conditions)
 
+
         # upsample
-        for block1, block2, attn, upsample in self.ups:
+        for i, (block1, block2, upsample) in enumerate(self.ups):
             x = torch.cat((x, h.pop()), dim=1)
             x = block1(x, conditions)
             x = block2(x, conditions)
-            if(self.use_attn): x = attn(x)
+            if(self.block_attn): x = self.ups_attn[i](x)
             x = upsample(x)
 
         return self.final_conv(x)

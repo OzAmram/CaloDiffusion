@@ -8,6 +8,8 @@ import matplotlib.ticker as mtick
 import torch
 import torch.nn as nn
 import sys
+import joblib
+from sklearn.preprocessing import QuantileTransformer
 sys.path.append("..")
 from CaloChallenge.code.XMLHandler import *
 from consts import *
@@ -35,7 +37,6 @@ def create_phi_image(device, shape = (1,45,16,9)):
     phi_image = torch.zeros(shape, device = device)
     for i in range(n_phi):
         phi_image[:,:,i,:] = phi_bins[i]
-    print('phi', phi_image[0,0,:,0])
     return phi_image
 
 
@@ -155,7 +156,7 @@ def SetGrid(ratio=True):
 
 
 
-def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4'):
+def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_label = ""):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
     fig,gs = SetGrid() 
@@ -168,6 +169,7 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4'):
             ax0.plot(np.mean(feed_dict[plot],0),label=plot,marker=line_style[plot],color=colors[plot],lw=0)
         else:
             ax0.plot(np.mean(feed_dict[plot],0),label=plot,linestyle=line_style[plot],color=colors[plot])
+        if(len(plot_label) > 0): ax0.set_title(plot_label, fontsize = 20, loc = 'right', style = 'italic')
         if reference_name!=plot:
 
             ax0.get_xaxis().set_visible(False)
@@ -191,6 +193,7 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4'):
     FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0)
     ax0.legend(loc='best',fontsize=24,ncol=1)
 
+
     plt.ylabel('Diff. (%)')
     plt.xlabel(xlabel)
     loc = mtick.MultipleLocator(base=10.0) 
@@ -198,6 +201,7 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4'):
     plt.ylim([-50,50])
 
     plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
+    #plt.tight_layout()
 
     return fig,ax0
 
@@ -260,7 +264,7 @@ def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins 
     return fig
 
 
-def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True):
+def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, plot_label = ""):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
     fig,gs = SetGrid(ratio) 
@@ -272,7 +276,6 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
     
     if binning is None:
         binning = np.linspace(np.quantile(feed_dict[reference_name],0.0),np.quantile(feed_dict[reference_name],1),10)
-        
     xaxis = [(binning[i] + binning[i+1])/2.0 for i in range(len(binning)-1)]
     reference_hist,_ = np.histogram(feed_dict[reference_name],bins=binning,density=True)
     
@@ -286,15 +289,20 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
         else:
             dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,linestyle=line_style[plot],color=colors[plot],density=True,histtype="step", lw =4 )
             
+        if(len(plot_label) > 0): ax0.set_title(plot_label, fontsize = 20, loc = 'right', style = 'italic')
+
         if reference_name!=plot and ratio:
             eps = 1e-8
             h_ratio = 100*np.divide(dist - reference_hist,reference_hist + eps)
             if 'steps' in plot or 'r=' in plot:
                 ax1.plot(xaxis,h_ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=4)
             else:
-                ax1.plot(xaxis,h_ratio,color=colors[plot],marker='o',ms=10,lw=0)
+                if(len(binning) > 20): # draw ratio as line
+                    ax1.plot(xaxis, h_ratio,color=colors[plot],linestyle='-', lw = 4)
+                else:  #draw as markers
+                    ax1.plot(xaxis,h_ratio,color=colors[plot],marker='o',ms=10,lw=0)
         
-    ax0.legend(loc=label_loc,fontsize=24,ncol=1)        
+
 
     if logy:
         ax0.set_yscale('log')
@@ -306,10 +314,16 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
         plt.axhline(y=0.0, color='black', linestyle='-',linewidth=1)
         plt.axhline(y=10, color='gray', linestyle='--',linewidth=1)
         plt.axhline(y=-10, color='gray', linestyle='--',linewidth=1)
+        loc = mtick.MultipleLocator(base=10.0) 
+        ax1.yaxis.set_minor_locator(loc)
         plt.ylim([-50,50])
     else:
         FormatFig(xlabel = xlabel, ylabel = ylabel,ax0=ax0) 
 
+    ax0.legend(loc=label_loc,fontsize=24,ncol=1)        
+    #plt.tight_layout()
+    if(ratio):
+        plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
     return fig,ax0
 
 
@@ -317,7 +331,8 @@ def HistRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4',logy=False
 
 
 
-def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
+
+def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
         evt_start = 0):
 
     with h5.File(file_name,"r") as h5f:
@@ -327,17 +342,16 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, sh
         if(from_end):
             evt_start = -int(nevts)
             end = None
+        if(end == -1): end = None 
         print("Event start, stop: ", evt_start, end)
         e = h5f['incident_energies'][evt_start:end].astype(np.float32)/1000.0
         shower = h5f['showers'][evt_start:end].astype(np.float32)/1000.0
 
         
     e = np.reshape(e,(-1,1))
-    shower = np.reshape(shower,(shower.shape[0],-1))
-    shower = shower/(max_deposit*e)
 
 
-    shower_preprocessed = preprocess_shower(shower, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape)
+    shower_preprocessed = preprocess_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
 
     if logE:        
         E_preprocessed = np.log10(e/emin)/np.log10(emax/emin)
@@ -348,7 +362,8 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1, max_deposit=2, logE=True, sh
 
 
     
-def preprocess_shower(shower, shape, showerMap = 'log-norm', dataset_num = 2, orig_shape = False):
+def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2, orig_shape = False, ecut = 0, max_deposit = 2):
+
 
     if(dataset_num > 1): 
         shower = shower.reshape(shape)
@@ -375,6 +390,13 @@ def preprocess_shower(shower, shape, showerMap = 'log-norm', dataset_num = 2, or
 
     c = dataset_params[dataset_num]
 
+    if('quantile' in showerMap and ecut > 0):
+        np.random.seed(123)
+        noise = (ecut/3) * np.random.rand(*shower.shape)
+        shower +=  noise
+
+    shower = np.reshape(shower,(shower.shape[0],-1))
+    shower = shower/(max_deposit*e)
 
     if('logit' in showerMap):
         alpha = 1e-6
@@ -396,6 +418,14 @@ def preprocess_shower(shower, shape, showerMap = 'log-norm', dataset_num = 2, or
         #Range naturally from 0 to 1, change to be from -1 to 1
         elif('scaled' in showerMap): shower  = (shower * 2.0) - 1.0
 
+
+    if('quantile' in showerMap and c['qt'] is not None):
+        print("Loading quantile transform from %s" % c['qt'])
+        qt = joblib.load(c['qt'])
+        shape = shower.shape
+        shower = qt.transform(shower.reshape(-1,1)).reshape(shower.shape)
+        
+
     return shower
 
         
@@ -406,7 +436,7 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='log', dataset_num = 2, orig_shape = False):
+def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
     '''Revert the transformations applied to the training set'''
 
     if(dataset_num > 3 or dataset_num <0 ): 
@@ -416,13 +446,20 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
     print('dset', dataset_num)
     c = dataset_params[dataset_num]
 
-
     #shape=voxels.shape
     alpha = 1e-6
     if logE:
         energy = emin*(emax/emin)**e
     else:
         energy = emin + (emax-emin)*e
+
+
+    if('quantile' in showerMap and c['qt'] is not None):
+        print("Loading quantile transform from %s" % c['qt'])
+        qt = joblib.load(c['qt'])
+        shape = voxels.shape
+        voxels = qt.inverse_transform(voxels.reshape(-1,1)).reshape(shape)
+
         
     if('logit' in showerMap):
         if('norm' in showerMap): voxels = (voxels * c['logit_std']) + c['logit_mean']
@@ -450,8 +487,6 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
         data = np.square(voxels)
 
 
-
-
     if(dataset_num > 1 or orig_shape): 
         data = data.reshape(voxels.shape[0],-1)*max_deposit*energy.reshape(-1,1)
     else:
@@ -464,6 +499,12 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
         g = GeomConverter(bins)
         data = np.squeeze(data)
         data = g.unreshape(g.unconvert(data))*max_deposit*energy.reshape(-1,1)
+
+    if('quantile' in showerMap and ecut > 0.):
+        #subtact of avg of added noise
+        data -= 0.5 * (ecut/3)
+
+    if(ecut > 0): data[data < ecut ] = 0 #min from samples
     
     return data,energy
     
@@ -705,7 +746,7 @@ class EarlyStopper:
 
 
 def SetFig(xlabel,ylabel):
-    fig = plt.figure(figsize=(8, 6))
+    fig = plt.figure(figsize=(9, 9))
     gs = gridspec.GridSpec(1, 1) 
     ax0 = plt.subplot(gs[0])
     ax0.yaxis.set_ticks_position('both')
@@ -713,8 +754,8 @@ def SetFig(xlabel,ylabel):
     ax0.tick_params(direction="in",which="both")    
     plt.xticks(fontsize=20)
     plt.yticks(fontsize=20)
-    plt.xlabel(xlabel,fontsize=20)
-    plt.ylabel(ylabel,fontsize=20)
+    plt.xlabel(xlabel,fontsize=24)
+    plt.ylabel(ylabel,fontsize=24)
 
     ax0.minorticks_on()
     return fig, ax0

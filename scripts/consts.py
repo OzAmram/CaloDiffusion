@@ -17,6 +17,8 @@ dataset0_params ={
 'sqrt_std' : 1.0,
 'sqrt_min' : 0.,
 'sqrt_max' : 1.0,
+
+'qt' : 'qts/dset1_pions_quantile_transform.gz',
 }
 
 
@@ -37,6 +39,9 @@ dataset0_fcn_params ={
 'sqrt_std' : 1.0,
 'sqrt_min' : 0.,
 'sqrt_max' : 1.0,
+
+
+'qt' : None,
 }
 
 
@@ -59,6 +64,8 @@ dataset1_params ={
 'sqrt_std' : 1.0,
 'sqrt_min' : 0.,
 'sqrt_max' : 1.0,
+
+'qt' : 'qts/dset1_photons_quantile_transform.gz',
 }
 
 
@@ -79,6 +86,8 @@ dataset1_fcn_params ={
 'sqrt_std' : 1.0,
 'sqrt_min' : 0.,
 'sqrt_max' : 1.0,
+
+'qt' : None,
 }
 
 dataset2_params = {
@@ -97,6 +106,8 @@ dataset2_params = {
 'sqrt_std' : 0.0073,
 'sqrt_min' : 0.,
 'sqrt_max' : 1.0,
+
+'qt' : 'qts/dset2_quantile_transform.gz',
 }
 
 
@@ -116,6 +127,7 @@ dataset3_params = {
 'sqrt_std' : 1.0,
 'sqrt_min' : 0.,
 'sqrt_max' : 1.0,
+'qt' : 'qts/dset3_quantile_transform.gz',
 }
 dataset_params = {
         0: dataset0_params, 

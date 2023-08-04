@@ -11,16 +11,15 @@ from models import *
 
 class CaloDiffu(nn.Module):
     """Diffusion based generative model"""
-    def __init__(self, data_shape,num_batch,name='SGM',config=None, R_Z_inputs = False, training_obj = 'noise_pred',
+    def __init__(self, data_shape, config=None, R_Z_inputs = False, training_obj = 'noise_pred', nsteps = 400,
                     cold_diffu = False, E_bins = None, avg_showers = None, std_showers = None, NN_embed = None):
         super(CaloDiffu, self).__init__()
         self._data_shape = data_shape
         self.nvoxels = np.prod(self._data_shape)
-        self._num_batch = num_batch
         self.config = config
         self._num_embed = self.config['EMBED']
         self.num_heads=1
-        self.nsteps = self.config['NSTEPS']
+        self.nsteps = nsteps
         self.cold_diffu = cold_diffu
         self.E_bins = E_bins
         self.avg_showers = avg_showers
@@ -85,6 +84,9 @@ class CaloDiffu(nn.Module):
         self.E_embed = config.get("COND_EMBED", 'sin')
         cond_dim = config['COND_SIZE_UNET']
         layer_sizes = config['LAYER_SIZE_UNET']
+        block_attn = config.get("BLOCK_ATTN", False)
+        mid_attn = config.get("MID_ATTN", False)
+        compress_Z = config.get("COMPRESS_Z", False)
 
 
         if(self.fully_connected):
@@ -113,15 +115,15 @@ class CaloDiffu(nn.Module):
             if(self.phi_inputs): in_channels += 1
 
             calo_summary_shape = list(copy.copy(RZ_shape))
-            calo_summary_shape.insert(0, self._num_batch)
+            calo_summary_shape.insert(0, 1)
             calo_summary_shape[1] = in_channels
 
             calo_summary_shape[0] = 1
             summary_shape = [calo_summary_shape, [1], [1]]
 
 
-            self.model = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, 
-                    cylindrical =  config.get('CYLINDRICAL', False), data_shape = calo_summary_shape,
+            self.model = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, block_attn = block_attn, mid_attn = mid_attn, 
+                    cylindrical =  config.get('CYLINDRICAL', False), compress_Z = compress_Z, data_shape = calo_summary_shape,
                     cond_embed = (self.E_embed == 'sin'), time_embed = (self.time_embed == 'sin') )
 
         print("\n\n Model: \n")

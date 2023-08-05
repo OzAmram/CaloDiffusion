@@ -78,32 +78,30 @@ def split_data(data,nevts,frac=0.8):
 
 line_style = {
     'Geant4':'dotted',
-    'CaloScore: VP':'-',
-    'CaloScore: VE':'-',
-    'CaloScore: subVP':'-',
 
-    'Autoencoder' : '-',
     'CaloDiffusion' : '-',
     'Avg Shower' : '-',
-    'LatentDiffu' : '-',
+    'CaloDiffusion 400 Steps' : '-',
+    'CaloDiffusion 200 Steps' : '-',
+    'CaloDiffusion 100 Steps' : '-',
+    'CaloDiffusion 50 Steps' : '-',
 
 }
 
 colors = {
     'Geant4':'black',
-    
-    'Autoencoder': 'purple',
-    'CaloDiffusion': 'blue',
     'Avg Shower': 'blue',
-    'LatentDiffu': 'green',
+    'CaloDiffusion': 'blue',
+    'CaloDiffusion 400 Steps': 'blue',
+    'CaloDiffusion 200 Steps': 'green',
+    'CaloDiffusion 100 Steps': 'purple',
+    'CaloDiffusion 50 Steps': 'red',
 
 }
 
 name_translate={
 
-    'AE' : "Autoencoder",
     'Diffu' : "CaloDiffusion",
-    'LatentDiffu' : "LatentDiffu",
     'Avg' : "Avg Shower",
 
 
@@ -264,7 +262,7 @@ def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins 
     return fig
 
 
-def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, plot_label = ""):
+def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, plot_label = "", leg_font = 24):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
     fig,gs = SetGrid(ratio) 
@@ -320,7 +318,7 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
     else:
         FormatFig(xlabel = xlabel, ylabel = ylabel,ax0=ax0) 
 
-    ax0.legend(loc=label_loc,fontsize=24,ncol=1)        
+    ax0.legend(loc=label_loc,fontsize=leg_font,ncol=1)        
     #plt.tight_layout()
     if(ratio):
         plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)

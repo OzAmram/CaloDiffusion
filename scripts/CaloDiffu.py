@@ -72,13 +72,13 @@ class CaloDiffu(nn.Module):
             self.alphas_cumprod = torch.cumprod(self.alphas, axis = 0)
 
             #shift all elements over by inserting unit value in first place
-            alphas_cumprod_prev = torch.nn.functional.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
+            self.alphas_cumprod_prev = torch.nn.functional.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
 
             self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
             self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
             self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
 
-            self.posterior_variance = self.betas * (1. - alphas_cumprod_prev) / (1. - self.alphas_cumprod)
+            self.posterior_variance = self.betas * (1. - self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
 
         self.time_embed = config.get("TIME_EMBED", 'sin')
         self.E_embed = config.get("COND_EMBED", 'sin')
@@ -164,20 +164,12 @@ class CaloDiffu(nn.Module):
         return self.avg_showers[idxs], self.std_showers[idxs]
 
     
-    def noise_image(self, data = None, t = None, noise = None):
+    def noise_image(self, data = None, sigma = None, noise = None):
 
         if(noise is None): noise = torch.randn_like(data)
-
-        if(t[0] <=0): return data
-
-        if(self.discrete_time):
-            sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
-            sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
-            out = sqrt_alphas_cumprod_t * data + sqrt_one_minus_alphas_cumprod_t * noise
-            return out
-        else:
-            print("NON DISCRETE TIME BAD")
-            exit(1)
+        if(sigma[0] <=0): return data
+        out = data + sigma * noise
+        return out
 
 
     def compute_loss(self, data, energy, noise = None, t = None, loss_type = "l2", rnd_normal = None, energy_loss_scale = 1e-2):
@@ -189,15 +181,18 @@ class CaloDiffu(nn.Module):
 
         if(self.discrete_time): 
             if(t is None): t = torch.randint(0, self.nsteps, (data.size()[0],), device=data.device).long()
-            x_noisy = self.noise_image(data, t, noise=noise)
-            sigma = None
-            sigma2 = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)**2
+
+            sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
+            sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
+            sigma = sqrt_one_minus_alphas_cumprod_t / sqrt_alphas_cumprod_t
+
         else:
             if(rnd_normal is None): rnd_normal = torch.randn((data.size()[0],), device=data.device)
             sigma = (rnd_normal * self.P_std + self.P_mean).exp()
             x_noisy = data + torch.reshape(sigma, (data.shape[0], 1,1,1,1)) * noise
-            sigma2 = sigma**2
 
+        x_noisy = self.noise_image(data, t, noise=noise)
+        sigma2 = sigma**2
 
 
         t_emb = self.do_time_embed(t, self.time_embed, sigma)
@@ -275,51 +270,6 @@ class CaloDiffu(nn.Module):
                 return 0.5 * torch.log(sigma).to(t.device)
             else:
                 return sigma
-
-
-    def edm_sampler( self, x, E, sample_algo = 'euler', randn_like=torch.randn_like, num_steps=400, sigma_min=0.002, sigma_max=10, rho=7,
-        S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,):
-        # Adjust noise levels based on what's supported by the network.
-
-        #sigma_min = max(sigma_min, net.sigma_min)
-        #sigma_max = min(sigma_max, net.sigma_max)
-
-        gen_size = x.shape[0]
-
-        # Time step discretization.
-        step_indices = torch.arange(num_steps, dtype=torch.float32, device=x.device)
-        t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
-        t_steps = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
-
-        # Main sampling loop.
-        x_next = x.to(torch.float32) * t_steps[0]
-        for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
-            x_cur = x_next
-
-            # Increase noise temporarily.
-            gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
-            t_hat = torch.as_tensor(t_cur + gamma * t_cur)
-            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
-
-            # Euler step.
-
-            t_hat_full = torch.full((gen_size,), t_hat, device=x.device)
-            denoised = self.denoise(x_hat, E, t_hat_full).to(torch.float32)
-            d_cur = (x_hat - denoised) / t_hat
-            x_next = x_hat + (t_next - t_hat) * d_cur
-
-
-
-            # Apply 2nd order correction.
-            if (sample_algo == 'edm') and (i < num_steps - 1):
-                t_next_full = torch.full((gen_size,), t_next, device=x.device)
-                denoised = self.denoise(x_next, E, t_next_full).to(torch.float32)
-                d_prime = (x_next - denoised) / t_next
-                x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
-
-        return x_next
-
-
     def pred(self, x, E, t_emb):
 
         if(self.NN_embed is not None): x = self.NN_embed.enc(x).to(x.device)
@@ -327,22 +277,118 @@ class CaloDiffu(nn.Module):
         if(self.NN_embed is not None): out = self.NN_embed.dec(out).to(x.device)
         return out
 
-    def denoise(self, x, E,t_emb):
-        pred = self.pred(x, E, t_emb)
+    def denoise(self, x, E, t):
+        sigma2 = (t**2).reshape(-1,1,1,1,1)
+        c_in = 1 / (sigma2 + 1).sqrt()
+        my_sigma2 = sigma2 * c_in**2
+        t_cond = my_sigma2.sqrt().reshape(-1)
+        pred = self.pred(x * c_in, E, t_cond)
+
+        if('noise_pred' in self.training_obj):
+            return (x - torch.sqrt(sigma2) * pred)
+
         if('mean_pred' in self.training_obj):
             return pred
         elif('hybrid' in self.training_obj):
 
-            sigma2 = (t_emb**2).reshape(-1,1,1,1,1)
-            c_skip = 1. / (sigma2 + 1.)
-            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
+            c_skip = 1. / (my_sigma2 + 1.)
+            c_out = torch.sqrt(my_sigma2) / (my_sigma2 + 1.).sqrt()
+            print(sigma2[0], my_sigma2[0], c_skip[0], c_out[0])
+            return (c_skip * x + c_out * pred)
 
-            return c_skip * x + c_out * pred
+
+
+    def edm_sampler( self, x, E, sample_algo = 'euler', randn_like=torch.randn_like, num_steps=400, sigma_min=0.002, sigma_max=1, rho=7,
+        S_churn=0, S_min=0, S_max=1.0, S_noise=1,sample_offset = 0, orig_schedule = False):
+        # Adjust noise levels based on what's supported by the network.
+
+        #sigma_min = max(sigma_min, net.sigma_min)
+        #sigma_max = min(sigma_max, net.sigma_max)
+
+        gen_size = x.shape[0]
+
+        # Time step discretization from edm paper
+        step_indices = torch.arange(num_steps, dtype=torch.float32, device=x.device)
+        t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+        t_steps = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+        t_steps = t_steps[sample_offset:]
+
+
+        if(orig_schedule): #use steps from original schedule 
+            M = self.nsteps # num steps trained with
+            C_2 = 0.0008
+            C_1 = 0.001
+            u = torch.zeros(M + 1, dtype=torch.float64, device=x.device)
+            alpha_bar = lambda j: (0.5 * np.pi * j / M / (C_2 + 1)).sin() ** 2
+            for j in torch.arange(M, 0, -1, device=x.device): # M, ..., 1
+                u[j - 1] = ((u[j] ** 2 + 1) / (alpha_bar(j - 1) / alpha_bar(j)).clip(min=C_1) - 1).sqrt()
+            u_filtered = u[torch.logical_and(u >= sigma_min, u <= sigma_max)]
+            t_steps = u_filtered[((len(u_filtered) - 1) / (num_steps - 1) * step_indices).round().to(torch.int64)] 
+
+
+        #print(t_steps)
+    
+        # Main sampling loop.
+        x_next = x.to(torch.float32) * t_steps[0]
+        t_next = t_steps[0]
+        xs = []
+        x0s = []
+        for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
+            x_cur = x_next
+
+            # Increase noise temporarily.
+            gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
+            t_hat = torch.as_tensor(t_cur + gamma * t_cur)
+            t_hat_full = torch.full((gen_size,), t_hat, device=x.device)
+            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
+
+            h = t_next - t_hat
+            denoised = self.denoise(x_hat, E, t_hat_full).to(torch.float32) 
+           
+            d_cur = (x_hat - denoised)/t_hat
+            x_prime = x_hat +  h * d_cur
+            t_prime = t_hat +  h
+
+        
+
+            # Apply 2nd order correction.
+            if sample_algo == 'euler' or i == num_steps - sample_offset - 1:
+                x_next = x_hat + h * d_cur
+            else:
+                assert (sample_algo == 'heun' or sample_algo == 'edm')
+                t_prime_full = torch.full((gen_size,), t_prime, device = x.device)
+                denoised = self.denoise(x_prime, E, t_prime_full).to(torch.float32)
+                d_prime = (x_next - denoised) / t_next
+                x_next = x_hat + h * (0.5 * d_cur + 0.5 * d_prime)
+
+            print(i, t_cur, torch.mean(x_next), torch.mean(denoised))
+            xs.append(x_cur)
+            x0s.append(denoised)
+
+
+            ## Euler step.
+            #t_hat_full = torch.full((gen_size,), t_hat, device=x.device)
+            #denoised = self.denoise(x_hat, E, t_hat_full).to(torch.float32)
+            #d_cur = (x_hat - denoised) / t_hat
+            #x_next = x_hat + (t_next - t_hat) * d_cur
+
+
+
+            ## Apply 2nd order correction.
+            #if (sample_algo == 'edm') and (i < num_steps - 1):
+            #    t_next_full = torch.full((gen_size,), t_next, device=x.device)
+            #    denoised = self.denoise(x_next, E, t_next_full).to(torch.float32)
+            #    d_prime = (x_next - denoised) / t_next
+            #    x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+
+        return x_next, xs, x0s
+
 
 
     @torch.no_grad()
     def p_sample(self, x, E, t, cold_noise_scale = 0., noise = None, sample_algo = 'ddpm', debug = False):
         #reverse the diffusion process (one step)
+    
 
 
 
@@ -360,6 +406,8 @@ class CaloDiffu(nn.Module):
 
         t_emb = self.do_time_embed(t, self.time_embed)
 
+        print(t[0], t_emb[0], torch.mean(x))
+
 
         pred = self.pred(x, E, t_emb)
         if('noise_pred' in self.training_obj):
@@ -371,7 +419,6 @@ class CaloDiffu(nn.Module):
         elif('hybrid' in self.training_obj):
 
             sigma2 = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)**2
-            #sigma2 = extract(self.betas, t, x.shape)**2
             c_skip = 1. / (sigma2 + 1.)
             c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
 
@@ -384,6 +431,8 @@ class CaloDiffu(nn.Module):
         if(sample_algo == 'ddpm'):
             # Sampling algo from https://arxiv.org/abs/2006.11239
             # Use results from our model (noise predictor) to predict the mean of posterior distribution of prev step
+            #x0_pred = (x - sigma * noise_pred)/torch.sqrt(1.0 - sigma**2)
+
             post_mean = sqrt_recip_alphas_t * ( x - betas_t * noise_pred  / sqrt_one_minus_alphas_cumprod_t)
             out = post_mean + torch.sqrt(posterior_variance_t) * noise 
             if t[0] == 0: out = post_mean
@@ -392,12 +441,23 @@ class CaloDiffu(nn.Module):
             if(x0_pred is None): x0_pred = (x - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
             if t[0] == 0: out = x0_pred
             else:
-                t_next = t-1
-                sqrt_alphas_cumprod_t_next = extract(self.sqrt_alphas_cumprod, t_next, x.shape)
+                #pure ddim
+                ddim_eta = 0.
 
-                c1 =  torch.sqrt(1. - sqrt_alphas_cumprod_t_next **2 - posterior_variance_t **2)
-                out = sqrt_alphas_cumprod_t_next * x0_pred + c1 * noise_pred + sqrt_alphas_cumprod_t * noise
-                print(torch.mean(out), torch.mean(x0_pred), torch.mean(c1 * noise_pred), torch.mean(sqrt_alphas_cumprod_t * noise))
+                alpha_prev = extract(self.alphas_cumprod_prev, t, x.shape)
+                alpha = extract(self.alphas_cumprod, t, x.shape)
+                sigma = ddim_eta * (( (1 - alpha_prev) / (1 - alpha)) * (1 - alpha / alpha_prev))**0.5
+
+                pred_x0 = (x - sqrt_one_minus_alphas_cumprod_t * noise_pred) / sqrt_alphas_cumprod_t
+                pred_x0_v2 = self.denoise(x, E, t_emb)
+                print(torch.mean(pred_x0 - pred_x0_v2))
+                dir_xt = (1. - alpha_prev - sigma**2).sqrt() * noise_pred
+
+                if(ddim_eta == 0.): noise = 0. 
+
+                out = (alpha_prev ** 0.5) * pred_x0 + dir_xt + sigma * noise
+            
+
 
         elif(sample_algo == 'cold_step'):
             post_mean = x - noise_pred * sqrt_one_minus_alphas_cumprod_t
@@ -478,16 +538,18 @@ class CaloDiffu(nn.Module):
 
         start = time.time()
 
-        if(sample_algo == 'euler' or sample_algo == 'edm'):
-            S_churn = 40
-            S_min = 0.01
+        if(sample_algo == 'euler' or sample_algo == 'edm' or sample_algo == 'heun'):
+            S_churn = 40 if sample_algo == 'edm' else 0 
+            S_min = 0.05
             S_max = 50
-            S_noise = 1.005
+            S_noise = 1.003
             sigma_min = 0.002
-            sigma_max = 1.0
+            sigma_max = 80.0
+            orig_schedule = True
 
-            x = self.edm_sampler(x_start,E, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
-                    S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise)
+            out = self.edm_sampler(x_start,E, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
+                    S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule)
+            x,xs, x0s = out
 
         else:
             x = x_start

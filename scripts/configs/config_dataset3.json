@@ -1,6 +1,6 @@
 {
     'FILES':['dataset_3_1.hdf5','dataset_3_2.hdf5'],
-    'EVAL':['dataset_3_2.hdf5', 'dataset_3_2.hdf5'],
+    'EVAL':['dataset_3_3.hdf5', 'dataset_3_4.hdf5'],
     'DATASET_NUM' : 3,
     'SHAPE_ORIG':[-1,40500],
     'SHAPE':[-1,45,50,18,1],

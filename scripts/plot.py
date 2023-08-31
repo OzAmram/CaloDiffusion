@@ -188,11 +188,11 @@ if flags.sample:
                 gen, all_gen, x0s = out
                 for j in [0,len(all_gen)//4, len(all_gen)//2, 3*len(all_gen)//4, 9*len(all_gen)//10, len(all_gen)-10, len(all_gen)-5,len(all_gen)-1]:
                     fout_ex = '{}/{}_{}_norm_voxels_gen_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
-                    make_histogram([all_gen[j].reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                    make_histogram([all_gen[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                                     num_bins = 40, normalize = True, fname = fout_ex)
 
                     fout_ex = '{}/{}_{}_norm_voxels_x0_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
-                    make_histogram([x0s[j].reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                    make_histogram([x0s[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                                     num_bins = 40, normalize = True, fname = fout_ex)
             else: gen = out
 
@@ -223,7 +223,6 @@ if flags.sample:
     #    generated = AE.decoder_model.predict(generated_latent, batch_size = batch_size)
 
 
-    print("GENERATED", np.mean(generated), np.std(generated), np.amax(generated), np.amin(generated))
 
     if(not orig_shape): generated = generated.reshape(dataset_config["SHAPE"])
 

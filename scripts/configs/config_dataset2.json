@@ -39,9 +39,9 @@
     'COLD_NOISE' : 1.0,
     'TRAINING_OBJ' : 'hybrid_weight',
     'LOSS_TYPE' : 'l2',
-    'TIME_EMBED' : 'sigma',
+    'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
-    'CHECKPOINT_NAME':'dataset2_aug23_hybrid_weight',
+    'CHECKPOINT_NAME':'dataset2_sep1_hybrid_weight',
 
 
 }

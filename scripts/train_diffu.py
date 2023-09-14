@@ -7,7 +7,6 @@ import torch.optim as optim
 import torch.utils.data as torchdata
 
 from utils import *
-from CaloAE import *
 from CaloDiffu import *
 from models import *
 
@@ -30,7 +29,7 @@ if __name__ == '__main__':
     parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
 
-    dataset_config = utils.LoadJson(flags.config)
+    dataset_config = LoadJson(flags.config)
 
     print("TRAINING OPTIONS")
     print(dataset_config, flush = True)
@@ -56,7 +55,7 @@ if __name__ == '__main__':
     energies = []
 
     for i, dataset in enumerate(dataset_config['FILES']):
-        data_,e_ = utils.DataLoader(
+        data_,e_ = DataLoader(
             os.path.join(flags.data_folder,dataset),
             dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
@@ -177,8 +176,6 @@ if __name__ == '__main__':
     #training loop
     for epoch in range(start_epoch, num_epochs):
         print("Beginning epoch %i" % epoch, flush=True)
-        for i, param in enumerate(model.parameters()):
-            break
         train_loss = 0
 
         model.train()

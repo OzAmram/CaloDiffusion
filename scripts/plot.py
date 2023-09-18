@@ -31,7 +31,7 @@ parser.add_argument('--data_folder', default='../data/', help='Folder containing
 parser.add_argument('--plot_folder', default='../plots', help='Folder to save results')
 parser.add_argument('--generated', '-g', default='', help='Generated showers')
 parser.add_argument('--model_loc', default='test', help='Location of model')
-parser.add_argument('--config', default='config_dataset2.json', help='Training parameters')
+parser.add_argument('--config', '-c', default='config_dataset2.json', help='Training parameters')
 parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
 parser.add_argument('--batch_size', type=int, default=100, help='Batch size for generation')
 parser.add_argument('--model', default='Diffu', help='Diffusion model to load. Options are: Diffu, AE, all')

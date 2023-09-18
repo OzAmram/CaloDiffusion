@@ -286,7 +286,6 @@ class CaloDiffu(nn.Module):
             alpha_bar = lambda j: (0.5 * np.pi * j / M / (C_2 + 1)).sin() ** 2
             for j in torch.arange(M, 0, -1, device=x.device): # M, ..., 1
                 u[j - 1] = ((u[j] ** 2 + 1) / (alpha_bar(j - 1) / alpha_bar(j)).clip(min=C_1) - 1).sqrt()
-            print(u)
             u_filtered = u[torch.logical_and(u >= sigma_min, u <= sigma_max)]
             t_steps = u_filtered[((len(u_filtered) - 1) / (num_steps - 1) * step_indices).round().to(torch.int64)] 
 
@@ -355,16 +354,19 @@ class CaloDiffu(nn.Module):
         x0_pred = self.denoise(x, E, sigma)
         noise_pred = (x - x0_pred)/sigma
 
-        if(sample_algo == 'ddpm'):
-            #using result from ddim paper, which reformulates the ddpm sampler in their notation (See Eq. 12 and sigma definition)
-            ddim_eta = 1.0
-        else:
-            #pure ddim (no stochasticity)
-            ddim_eta = 0.0
+        if(sample_algo == 'consis'):
+            sigma_next = extract(self.sqrt_one_minus_alphas_cumprod, t-1, x.shape) / extract(self.sqrt_alphas_cumprod, t-1, x.shape) if t[0] > 0 else 0.
+            #print(sigma[0], sigma_next[0])
+            out = x0_pred + sigma_next * noise
 
-        if t[0] == 0: out = x0_pred
-        else:
 
+        else:
+            if(sample_algo == 'ddpm'):
+                #using result from ddim paper, which reformulates the ddpm sampler in their notation (See Eq. 12 and sigma definition)
+                ddim_eta = 1.0
+            else:
+                #pure ddim (no stochasticity)
+                ddim_eta = 0.0
 
             alpha = extract(self.alphas_cumprod, t, x.shape)
             alpha_prev = extract(self.alphas_cumprod_prev, t, x.shape)
@@ -374,6 +376,7 @@ class CaloDiffu(nn.Module):
             ddim_sigma = ddim_eta * (( (1 - alpha_prev) / (1 - alpha)) * (1 - alpha / alpha_prev))**0.5
             num = (1. - alpha_prev - ddim_sigma**2).sqrt()
             sigma_prev = num / denom
+
 
             dir_xt = sigma_prev * noise_pred
 
@@ -404,10 +407,7 @@ class CaloDiffu(nn.Module):
 
 
 
-        if(debug): 
-            if(x0_pred is None):
-                x0_pred = (x - sqrt_one_minus_alphas_cumprod_t * noise_pred)/sqrt_alphas_cumprod_t
-            return out, x0_pred
+        if(debug): return out, x0_pred
         return out
 
     def gen_cold_image(self, E, cold_noise_scale, noise = None):
@@ -439,6 +439,7 @@ class CaloDiffu(nn.Module):
         sigma_start = self.sqrt_one_minus_alphas_cumprod[time_steps[0]] / self.sqrt_alphas_cumprod[time_steps[0]]
         x = x_start * sigma_start
 
+
         for time_step in time_steps:      
             times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
             out = self.p_sample(x, E, times, noise = fixed_noise, sample_algo = sample_algo, debug = debug)
@@ -448,6 +449,41 @@ class CaloDiffu(nn.Module):
                 x0s.append(x0_pred.detach().cpu().numpy())
             else: x = out
         return x, xs, x0s
+
+    def consis_sampler(self, x_start, E, num_steps = 1):
+
+        sigma_min = 0.002
+        sigma_max = 500.0
+        rho=7.0
+
+        step_indices = torch.arange(num_steps, dtype=torch.float32, device=x_start.device)
+        if(num_steps > 1):
+            t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+        else:
+            t_steps = torch.tensor([sigma_max])
+        t_steps = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+        #t_steps = torch.tensor([500., 10., 1., 0.5, 0.1, 0.01, 0.])
+        imax = num_steps
+
+        time_steps = list(range(0, num_steps))
+        x = x_start * sigma_max
+        
+        x0s = []
+        xs = []
+
+
+        for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
+            t_cur_full = torch.full((x_start.shape[0],), t_cur, device=x.device)
+            x0 = self.denoise(x, E, t_cur_full).to(torch.float32) 
+
+            t_next = torch.clip(t_next, sigma_min, sigma_max)
+            x = x0 + (t_next > 0 ) * torch.randn_like(x) * torch.sqrt(t_next**2 - sigma_min**2)
+            x0s.append(x0)
+            xs.append(x)
+
+        return x,xs,x0
+
+
 
 
 
@@ -498,6 +534,8 @@ class CaloDiffu(nn.Module):
             x,xs, x0s = self.edm_sampler(x_start,E, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
                     S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule)
 
+        elif('consis' in sample_algo):
+            x,xs, x0s = self.consis_sampler(x_start, E, num_steps = num_steps)
         else:
             x, xs, x0s = self.dd_sampler(x_start, E, num_steps = num_steps, sample_offset = sample_offset, sample_algo = sample_algo, debug = debug)
 
@@ -507,6 +545,7 @@ class CaloDiffu(nn.Module):
             return x.detach().cpu().numpy(), xs, x0s
         else:   
             return x.detach().cpu().numpy()
+
 
     
         

@@ -36,9 +36,6 @@ if __name__ == '__main__':
 
     torch.manual_seed(flags.seed)
 
-    cold_diffu = dataset_config.get('COLD_DIFFU', False)
-    cold_noise_scale = dataset_config.get('COLD_NOISE', 1.0)
-
     nholdout  = dataset_config.get('HOLDOUT', 0)
 
     batch_size = dataset_config['BATCH']
@@ -70,31 +67,12 @@ if __name__ == '__main__':
         if(i ==0): 
             data = data_
             energies = e_
-            if(layer_norm): layers = layers_
+            layers = layers_
         else:
             data = np.concatenate((data, data_))
             energies = np.concatenate((energies, e_))
-            if(layer_norm): layers = np.concatenate((layers, layers_))
+            layers = np.concatenate((layers, layers_))
 
-        
-    avg_showers = std_showers = E_bins = None
-    if(cold_diffu):
-        f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
-        #Already pre-processed
-        avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
-        std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
-        E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
-
-    NN_embed = None
-    if('NN' in shower_embed):
-        if(dataset_num == 1):
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
-            bins = XMLHandler("photon", binning_file)
-        else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
-            bins = XMLHandler("pion", binning_file)
-
-        NN_embed = NNConverter(bins = bins).to(device = device)
         
 
     dshape = dataset_config['SHAPE_PAD']
@@ -106,13 +84,12 @@ if __name__ == '__main__':
     print("Data Shape " + str(data.shape))
     data_size = data.shape[0]
     #print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
-    torch_data_tensor = torch.from_numpy(data)
     torch_E_tensor = torch.from_numpy(energies)
-    torch_layer_tensor =  torch.from_numpy(layers) if layer_norm else torch.zeros_like(torch_E_tensor)
+    torch_layer_tensor =  torch.from_numpy(layers)
     del data
     #train_data, val_data = utils.split_data_np(data,flags.frac)
 
-    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_layer_tensor, torch_data_tensor)
+    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_layer_tensor)
     nTrain = int(round(flags.frac * num_data))
     nVal = num_data - nTrain
     train_dataset, val_dataset = torch.utils.data.random_split(torch_dataset, [nTrain, nVal])
@@ -120,37 +97,39 @@ if __name__ == '__main__':
     loader_train = torchdata.DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
     loader_val = torchdata.DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
 
-    del torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
+    del torch_E_tensor, train_dataset, val_dataset
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     if not os.path.exists(checkpoint_folder):
         os.makedirs(checkpoint_folder)
 
     checkpoint = dict()
-    checkpoint_path = os.path.join(checkpoint_folder, "checkpoint.pth")
+    checkpoint_path = os.path.join(checkpoint_folder, "layer_checkpoint.pth")
     if(flags.load and os.path.exists(checkpoint_path)): 
         print("Loading training checkpoint from %s" % checkpoint_path, flush = True)
         checkpoint = torch.load(checkpoint_path, map_location = device)
         print(checkpoint.keys())
 
+    shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
 
-    if(flags.model == "Diffu"):
-        shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
-        model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = dataset_config['NSTEPS'],
-                cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
+    layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2], num_layers = 5).to(device = device)
 
+    summary_shape = [[1, dataset_config['SHAPE_PAD'][2]], [[1,1]], [1]]
 
-        #sometimes save only weights, sometimes save other info
-        if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
-        elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
+    summary(layer_model, summary_shape)
 
-
-    else:
-        print("Model %s not supported!" % flags.model)
-        exit(1)
+    #sometimes save only weights, sometimes save other info
+    if('model_state_dict' in checkpoint.keys()): layer_model.load_state_dict(checkpoint['model_state_dict'])
+    elif(len(checkpoint.keys()) > 1): layer_model.load_state_dict(checkpoint)
 
 
-    os.system('cp CaloDiffu.py {}'.format(checkpoint_folder)) # bkp of model def
-    os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
+    model = CaloDiffu(shape, config=dataset_config, layer_model = layer_model, training_obj = training_obj, nsteps = dataset_config['NSTEPS'],).to(device = device)
+
+
+
+
+
+
+
     os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
 
     early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], mode = 'diff', min_delta = 1e-5)
@@ -180,28 +159,25 @@ if __name__ == '__main__':
         train_loss = 0
 
         model.train()
-        for i, (E,layers,data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
+        for i, (E,layers) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
             model.zero_grad()
             optimizer.zero_grad()
 
-            data = data.to(device = device)
             E = E.to(device = device)
             layers = layers.to(device = device)
 
-            t = torch.randint(0, model.nsteps, (data.size()[0],), device=device).long()
-            noise = torch.randn_like(data)
 
-            if(cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
-                noise = model.gen_cold_image(E, cold_noise_scale, noise)
-                
+            t = torch.randint(0, model.nsteps, (layers.size()[0],), device=device).long()
+            noise = torch.randn_like(layers)
 
-            batch_loss = model.compute_loss(data, E, noise = noise, layers = layers, t = t, loss_type = loss_type )
+
+            batch_loss = model.compute_loss(layers, E, noise = noise, t = t, loss_type = loss_type, layer_loss = True)
             batch_loss.backward()
 
             optimizer.step()
             train_loss+=batch_loss.item()
 
-            del data, E, layers, noise, batch_loss
+            del layers, E, noise, batch_loss
 
         train_loss = train_loss/len(loader_train)
         training_losses[epoch] = train_loss
@@ -209,19 +185,17 @@ if __name__ == '__main__':
 
         val_loss = 0
         model.eval()
-        for i, (vE, vlayers, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
-            vdata = vdata.to(device=device)
+        for i, (vE, vlayers) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
             vE = vE.to(device = device)
             vlayers = vlayers.to(device = device)
 
-            t = torch.randint(0, model.nsteps, (vdata.size()[0],), device=device).long()
-            noise = torch.randn_like(vdata)
-            if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)
+            t = torch.randint(0, model.nsteps, (vlayers.size()[0],), device=device).long()
+            noise = torch.randn_like(vlayers)
 
-            batch_loss = model.compute_loss(vdata, vE, noise = noise, layers = vlayers, t = t, loss_type = loss_type  )
+            batch_loss = model.compute_loss(vlayers, vE, noise = noise, t = t, loss_type = loss_type, layer_loss = True)
 
             val_loss+=batch_loss.item()
-            del vdata,vE, vlayers, noise, batch_loss
+            del vlayers ,vE, noise, batch_loss
 
         val_loss = val_loss/len(loader_val)
         #scheduler.step(torch.tensor([val_loss]))
@@ -231,7 +205,7 @@ if __name__ == '__main__':
         scheduler.step(torch.tensor([train_loss]))
 
         if(val_loss < min_validation_loss):
-            torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
+            torch.save(layer_model.state_dict(), os.path.join(checkpoint_folder, 'layer_best_val.pth'))
             min_validation_loss = val_loss
 
         if(early_stopper.early_stop(val_loss - train_loss)):
@@ -246,7 +220,7 @@ if __name__ == '__main__':
         #save full training state so can be resumed
         torch.save({
             'epoch': epoch,
-            'model_state_dict': model.state_dict(),
+            'model_state_dict': layer_model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
             'train_loss_hist': training_losses,
@@ -254,14 +228,14 @@ if __name__ == '__main__':
             'early_stop_dict': early_stopper.__dict__,
             }, checkpoint_path)
 
-        with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
+        with open(checkpoint_folder + "/layer_training_losses.txt","w") as tfileout:
             tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")
-        with open(checkpoint_folder + "/validation_losses.txt","w") as vfileout:
+        with open(checkpoint_folder + "/layer_validation_losses.txt","w") as vfileout:
             vfileout.write("\n".join("{}".format(vl) for vl in val_losses)+"\n")
 
 
     print("Saving to %s" % checkpoint_folder, flush=True)
-    torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'final.pth'))
+    torch.save(layer_model.state_dict(), os.path.join(checkpoint_folder, 'layer_final.pth'))
 
     with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
         tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")

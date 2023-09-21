@@ -130,6 +130,7 @@ class Block(nn.Module):
         x = self.act(x)
         return x
 
+
 class ResnetBlock(nn.Module):
     """https://arxiv.org/abs/1512.03385"""
     
@@ -285,12 +286,95 @@ def Downsample(dim, cylindrical = False, compress_Z = False):
     #return nn.AvgPool3d(kernel_size = (1,2,2), stride = (1,2,2), padding =0)
 
 
+
+class ResDense(nn.Module):
+    #Single layer of dense resnet
+    def __init__(self, dim, dim_out, cond_emb_dim = 128):
+        super().__init__()
+
+        self.embeder = nn.Sequential(*[nn.GELU(), nn.Linear(cond_emb_dim, dim_out)])
+        
+        self.dense1 = nn.Sequential(*[nn.Linear(dim, dim_out), nn.GELU()])
+        self.dense2 = nn.Sequential(*[nn.Linear(dim_out, dim_out), nn.GELU()])
+
+    def forward(self, x, cond=None):
+
+        h = self.dense1(x)
+        embed = self.embeder(cond)
+        h = h + embed
+        h = self.dense2(h)
+
+        return h + x
+
+class ResNet(nn.Module):
+    #Fully connected network with residual connection layers
+    def __init__(self,
+            dim_in = 45,
+            num_layers = 3, 
+            hidden_dim = 256,
+            cond_emb_dim = 128,
+            ):
+
+        super().__init__()
+
+
+
+        # time and energy embeddings
+        half_cond_dim = cond_emb_dim // 2
+        time_layers = []
+        #if(time_embed): time_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
+        time_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU() ]
+        time_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
+
+
+        cond_layers = []
+        #if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
+        cond_layers = [nn.Linear(1, half_cond_dim//2),nn.GELU()]
+        cond_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
+
+
+        self.time_mlp = nn.Sequential(*time_layers)
+        self.cond_mlp = nn.Sequential(*cond_layers)
+
+
+        out_layers = [nn.Linear(dim_in + cond_emb_dim, dim_in)]
+
+        #initial dense layer to hidden dim
+        self.in_lay = nn.Linear(dim_in, hidden_dim)
+
+        self.hidden_layers = nn.ModuleList([])
+        #resnet for hidden dimmension
+        for i in range(num_layers-1):
+            self.hidden_layers.append(ResDense(hidden_dim, hidden_dim, cond_emb_dim = cond_emb_dim))
+
+        #output 
+        self.out_lay = nn.Linear(hidden_dim, dim_in)
+
+
+
+
+    def forward(self, x, cond, time):
+
+        c = self.cond_mlp(cond)
+        t = self.time_mlp(time)
+        cond = torch.cat([c,t], axis = -1)
+
+        x = self.in_lay(x)
+        for lay in self.hidden_layers:
+            x = lay(x, cond)
+
+        x = self.out_lay(x)
+
+        return x
+
+
+
 class FCN(nn.Module):
     #Fully connected network
     def __init__(self,
             dim_in = 356,
             num_layers = 4, 
-            cond_dim = 64,
+            cond_emb_dim = 64,
             time_embed = True,
             cond_embed = True,
             ):
@@ -300,7 +384,7 @@ class FCN(nn.Module):
 
 
         # time and energy embeddings
-        half_cond_dim = cond_dim // 2
+        half_cond_dim = cond_emb_dim // 2
         time_layers = []
         if(time_embed): time_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
         else: time_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU() ]
@@ -317,7 +401,7 @@ class FCN(nn.Module):
         self.cond_mlp = nn.Sequential(*cond_layers)
 
 
-        out_layers = [nn.Linear(dim_in + cond_dim, dim_in)]
+        out_layers = [nn.Linear(dim_in + cond_emb_dim, dim_in)]
         for i in range(num_layers-1):
             out_layers.append(nn.GELU())
             out_layers.append(nn.Linear(dim_in, dim_in))
@@ -337,6 +421,7 @@ class FCN(nn.Module):
 
 
 
+
 class CondUnet(nn.Module):
 #Unet with conditional layers
     def __init__(
@@ -344,7 +429,7 @@ class CondUnet(nn.Module):
         out_dim=1,
         layer_sizes = None,
         channels=1,
-        cond_dim = 64,
+        cond_dim = 128,
         resnet_block_groups=8,
         use_convnext=False,
         mid_attn = False,
@@ -355,6 +440,7 @@ class CondUnet(nn.Module):
         data_shape = (-1,1,45, 16,9),
         time_embed = True,
         cond_embed = True,
+        cond_size = 1,
     ):
         super().__init__()
 
@@ -387,9 +473,10 @@ class CondUnet(nn.Module):
 
 
         cond_layers = []
+        cond_hidden_size = max(cond_size, half_cond_dim//2)
         if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
-        else: cond_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU()]
-        cond_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
+        else: cond_layers = [nn.Linear(cond_size, cond_hidden_size),nn.GELU()]
+        cond_layers += [ nn.Linear(cond_hidden_size, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
 
 
         self.time_mlp = nn.Sequential(*time_layers)
@@ -459,6 +546,7 @@ class CondUnet(nn.Module):
 
         t = self.time_mlp(time)
         c = self.cond_mlp(cond)
+
         conditions = torch.cat([t,c], axis = -1)
 
 

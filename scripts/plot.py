@@ -31,6 +31,7 @@ parser.add_argument('--data_folder', default='../data/', help='Folder containing
 parser.add_argument('--plot_folder', default='../plots', help='Folder to save results')
 parser.add_argument('--generated', '-g', default='', help='Generated showers')
 parser.add_argument('--model_loc', default='test', help='Location of model')
+parser.add_argument('--layer_model', default='', help='Location of model for layer energies')
 parser.add_argument('--config', '-c', default='config_dataset2.json', help='Training parameters')
 parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
 parser.add_argument('--batch_size', type=int, default=100, help='Batch size for generation')
@@ -54,6 +55,7 @@ cold_diffu = dataset_config.get('COLD_DIFFU', False)
 cold_noise_scale = dataset_config.get("COLD_NOISE", 1.0)
 training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
 dataset_num = dataset_config.get('DATASET_NUM', 2)
+layer_norm = 'layer' in dataset_config['SHOWERMAP']
 
 sample_steps = dataset_config["NSTEPS"] if flags.sample_steps < 0 else flags.sample_steps
 
@@ -88,7 +90,7 @@ if flags.sample:
             evt_start -= n_dataset
             continue
 
-        data_,e_ = utils.DataLoader(
+        data_,e_,layers_ = utils.DataLoader(
             os.path.join(flags.data_folder,dataset),
             dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
@@ -105,21 +107,24 @@ if flags.sample:
         if(data is None): 
             data = data_
             energies = e_
+            layers = layers_
         else:
             data = np.concatenate((data, data_))
             energies = np.concatenate((energies, e_))
+            if(layer_norm): layers = np.concatenate((layers, layers_))
         if(flags.nevts > 0 and data_.shape[0] == flags.nevts): break
 
-    energies = np.reshape(energies,(-1,))
+    if(layer_norm): layers = np.reshape(layers, (layers.shape[0], -1))
     if(not orig_shape): data = np.reshape(data,dataset_config['SHAPE_PAD'])
     else: data = np.reshape(data, (len(data), -1))
 
     torch_data_tensor = torch.from_numpy(data)
     torch_E_tensor = torch.from_numpy(energies)
+    torch_layer_tensor =  torch.from_numpy(layers) if layer_norm else torch.zeros_like(torch_E_tensor)
 
     print("DATA mean, std", torch.mean(torch_data_tensor), torch.std(torch_data_tensor))
 
-    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_data_tensor)
+    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_layer_tensor, torch_data_tensor)
     data_loader = torchdata.DataLoader(torch_dataset, batch_size = batch_size, shuffle = False)
 
     avg_showers = std_showers = E_bins = None
@@ -173,14 +178,20 @@ if flags.sample:
         if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
         elif(len(saved_model.keys()) > 1): model.load_state_dict(saved_model)
 
+        #TODO Generate layer energies
+        gen_layers = None
+
         generated = []
         start_time = time.time()
-        for i,(E,d_batch) in enumerate(data_loader):
+        for i,(E,layers_, d_batch) in enumerate(data_loader):
             if(E.shape[0] == 0): continue
             E = E.to(device=device)
             d_batch = d_batch.to(device=device)
 
-            out = model.Sample(E, num_steps = sample_steps, cold_noise_scale = cold_noise_scale, sample_algo = flags.sample_algo,
+            #TODO Condition on generated layer energies
+            cond_layers = layers_.to(device = device)
+
+            out = model.Sample(E, layers = cond_layers, num_steps = sample_steps, cold_noise_scale = cold_noise_scale, sample_algo = flags.sample_algo,
                     debug = flags.debug, sample_offset = flags.sample_offset)
 
 
@@ -208,21 +219,6 @@ if flags.sample:
 
         generated = model.gen_cold_image(torch_E_tensor, cold_noise_scale).numpy()
 
-    #elif(flags.model == "LatentDiffu"):
-    #    print("Loading AE from " + dataset_config['AE'])
-    #    AE = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config)
-    #    AE.model.load_weights(dataset_config['AE']).expect_partial()
-
-
-    #    print("Loading Diffu model from " + flags.model_loc)
-    #    model = CaloDiffu(AE.encoded_shape,energies.shape[1],nevts, config=dataset_config)
-    #    model.load_weights(flags.model_loc).expect_partial()
-
-    #    generated_latent=model.Sample(cond=energies, num_steps=dataset_config['NSTEPS']).numpy()
-
-    #    generated = AE.decoder_model.predict(generated_latent, batch_size = batch_size)
-
-
 
     if(not orig_shape): generated = generated.reshape(dataset_config["SHAPE"])
 
@@ -231,7 +227,8 @@ if flags.sample:
         make_histogram([generated.reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                         num_bins = 40, normalize = True, fname = fout_ex)
 
-    generated,energies = utils.ReverseNorm(generated,energies[:nevts],
+    out_layers = layers if (len(flags.layer_model) == 0) else gen_layers
+    generated,energies = utils.ReverseNorm(generated,energies[:nevts], layers = layers,
                                            shape=dataset_config['SHAPE'],
                                            logE=dataset_config['logE'],
                                            max_deposit=dataset_config['MAXDEP'],

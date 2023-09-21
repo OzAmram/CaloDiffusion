@@ -30,10 +30,10 @@
     'logE':True,
     'MAXDEP':2,
     'CYLINDRICAL': True,
-    'SHOWERMAP': 'logit-norm',
+    'SHOWERMAP': 'layer-logit-norm',
     'R_Z_INPUT': True,
     'BETA_MAX' : 0.02,
-    'NOISE_SCHED': 'cosine',
+    'NOISE_SCHED': 'log',
     'NSTEPS': 400,
     'COLD_DIFFU' : False,
     'COLD_NOISE' : 1.0,
@@ -41,7 +41,7 @@
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
-    'CHECKPOINT_NAME':'dataset2_sep1_hybrid_weight',
+    'CHECKPOINT_NAME':'dataset2_sep21_layer_norm',
 
 
 }

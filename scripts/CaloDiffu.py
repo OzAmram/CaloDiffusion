@@ -12,7 +12,7 @@ from models import *
 class CaloDiffu(nn.Module):
     """Diffusion based generative model"""
     def __init__(self, data_shape = None, config=None, R_Z_inputs = False, training_obj = 'noise_pred', nsteps = 400,
-                    cold_diffu = False, E_bins = None, avg_showers = None, std_showers = None, NN_embed = None):
+                    cold_diffu = False, E_bins = None, avg_showers = None, std_showers = None, NN_embed = None, layer_model = None):
         super(CaloDiffu, self).__init__()
         self._data_shape = data_shape
         self.nvoxels = np.prod(self._data_shape)
@@ -28,6 +28,7 @@ class CaloDiffu(nn.Module):
         self.shower_embed = self.config.get('SHOWER_EMBED', '')
         self.fully_connected = ('FCN' in self.shower_embed)
         self.NN_embed = NN_embed
+        self.layer_model = layer_model
 
         supported = ['noise_pred', 'mean_pred', 'hybrid']
         is_obj = [s in self.training_obj for s in supported]
@@ -84,6 +85,16 @@ class CaloDiffu(nn.Module):
         mid_attn = config.get("MID_ATTN", False)
         compress_Z = config.get("COMPRESS_Z", False)
 
+        #layer energies in conditional info or not
+        if('layer' in config.get('SHOWERMAP', '')): 
+            self.layer_cond = True
+            cond_size = 1 + config['SHAPE_PAD'][2]
+        else: 
+            self.layer_cond = False
+            cond_size = 1
+
+
+
 
         if(self.fully_connected):
             #fully connected network architecture
@@ -115,15 +126,15 @@ class CaloDiffu(nn.Module):
             calo_summary_shape[1] = in_channels
 
             calo_summary_shape[0] = 1
-            summary_shape = [calo_summary_shape, [1], [1]]
+            summary_shape = [calo_summary_shape, [[cond_size]], [1]]
 
 
             self.model = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, block_attn = block_attn, mid_attn = mid_attn, 
                     cylindrical =  config.get('CYLINDRICAL', False), compress_Z = compress_Z, data_shape = calo_summary_shape,
-                    cond_embed = (self.E_embed == 'sin'), time_embed = (self.time_embed == 'sin') )
+                    cond_embed = (self.E_embed == 'sin'), cond_size = cond_size, time_embed = (self.time_embed == 'sin')  )
 
         print("\n\n Model: \n")
-        summary(self.model, summary_shape)
+        #summary(self.model, summary_shape)
 
     #wrapper for backwards compatability
     def load_state_dict(self, d):
@@ -137,15 +148,17 @@ class CaloDiffu(nn.Module):
         return super().load_state_dict(d_new)
 
     def add_RZPhi(self, x):
+        if(len(x.shape) < 3): return x
         cats = [x]
+        const_shape = (x.shape[0], *((1,) * (len(x.shape) - 1)))
         if(self.R_Z_inputs):
 
-            batch_R_image = self.R_image.repeat([x.shape[0], 1,1,1,1]).to(device=x.device)
-            batch_Z_image = self.Z_image.repeat([x.shape[0], 1,1,1,1]).to(device=x.device)
+            batch_R_image = self.R_image.repeat(const_shape).to(device=x.device)
+            batch_Z_image = self.Z_image.repeat(const_shape).to(device=x.device)
 
             cats+= [batch_R_image, batch_Z_image]
         if(self.phi_inputs):
-            batch_phi_image = self.phi_image.repeat([x.shape[0], 1,1,1,1]).to(device=x.device)
+            batch_phi_image = self.phi_image.repeat(const_shape).to(device=x.device)
 
             cats += [batch_phi_image]
 
@@ -159,9 +172,16 @@ class CaloDiffu(nn.Module):
         idxs = torch.bucketize(inputEs, self.E_bins)  - 1 #NP indexes bins starting at 1 
         return self.avg_showers[idxs], self.std_showers[idxs]
 
-    def compute_loss(self, data, E, noise = None, t = None, loss_type = "l2", rnd_normal = None, energy_loss_scale = 1e-2):
+
+
+
+
+
+    def compute_loss(self, data, E, noise = None, t = None, layers = None, loss_type = "l2", rnd_normal = None, layer_loss = False ):
         if noise is None:
             noise = torch.randn_like(data)
+
+        const_shape = (data.shape[0], *((1,) * (len(data.shape) - 1)))
         
 
         if(self.discrete_time): 
@@ -173,16 +193,19 @@ class CaloDiffu(nn.Module):
 
         else:
             if(rnd_normal is None): rnd_normal = torch.randn((data.size()[0],), device=data.device)
-            sigma = (rnd_normal * self.P_std + self.P_mean).exp().reshape(data.shape[0], 1,1,1,1)
+
+            sigma = (rnd_normal * self.P_std + self.P_mean).exp().reshape(const_shape)
 
         x_noisy = data + sigma * noise
         sigma2 = sigma**2
 
         weight = 1.
-        x0_pred = self.denoise(x_noisy, E, sigma)
+
+        model = self.model if not layer_loss else self.layer_model
+        x0_pred = self.denoise(x_noisy, E, sigma, model = model, layers = layers)
 
         if('hybrid' in self.training_obj ):
-            weight = torch.reshape(1. + (1./ sigma2), (data.shape[0], 1,1,1,1))
+            weight = torch.reshape(1. + (1./ sigma2), const_shape)
             target = data
             pred = x0_pred
 
@@ -209,13 +232,6 @@ class CaloDiffu(nn.Module):
         else:
             raise NotImplementedError()
 
-        if('energy' in self.training_obj):
-            #sum total energy
-            dims = [i for i in range(1,len(data.shape))]
-            tot_energy_pred = torch.sum(x0_pred, dim = dims)
-            tot_energy_data = torch.sum(data, dim = dims)
-            loss_en = energy_loss_scale * torch.nn.functional.mse_loss(tot_energy_data, tot_energy_pred) / self.nvoxels
-            loss += loss_en
 
         return loss
         
@@ -235,20 +251,21 @@ class CaloDiffu(nn.Module):
         if(embed_type == "log"):
             return 0.5 * torch.log(sigma)
 
-    def pred(self, x, E, t_emb, model = None):
+    def pred(self, x, E, t_emb, model = None, layers = None):
         if(model is None): model = self.model
 
         if(self.NN_embed is not None): x = self.NN_embed.enc(x).to(x.device)
+        if(self.layer_cond and layers is not None): E = torch.cat([E, layers], dim = 1)
         out = model(self.add_RZPhi(x), E, t_emb)
         if(self.NN_embed is not None): out = self.NN_embed.dec(out).to(x.device)
         return out
 
-    def denoise(self, x, E, sigma, model = None):
+    def denoise(self, x, E, sigma, model = None, layers = None):
         t_emb = self.do_time_embed(embed_type = self.time_embed, sigma = sigma.reshape(-1))
-        sigma = sigma.reshape(-1,1,1,1,1)
+        sigma = sigma.reshape(-1, *(1,)*(len(x.shape)-1))
         c_in = 1 / (sigma**2 + 1).sqrt()
 
-        pred = self.pred(x * c_in, E, t_emb, model = model)
+        pred = self.pred(x * c_in, E, t_emb, model = model, layers = layers)
 
         if('noise_pred' in self.training_obj):
             return (x - sigma * pred)
@@ -264,7 +281,7 @@ class CaloDiffu(nn.Module):
 
 
 
-    def edm_sampler( self, x, E, sample_algo = 'euler', randn_like=torch.randn_like, num_steps=400, sigma_min=0.002, sigma_max=1, rho=7,
+    def edm_sampler( self, x, E, layers = None, sample_algo = 'euler', randn_like=torch.randn_like, num_steps=400, sigma_min=0.002, sigma_max=1, rho=7,
         S_churn=0, S_min=0, S_max=1.0, S_noise=1,sample_offset = 0, orig_schedule = False):
         #EDM sampler (and variations), adapted from  https://github.com/NVlabs/edm
 
@@ -306,7 +323,7 @@ class CaloDiffu(nn.Module):
             x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
 
             t_hat_full = torch.full((gen_size,), t_hat, device=x.device)
-            denoised = self.denoise(x_hat, E, t_hat_full).to(torch.float32) 
+            denoised = self.denoise(x_hat, E, t_hat_full, layers = layers).to(torch.float32) 
            
             d_cur = (x_hat - denoised)/t_hat
             h = t_next - t_hat
@@ -320,7 +337,7 @@ class CaloDiffu(nn.Module):
                 # 2nd order correction.
                 assert ('heun' in sample_algo or 'edm' in sample_algo)
                 t_prime_full = torch.full((gen_size,), t_prime, device = x.device)
-                denoised = self.denoise(x_prime, E, t_prime_full).to(torch.float32)
+                denoised = self.denoise(x_prime, E, t_prime_full,layers = layers).to(torch.float32)
                 d_prime = (x_next - denoised) / t_next
                 x_next = x_hat + h * (0.5 * d_cur + 0.5 * d_prime)
 
@@ -334,7 +351,7 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def p_sample(self, x, E, t, cold_noise_scale = 0., noise = None, sample_algo = 'ddpm', debug = False):
+    def p_sample(self, x, E, t, layers = None, cold_noise_scale = 0., noise = None, sample_algo = 'ddpm', debug = False):
         #One step of ddpm or ddim sampler
         #Using formalism / notation of EDM paper
 
@@ -351,7 +368,7 @@ class CaloDiffu(nn.Module):
 
         sigma = sqrt_one_minus_alphas_cumprod_t / sqrt_alphas_cumprod_t
 
-        x0_pred = self.denoise(x, E, sigma)
+        x0_pred = self.denoise(x, E, sigma, layers = layers)
         noise_pred = (x - x0_pred)/sigma
 
         if(sample_algo == 'consis'):
@@ -381,7 +398,7 @@ class CaloDiffu(nn.Module):
             dir_xt = sigma_prev * noise_pred
 
             #don't step for t= 0
-            mask = (t > 0).reshape(-1,1,1,1,1)
+            mask = (t > 0).reshape(-1, *((1,) *(len(x.shape) - 1)))
 
 
             out = x0_pred + mask * sigma_prev * noise_pred + ddim_sigma * noise / denom
@@ -418,7 +435,7 @@ class CaloDiffu(nn.Module):
         cold_scales = cold_noise_scale
         return torch.add(avg_shower, cold_scales * (noise * std_shower))
 
-    def dd_sampler(self, x_start, E, num_steps = 400, sample_offset = 0, sample_algo = 'ddpm', debug = False):
+    def dd_sampler(self, x_start, E, layers = None, num_steps = 400, sample_offset = 0, sample_algo = 'ddpm', debug = False):
         #ddpm and ddim samplers
 
         gen_size = E.shape[0]
@@ -442,7 +459,7 @@ class CaloDiffu(nn.Module):
 
         for time_step in time_steps:      
             times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
-            out = self.p_sample(x, E, times, noise = fixed_noise, sample_algo = sample_algo, debug = debug)
+            out = self.p_sample(x, E, times, layers = layers, noise = fixed_noise, sample_algo = sample_algo, debug = debug)
             if(debug): 
                 x, x0_pred = out
                 xs.append(x.detach().cpu().numpy())
@@ -489,7 +506,7 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def Sample(self, E, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0):
+    def Sample(self, E, layers = None, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0):
         """Generate samples from diffusion model.
         
         Args:
@@ -531,13 +548,13 @@ class CaloDiffu(nn.Module):
             sigma_max = 500.0
             orig_schedule = False
 
-            x,xs, x0s = self.edm_sampler(x_start,E, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
+            x,xs, x0s = self.edm_sampler(x_start,E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
                     S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule)
 
         elif('consis' in sample_algo):
-            x,xs, x0s = self.consis_sampler(x_start, E, num_steps = num_steps)
+            x,xs, x0s = self.consis_sampler(x_start, E, layers = layers, num_steps = num_steps)
         else:
-            x, xs, x0s = self.dd_sampler(x_start, E, num_steps = num_steps, sample_offset = sample_offset, sample_algo = sample_algo, debug = debug)
+            x, xs, x0s = self.dd_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_offset = sample_offset, sample_algo = sample_algo, debug = debug)
 
         end = time.time()
         print("Time for sampling {} events is {} seconds".format(gen_size,end - start), flush=True)

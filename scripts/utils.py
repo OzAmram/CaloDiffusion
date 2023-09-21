@@ -349,14 +349,14 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, 
     e = np.reshape(e,(-1,1))
 
 
-    shower_preprocessed = preprocess_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
+    shower_preprocessed, layers_preprocessed = preprocess_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
 
     if logE:        
         E_preprocessed = np.log10(e/emin)/np.log10(emax/emin)
     else:
         E_preprocessed = (e-emin)/(emax-emin)
 
-    return shower_preprocessed, E_preprocessed 
+    return shower_preprocessed, E_preprocessed , layers_preprocessed
 
 
     
@@ -393,38 +393,55 @@ def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2,
         noise = (ecut/3) * np.random.rand(*shower.shape)
         shower +=  noise
 
-    shower = np.reshape(shower,(shower.shape[0],-1))
-    shower = shower/(max_deposit*e)
+
+    alpha = 1e-6
+
+    layers = None
+    if('layer' in showerMap):
+        shower = np.ma.divide(shower, (max_deposit*e.reshape(-1,1,1,1,1)))
+        layers = np.sum(shower,(3,4),keepdims=True)
+        shower = np.ma.divide(shower,layers)
+        shower = np.reshape(shower,(shower.shape[0],-1))
+
+        #only logit transform for layers
+        x = alpha + (1 - 2*alpha)*layers
+        layers = np.ma.log(x/(1-x)).filled(0)    
+        layers = (layers - c['layers_mean']) / c['layers_std']
+        layers = np.squeeze(layers)
+        prefix = "layerN_"
+        print("LAY", layers.shape)
+    else:
+
+        shower = np.reshape(shower,(shower.shape[0],-1))
+        shower = shower/(max_deposit*e)
+        prefix = ""
+
+
+
+
 
     if('logit' in showerMap):
-        alpha = 1e-6
         x = alpha + (1 - 2*alpha)*shower
         shower = np.ma.log(x/(1-x)).filled(0)    
 
-        if('norm' in showerMap): shower = (shower - c['logit_mean']) / c['logit_std']
+        if('norm' in showerMap): shower = (shower - c[prefix +'logit_mean']) / c[prefix+'logit_std']
         elif('scaled' in showerMap): shower = 2.0 * (shower - c['logit_min']) / (c['logit_max'] - c['logit_min']) - 1.0
 
     elif('log' in showerMap):
         eps = 1e-8
         shower = np.ma.log(shower).filled(c['log_min'])
-        if('norm' in showerMap): shower = (shower - c['log_mean']) / c['log_std']
-        elif('scaled' in showerMap):  shower = 2.0 * (shower - c['log_min']) / (c['log_max'] - c['log_min']) - 1.0
-
-    elif('sqrt' in showerMap):
-        shower = np.sqrt(shower)
-        if('norm' in showerMap): shower = (shower - c['sqrt_mean']) / c['sqrt_std']
-        #Range naturally from 0 to 1, change to be from -1 to 1
-        elif('scaled' in showerMap): shower  = (shower * 2.0) - 1.0
+        if('norm' in showerMap): shower = (shower - c[prefix+'log_mean']) / c[prefix+'log_std']
+        elif('scaled' in showerMap):  shower = 2.0 * (shower - c[prefix+'log_min']) / (c[prefix+'log_max'] - c[prefix+'log_min']) - 1.0
 
 
-    if('quantile' in showerMap and c['qt'] is not None):
+    if('quantile' in showerMap and c[prefix+'qt'] is not None):
         print("Loading quantile transform from %s" % c['qt'])
         qt = joblib.load(c['qt'])
         shape = shower.shape
         shower = qt.transform(shower.reshape(-1,1)).reshape(shower.shape)
         
 
-    return shower
+    return shower,layers
 
         
 
@@ -434,7 +451,7 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
+def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layers = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
     '''Revert the transformations applied to the training set'''
 
     if(dataset_num > 3 or dataset_num <0 ): 
@@ -451,6 +468,8 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
     else:
         energy = emin + (emax-emin)*e
 
+    if('layer' in showerMap): prefix = "layerN_"
+    else: prefix = ""
 
     if('quantile' in showerMap and c['qt'] is not None):
         print("Loading quantile transform from %s" % c['qt'])
@@ -460,8 +479,8 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
 
         
     if('logit' in showerMap):
-        if('norm' in showerMap): voxels = (voxels * c['logit_std']) + c['logit_mean']
-        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (c['logit_max'] - c['logit_min']) + c['logit_min']
+        if('norm' in showerMap): voxels = (voxels * c[prefix+'logit_std']) + c[prefix+'logit_mean']
+        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (c[prefix+'logit_max'] - c[prefix+'logit_min']) + c[prefix+'logit_min']
 
         #avoid overflows
         #voxels = np.minimum(voxels, np.log(max_deposit/(1-max_deposit)))
@@ -471,18 +490,28 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, showerMap ='lo
         data = (x-alpha)/(1 - 2*alpha)
 
     elif('log' in showerMap):
-        if('norm' in showerMap): voxels = (voxels * c['log_std']) + c['log_mean']
-        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (c['log_max'] - c['log_min']) + c['log_min']
+        if('norm' in showerMap): voxels = (voxels * c[prefix+'log_std']) + c[prefix+'log_mean']
+        elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (c[prefix+'log_max'] - c[prefix+'log_min']) + c[prefix+'log_min']
 
         voxels = np.minimum(voxels, np.log(max_deposit))
 
 
         data = np.exp(voxels)
 
-    elif('sqrt' in showerMap):
-        if('norm' in showerMap): voxels = (voxels * c['sqrt_std']) + c['sqrt_mean']
-        elif('scaled' in showerMap): voxels = (voxels + 1.0)/2.0
-        data = np.square(voxels)
+    #reverse per layer energy normalization
+    if('layer' in showerMap):
+        assert(layers is not None)
+        layers = (layers * c['layers_std']) + c['layers_mean']
+
+        exp = np.exp(layers)    
+        x = exp/(1+exp)
+        layers = (x-alpha)/(1 - 2*alpha)
+        data = np.squeeze(data)
+        #Make sure channel is first, otherwise dimmension logic is wrong
+
+        data /= np.sum(data,(2,3),keepdims=True)
+        data *=layers.reshape((-1,data.shape[1],1,1))
+
 
 
     if(dataset_num > 1 or orig_shape): 

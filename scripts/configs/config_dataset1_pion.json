@@ -45,6 +45,6 @@
     'TIME_EMBED' : 'sigma',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : 'orig-NN',
-    'CHECKPOINT_NAME':'dataset1_pion_july19',
+    'CHECKPOINT_NAME':'dataset1_pion_sep18',
 
 }

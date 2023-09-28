@@ -182,9 +182,10 @@ if flags.sample:
         elif(len(saved_model.keys()) > 1): model.load_state_dict(saved_model)
 
 
+        layer_model = None
         if(flags.layer_model != ""):
 
-            layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2], num_layers = 5).to(device = device)
+            layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5).to(device = device)
             saved_layer = torch.load(flags.layer_model, map_location = device)
             layer_model.load_state_dict(saved_layer['model_state_dict'])
 
@@ -200,7 +201,7 @@ if flags.sample:
             E = E.to(device=device)
             d_batch = d_batch.to(device=device)
 
-            layer_shape = (E.shape[0], dataset_config['SHAPE_PAD'][2])
+            layer_shape = (E.shape[0], dataset_config['SHAPE_PAD'][2]+1)
             if(layer_model is not None):
                 gen_layers_ = model.Sample(E, num_steps = sample_steps, sample_algo = flags.sample_algo,model = layer_model, gen_shape = layer_shape)
                 cond_layers = torch.Tensor(gen_layers_).to(device = device)
@@ -234,7 +235,7 @@ if flags.sample:
                 gen_layers = gen_layers_
             else: 
                 generated = np.concatenate((generated, gen))
-                gen_layers = np.concatenate((gen_layers, gen_layers_))
+                if(gen_layers is not None): gen_layers = np.concatenate((gen_layers, gen_layers_))
 
             batch_end = time.time()
             print("Time to sample %i events is %.3f seconds" % (E.shape[0], batch_end - batch_start))
@@ -255,8 +256,8 @@ if flags.sample:
         make_histogram([generated.reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                         num_bins = 40, normalize = True, fname = fout_ex)
 
-    out_layers = layers if (len(gen_layers) == 0) else gen_layers
-    generated,energies = utils.ReverseNorm(generated,energies[:nevts], layers = out_layers,
+    out_layers = layers if (gen_layers is None) else gen_layers
+    generated,energies = utils.ReverseNorm(generated,energies[:nevts], layerE = out_layers,
                                            shape=dataset_config['SHAPE'],
                                            logE=dataset_config['logE'],
                                            max_deposit=dataset_config['MAXDEP'],
@@ -361,6 +362,8 @@ if(not flags.sample or flags.job_idx < 0):
 
     #Plot high level distributions and compare with real values
     #assert np.allclose(true_energies,energies), 'ERROR: Energies between samples dont match'
+
+
 
 
 
@@ -701,14 +704,15 @@ if(not flags.sample or flags.job_idx < 0):
          'Energy':HistEtot,
          '2D Energy scatter split':ScatterESplit,
          'Energy Ratio split':HistERatio,
-         'Nhits':HistNhits,
-         'VoxelE':HistVoxelE,
     }
+    if(not flags.layers_only):
+        plot_routines['Nhits'] = HistNhits,
+        plot_routines['VoxelE'] = HistVoxelE,
+        plot_routines['Shower width']=AverageShowerWidth        
+        plot_routines['Max voxel']=HistMaxELayer
+        plot_routines['Energy per radius']=AverageER
+        plot_routines['Energy per phi']=AverageEPhi
 
-    plot_routines['Shower width']=AverageShowerWidth        
-    plot_routines['Max voxel']=HistMaxELayer
-    plot_routines['Energy per radius']=AverageER
-    plot_routines['Energy per phi']=AverageEPhi
     if(do_cart_plots):
         plot_routines['2D average shower']=Plot_Shower_2D
 

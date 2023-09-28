@@ -88,7 +88,8 @@ class CaloDiffu(nn.Module):
         #layer energies in conditional info or not
         if('layer' in config.get('SHOWERMAP', '')): 
             self.layer_cond = True
-            cond_size = 1 + config['SHAPE_PAD'][2]
+            #gen energy + total deposited energy + layer energy fractions
+            cond_size = 2 + config['SHAPE_PAD'][2]
         else: 
             self.layer_cond = False
             cond_size = 1
@@ -542,8 +543,8 @@ class CaloDiffu(nn.Module):
             S_max = 50
             S_noise = 1.003
             sigma_min = 0.002
-            sigma_max = 500.0
-            #sigma_max = 80.0
+            #sigma_max = 500.0
+            sigma_max = 80.0
             orig_schedule = False
 
             x,xs, x0s = self.edm_sampler(x_start,E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 

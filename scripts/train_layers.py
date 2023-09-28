@@ -39,7 +39,8 @@ if __name__ == '__main__':
     nholdout  = dataset_config.get('HOLDOUT', 0)
 
     batch_size = dataset_config['BATCH']
-    num_epochs = dataset_config['MAXEPOCH']
+    #train layers for longer
+    num_epochs = 2*dataset_config['MAXEPOCH']
     early_stop = dataset_config['EARLYSTOP']
     training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
     loss_type = dataset_config.get("LOSS_TYPE", "l2")
@@ -111,9 +112,9 @@ if __name__ == '__main__':
 
     shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
 
-    layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2], num_layers = 5).to(device = device)
+    layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5).to(device = device)
 
-    summary_shape = [[1, dataset_config['SHAPE_PAD'][2]], [[1,1]], [1]]
+    summary_shape = [[1, dataset_config['SHAPE_PAD'][2] +1], [[1,1]], [1]]
 
     summary(layer_model, summary_shape)
 

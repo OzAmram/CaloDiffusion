@@ -108,8 +108,12 @@ dataset2_params = {
 'sqrt_max' : 1.0,
 
 
-'layers_mean' : -7.1449,
-'layers_std' : 3.57470,
+'totalE_mean' : 0.3926,
+'totalE_std' : 0.05546,
+'layers_mean' : -6.35551,
+'layers_std' : 3.90699,
+#'layers_mean' : -7.1449,
+#'layers_std' : 3.57470,
 
 'layerN_logit_mean' : -9.2022, 
 'layerN_logit_std': 5.69892,

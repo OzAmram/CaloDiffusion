@@ -52,7 +52,7 @@ print(data_.shape)
 data = np.reshape(data_,shape_pad)
 
 
-data_rev, e_rev = ReverseNorm( data, e_, shape_pad, layers = layers, emax = emax,emin = emin, 
+data_rev, e_rev = ReverseNorm( data, e_, shape_pad, layerE = layers, emax = emax,emin = emin, 
     max_deposit=max_dep, #noise can generate more deposited energy than generated
     logE=logE,
     showerMap = showerMap,
@@ -77,7 +77,9 @@ print("MEAN: %.4f STD : %.5f"  % (mean, std))
 print("MAX: %.4f MIN : %.5f"  % (maxE, minE))
 print("maxE %.2f minE %.2f" % (maxEn, minEn))
 if(layers is not None):
-    print("LAYERS MEAN %.4f, STD: %.5f" % (np.mean(layers), np.std(layers)))
+    totalE,layers_ = layers[:,0], layers[:,1:]
+    print("TotalE MEAN %.4f, STD: %.5f" % (np.mean(totalE), np.std(totalE)))
+    print("LAYERS MEAN %.4f, STD: %.5f" % (np.mean(layers_), np.std(layers_)))
 print("REVERSED: \n")
 #print(data_rev[0,0,10])
 print("AVG DIFF: ", np.mean( data_rev[:100] - raw_shower[:100]))

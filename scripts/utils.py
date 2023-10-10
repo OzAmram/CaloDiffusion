@@ -377,17 +377,16 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, 
     
 def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2, orig_shape = False, ecut = 0, max_deposit = 2):
 
+    if(dataset_num == 1): 
+        binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
+        bins = XMLHandler("photon", binning_file)
+    elif(dataset_num == 0): 
+        binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
+        bins = XMLHandler("pion", binning_file)
 
-    if(dataset_num > 1): 
+    if(dataset_num > 1 or not orig_shape): 
         shower = shower.reshape(shape)
-    elif(not orig_shape):
-        if(dataset_num == 1): 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
-            bins = XMLHandler("photon", binning_file)
-        else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
-            bins = XMLHandler("pion", binning_file)
-
+    else:
         g = GeomConverter(bins)
         shower = g.convert(g.reshape(shower))
 
@@ -415,10 +414,20 @@ def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2,
     if('layer' in showerMap):
         shower = np.ma.divide(shower, (max_deposit*e.reshape(-1,1,1,1,1)))
         #regress total deposited energy and fraction in each layer
-        layers = np.sum(shower,(3,4),keepdims=True)
-        totalE = np.sum(shower, (2,3,4), keepdims = True)
-        shower = np.ma.divide(shower,layers)
-        shower = np.reshape(shower,(shower.shape[0],-1))
+        if(dataset_num > 1 or not orig_shape):
+            layers = np.sum(shower,(3,4),keepdims=True)
+            totalE = np.sum(shower, (2,3,4), keepdims = True)
+            shower = np.ma.divide(shower,layers)
+            shower = np.reshape(shower,(shower.shape[0],-1))
+
+        else:
+            #use XML handler to deal with irregular binning of layers for dataset 1
+            layers = np.zeros(shower.shape[0], len(bins.layer_boundaries))
+            totalE = np.sum(shower, 2, keepdims = True)
+            for idx in len(bins.layer_boundaries):
+                layers[idx] = np.sum(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], 1, keepdims=True)
+                shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]] = np.ma.divide(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], layers[idx])
+
 
         #only logit transform for layers
         layers = np.ma.divide(layers,totalE)
@@ -482,6 +491,15 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None,
     if(dataset_num > 3 or dataset_num <0 ): 
         print("Invalid dataset %i!" % dataset_num)
         exit(1)
+
+    if(dataset_num == 1): 
+        binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
+        bins = XMLHandler("photon", binning_file)
+    elif(dataset_num == 0): 
+        binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
+        bins = XMLHandler("pion", binning_file)
+
+
     if(orig_shape and dataset_num <= 1): dataset_num +=10 
     print('dset', dataset_num)
     c = dataset_params[dataset_num]
@@ -541,20 +559,21 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None,
         data = np.squeeze(data)
         #Make sure channel is first, otherwise dimmension logic is wrong
 
-        data /= np.sum(data,(2,3),keepdims=True)
-        data *=layers.reshape((-1,data.shape[1],1,1))
+        if(dataset_num > 1 or not orig_shape):
+            data /= np.sum(data,(2,3),keepdims=True)
+            data *=layers.reshape((-1,data.shape[1],1,1))
+        else:
+            for idx in len(bins.layer_boundaries):
+                prev_norm = np.sum(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], layers[idx], keepdims = True)
+                shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]] *= layers[:,idx] / prev_norm
+                    
+                
 
 
 
     if(dataset_num > 1 or orig_shape): 
         data = data.reshape(voxels.shape[0],-1)*max_deposit*energy.reshape(-1,1)
     else:
-        if(dataset_num == 1): 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
-            bins = XMLHandler("photon", binning_file)
-        else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
-            bins = XMLHandler("pion", binning_file)
         g = GeomConverter(bins)
         data = np.squeeze(data)
         data = g.unreshape(g.unconvert(data))*max_deposit*energy.reshape(-1,1)

@@ -56,26 +56,14 @@ class CaloDiffu(nn.Module):
         self.discrete_time = True
 
         
-        if("linear" in schedd): self.betas = torch.linspace(self.beta_start, self.beta_end, self.nsteps)
-        else: self.betas = cosine_beta_schedule(self.nsteps)
 
         if("log" in schedd):
             self.discrete_time = False
             self.P_mean = -1.2
             self.P_std = 1.2
 
-        #precompute useful quantities for training
-        self.alphas = 1. - self.betas
-        self.alphas_cumprod = torch.cumprod(self.alphas, axis = 0)
+        self.set_sampling_steps(nsteps)
 
-        #shift all elements over by inserting unit value in first place
-        self.alphas_cumprod_prev = torch.nn.functional.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
-
-        self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
-        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
-        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
-
-        self.posterior_variance = self.betas * (1. - self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
 
         self.time_embed = config.get("TIME_EMBED", 'sin')
         self.E_embed = config.get("COND_EMBED", 'sin')
@@ -147,6 +135,23 @@ class CaloDiffu(nn.Module):
         else: d_new = d
 
         return super().load_state_dict(d_new)
+
+
+    def set_sampling_steps(self, nsteps):
+        self.nsteps = nsteps
+        #precompute useful quantities for training
+        self.betas = cosine_beta_schedule(self.nsteps)
+        self.alphas = 1. - self.betas
+        self.alphas_cumprod = torch.cumprod(self.alphas, axis = 0)
+
+        #shift all elements over by inserting unit value in first place
+        self.alphas_cumprod_prev = torch.nn.functional.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0)
+
+        self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
+        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
+
+        self.posterior_variance = self.betas * (1. - self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
 
     def add_RZPhi(self, x):
         if(len(x.shape) < 3): return x
@@ -439,6 +444,9 @@ class CaloDiffu(nn.Module):
     def dd_sampler(self, x_start, E, layers = None, num_steps = 400, sample_offset = 0, sample_algo = 'ddpm', model = None, debug = False):
         #ddpm and ddim samplers
 
+        if(self.nsteps != num_steps):
+            self.set_sampling_steps(num_steps)
+
         gen_size = E.shape[0]
         device = x_start.device 
 
@@ -518,6 +526,7 @@ class CaloDiffu(nn.Module):
         Returns: 
         Samples.
         """
+
 
 
         # Full sample (all steps)

@@ -13,16 +13,17 @@ dataset0_params ={
 'log_max' : 2.0,
 
 
-'sqrt_mean' : 0.0,
-'sqrt_std' : 1.0,
-'sqrt_min' : 0.,
-'sqrt_max' : 1.0,
+'totalE_mean' : 0.,
+'totalE_std' : 1.0,
+'layers_mean' : 0.,
+'layers_std' : 1.0,
+
 
 'qt' : 'qts/dset1_pions_quantile_transform.gz',
 }
 
 
-#dataset1 pions, no geom reshaping (fully connected)
+#dataset1 pions, no geom reshaping 
 dataset0_fcn_params ={
 'logit_mean' : -11.7610,
 'logit_std' : 2.84317,
@@ -35,10 +36,13 @@ dataset0_fcn_params ={
 'log_max' : 2.0,
 
 
-'sqrt_mean' : 0.0,
-'sqrt_std' : 1.0,
-'sqrt_min' : 0.,
-'sqrt_max' : 1.0,
+
+'totalE_mean' : 0.,
+'totalE_std' : 1.0,
+'layers_mean' : 0.,
+'layers_std' : 1.0,
+
+
 
 
 'qt' : None,
@@ -60,10 +64,12 @@ dataset1_params ={
 'log_max' : 2.0,
 
 
-'sqrt_mean' : 0.0,
-'sqrt_std' : 1.0,
-'sqrt_min' : 0.,
-'sqrt_max' : 1.0,
+
+'totalE_mean' : 0.,
+'totalE_std' : 1.0,
+'layers_mean' : 0.,
+'layers_std' : 1.0,
+
 
 'qt' : 'qts/dset1_photons_quantile_transform.gz',
 }
@@ -82,10 +88,11 @@ dataset1_fcn_params ={
 'log_max' : 2.0,
 
 
-'sqrt_mean' : 0.0,
-'sqrt_std' : 1.0,
-'sqrt_min' : 0.,
-'sqrt_max' : 1.0,
+'totalE_mean' : 0.,
+'totalE_std' : 1.0,
+'layers_mean' : 0.,
+'layers_std' : 1.0,
+
 
 'qt' : None,
 }
@@ -100,12 +107,6 @@ dataset2_params = {
 'log_std' : 4.4086,
 'log_min' : -20.0,
 'log_max' :  -0.6372,
-
-
-'sqrt_mean' : 0.0026,
-'sqrt_std' : 0.0073,
-'sqrt_min' : 0.,
-'sqrt_max' : 1.0,
 
 
 'totalE_mean' : 0.3926,
@@ -134,10 +135,12 @@ dataset3_params = {
 'log_max' : 0.0,
 
 
-'sqrt_mean' : 0.0,
-'sqrt_std' : 1.0,
-'sqrt_min' : 0.,
-'sqrt_max' : 1.0,
+'totalE_mean' : 0.,
+'totalE_std' : 1.0,
+'layers_mean' : 0.,
+'layers_std' : 1.0,
+
+
 'qt' : 'qts/dset3_quantile_transform.gz',
 }
 dataset_params = {

@@ -527,7 +527,8 @@ if(not flags.sample or flags.job_idx < 0):
             feed_dict[key] = _preprocess(data_dict[key])
 
             
-        binning = np.geomspace(np.quantile(feed_dict['Geant4'],0.01),np.quantile(feed_dict['Geant4'],1.0),20)
+        #binning = np.geomspace(np.quantile(feed_dict['Geant4'],0.01),np.quantile(feed_dict['Geant4'],1.0),20)
+        binning = np.geomspace(1.0,np.amax(feed_dict['Geant4']),20)
         fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Deposited energy [GeV]', logy=True,binning=binning, plot_label = flags.plot_label)
         ax0.set_xscale("log")
         for plt_ext in plt_exts: fig.savefig('{}/FCC_TotalE_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
@@ -536,15 +537,16 @@ if(not flags.sample or flags.job_idx < 0):
     def HistNhits(data_dict):
 
         def _preprocess(data):
+            min_voxel = 1e-3 # 1 Mev
             preprocessed = np.reshape(data,(data.shape[0],-1))
-            return np.sum(preprocessed>0,-1)
+            return np.sum(preprocessed>min_voxel,-1)
         
         feed_dict = {}
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
             
         binning = np.linspace(np.quantile(feed_dict['Geant4'],0.0),np.quantile(feed_dict['Geant4'],1),20)
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits', label_loc='upper right', binning = binning, ratio = True, plot_label = flags.plot_label )
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits (> 1 MeV)', label_loc='upper right', binning = binning, ratio = True, plot_label = flags.plot_label )
         yScalarFormatter = utils.ScalarFormatterClass(useMathText=True)
         yScalarFormatter.set_powerlimits((0,0))
         ax0.yaxis.set_major_formatter(yScalarFormatter)

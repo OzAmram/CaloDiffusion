@@ -98,12 +98,12 @@ class CaloDiffu(nn.Module):
 
         if(self.fully_connected):
             #fully connected network architecture
-            self.model = FCN(cond_dim = cond_dim, dim_in = config['SHAPE_ORIG'][1], num_layers = config['NUM_LAYERS_LINEAR'],
-                    cond_embed = (self.E_embed == 'sin'), time_embed = (self.time_embed == 'sin') )
+            self.model = ResNet(cond_emb_dim = cond_dim, dim_in = config['SHAPE_ORIG'][1], num_layers = config['NUM_LAYERS_LINEAR'], hidden_dim = 512)
 
             self.R_Z_inputs = False
+            self.phi_inputs = False
 
-            summary_shape = [[1,config['SHAPE_ORIG'][1]], [1], [1]]
+            summary_shape = [[1,config['SHAPE_ORIG'][1]], [1,1], [1]]
 
 
         else:
@@ -134,7 +134,7 @@ class CaloDiffu(nn.Module):
                     cond_embed = (self.E_embed == 'sin'), cond_size = cond_size, time_embed = (self.time_embed == 'sin')  )
 
         print("\n\n Model: \n")
-        #summary(self.model, summary_shape)
+        summary(self.model, summary_shape)
 
     #wrapper for backwards compatability
     def load_state_dict(self, d):

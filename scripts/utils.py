@@ -231,6 +231,19 @@ def WriteText(xpos,ypos,text,ax0):
              verticalalignment='center',
              transform = ax0.transAxes, fontsize=25, fontweight='bold')
 
+
+def _separation_power(hist1, hist2, bins):
+    """ computes the separation power aka triangular discrimination (cf eq. 15 of 2009.03796)
+        Note: the definition requires Sum (hist_i) = 1, so if hist1 and hist2 come from
+        plt.hist(..., density=True), we need to multiply hist_i by the bin widhts
+    """
+    hist1, hist2 = hist1*np.diff(bins), hist2*np.diff(bins)
+    ret = (hist1 - hist2)**2
+    ret /= hist1 + hist2 + 1e-16
+    return 0.5 * ret.sum()
+
+
+
 def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins = 10, logy = False, normalize = False, stacked = False, h_type = 'step', 
         h_range = None, fontsize = 16, fname="", yaxis_label = "", ymax = -1):
     alpha = 1.
@@ -299,6 +312,8 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
                     ax1.plot(xaxis, h_ratio,color=colors[plot],linestyle='-', lw = 4)
                 else:  #draw as markers
                     ax1.plot(xaxis,h_ratio,color=colors[plot],marker='o',ms=10,lw=0)
+            sep_power = _separation_power(dist, reference_hist, binning)
+            print("Separation power for hist '%s' is %.4f" % (xlabel, sep_power))
         
 
 
@@ -349,30 +364,29 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, 
     e = np.reshape(e,(-1,1))
 
 
-    shower_preprocessed, layers_preprocessed = preprocess_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
+    shower_preprocessed, layerE_preprocessed = preprocess_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
 
     if logE:        
         E_preprocessed = np.log10(e/emin)/np.log10(emax/emin)
     else:
         E_preprocessed = (e-emin)/(emax-emin)
 
-    return shower_preprocessed, E_preprocessed , layers_preprocessed
+    return shower_preprocessed, E_preprocessed , layerE_preprocessed
 
 
     
 def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2, orig_shape = False, ecut = 0, max_deposit = 2):
 
+    if(dataset_num == 1): 
+        binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
+        bins = XMLHandler("photon", binning_file)
+    elif(dataset_num == 0): 
+        binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
+        bins = XMLHandler("pion", binning_file)
 
-    if(dataset_num > 1): 
+    if(dataset_num > 1 or not orig_shape): 
         shower = shower.reshape(shape)
-    elif(not orig_shape):
-        if(dataset_num == 1): 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
-            bins = XMLHandler("photon", binning_file)
-        else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
-            bins = XMLHandler("pion", binning_file)
-
+    else:
         g = GeomConverter(bins)
         shower = g.convert(g.reshape(shower))
 
@@ -396,20 +410,40 @@ def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2,
 
     alpha = 1e-6
 
-    layers = None
+    layerE = None
     if('layer' in showerMap):
         shower = np.ma.divide(shower, (max_deposit*e.reshape(-1,1,1,1,1)))
-        layers = np.sum(shower,(3,4),keepdims=True)
-        shower = np.ma.divide(shower,layers)
-        shower = np.reshape(shower,(shower.shape[0],-1))
+        #regress total deposited energy and fraction in each layer
+        if(dataset_num > 1 or not orig_shape):
+            layers = np.sum(shower,(3,4),keepdims=True)
+            totalE = np.sum(shower, (2,3,4), keepdims = True)
+            shower = np.ma.divide(shower,layers)
+            shower = np.reshape(shower,(shower.shape[0],-1))
+
+        else:
+            #use XML handler to deal with irregular binning of layers for dataset 1
+            layers = np.zeros(shower.shape[0], len(bins.layer_boundaries))
+            totalE = np.sum(shower, 2, keepdims = True)
+            for idx in len(bins.layer_boundaries):
+                layers[idx] = np.sum(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], 1, keepdims=True)
+                shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]] = np.ma.divide(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], layers[idx])
+
 
         #only logit transform for layers
+        layers = np.ma.divide(layers,totalE)
         x = alpha + (1 - 2*alpha)*layers
         layers = np.ma.log(x/(1-x)).filled(0)    
+
         layers = (layers - c['layers_mean']) / c['layers_std']
+        totalE = (totalE - c['totalE_mean']) / c['totalE_std']
+        #append totalE to layerE array
+        totalE = np.reshape(totalE, (totalE.shape[0], 1))
         layers = np.squeeze(layers)
+        print(totalE.shape, layers.shape)
+        layerE = np.concatenate((totalE,layers), axis = 1)
+
         prefix = "layerN_"
-        print("LAY", layers.shape)
+        print("LAY", layerE.shape)
     else:
 
         shower = np.reshape(shower,(shower.shape[0],-1))
@@ -441,7 +475,7 @@ def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2,
         shower = qt.transform(shower.reshape(-1,1)).reshape(shower.shape)
         
 
-    return shower,layers
+    return shower,layerE
 
         
 
@@ -451,12 +485,21 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layers = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
+def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
     '''Revert the transformations applied to the training set'''
 
     if(dataset_num > 3 or dataset_num <0 ): 
         print("Invalid dataset %i!" % dataset_num)
         exit(1)
+
+    if(dataset_num == 1): 
+        binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
+        bins = XMLHandler("photon", binning_file)
+    elif(dataset_num == 0): 
+        binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
+        bins = XMLHandler("pion", binning_file)
+
+
     if(orig_shape and dataset_num <= 1): dataset_num +=10 
     print('dset', dataset_num)
     c = dataset_params[dataset_num]
@@ -500,29 +543,37 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layers = None,
 
     #reverse per layer energy normalization
     if('layer' in showerMap):
-        assert(layers is not None)
+        assert(layerE is not None)
+        totalE, layers = layerE[:,:1], layerE[:,1:]
+        totalE = (totalE * c['totalE_std']) + c['totalE_mean']
         layers = (layers * c['layers_std']) + c['layers_mean']
 
         exp = np.exp(layers)    
         x = exp/(1+exp)
         layers = (x-alpha)/(1 - 2*alpha)
+
+        #scale layer energies to total deposited energy
+        layers /= np.sum(layers, axis = 1, keepdims = True)
+        layers *= totalE
+
         data = np.squeeze(data)
         #Make sure channel is first, otherwise dimmension logic is wrong
 
-        data /= np.sum(data,(2,3),keepdims=True)
-        data *=layers.reshape((-1,data.shape[1],1,1))
+        if(dataset_num > 1 or not orig_shape):
+            data /= np.sum(data,(2,3),keepdims=True)
+            data *=layers.reshape((-1,data.shape[1],1,1))
+        else:
+            for idx in len(bins.layer_boundaries):
+                prev_norm = np.sum(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], layers[idx], keepdims = True)
+                shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]] *= layers[:,idx] / prev_norm
+                    
+                
 
 
 
     if(dataset_num > 1 or orig_shape): 
         data = data.reshape(voxels.shape[0],-1)*max_deposit*energy.reshape(-1,1)
     else:
-        if(dataset_num == 1): 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
-            bins = XMLHandler("photon", binning_file)
-        else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
-            bins = XMLHandler("pion", binning_file)
         g = GeomConverter(bins)
         data = np.squeeze(data)
         data = g.unreshape(g.unconvert(data))*max_deposit*energy.reshape(-1,1)

@@ -41,7 +41,7 @@
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
-    'CHECKPOINT_NAME':'dataset2_sep21_layer_norm',
+    'CHECKPOINT_NAME':'dataset2_sep27_layer_norm',
 
 
 }

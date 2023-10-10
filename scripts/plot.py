@@ -31,7 +31,6 @@ parser.add_argument('--data_folder', default='../data/', help='Folder containing
 parser.add_argument('--plot_folder', default='../plots', help='Folder to save results')
 parser.add_argument('--generated', '-g', default='', help='Generated showers')
 parser.add_argument('--model_loc', default='test', help='Location of model')
-parser.add_argument('--layer_model', default='', help='Location of model for layer energies')
 parser.add_argument('--config', '-c', default='config_dataset2.json', help='Training parameters')
 parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
 parser.add_argument('--batch_size', type=int, default=100, help='Batch size for generation')
@@ -41,6 +40,12 @@ parser.add_argument('--sample', action='store_true', default=False,help='Sample 
 parser.add_argument('--sample_steps', default = -1, type = int, help='How many steps for sampling (override config)')
 parser.add_argument('--sample_offset', default = 0, type = int, help='Skip some iterations in the sampling (noisiest iters most unstable)')
 parser.add_argument('--sample_algo', default = 'ddpm', help = 'What sampling algorithm (ddpm, ddim, cold, cold2)')
+
+parser.add_argument('--layer_only', default=False, action= 'store_true', help='Only sample layer energies')
+parser.add_argument('--layer_model', default='', help='Location of model for layer energies')
+parser.add_argument('--layer_sample_algo', default = 'ddim', help = 'What sampling algorithm for layer model(ddpm, ddim, cold, cold2)')
+parser.add_argument('--layer_sample_steps', default = 200, type = int, help='How many steps for sampling layer model (override config)')
+
 parser.add_argument('--job_idx', default = -1, type = int, help = 'Split generation among different jobs')
 parser.add_argument('--debug', action='store_true', default=False,help='Debugging options')
 parser.add_argument('--from_end', action='store_true', default = False, help='Use events from end of file (usually holdout set)')
@@ -171,27 +176,52 @@ if flags.sample:
         print("Loading Diffu model from " + flags.model_loc)
 
         shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
+
+
         model = CaloDiffu(shape, config=dataset_config , training_obj = training_obj,NN_embed = NN_embed, nsteps = sample_steps,
-                cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
+                cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins).to(device = device)
 
         saved_model = torch.load(flags.model_loc, map_location = device)
         if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
         elif(len(saved_model.keys()) > 1): model.load_state_dict(saved_model)
 
-        #TODO Generate layer energies
-        gen_layers = None
 
+        layer_model = None
+        if(flags.layer_model != ""):
+            print("Loading Diffu model from " + flags.layer_model)
+
+            layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5).to(device = device)
+            saved_layer = torch.load(flags.layer_model, map_location = device)
+            layer_model.load_state_dict(saved_layer['model_state_dict'])
+
+        gen_layers = []
         generated = []
+        gen_layers_ = None
         start_time = time.time()
+
+        print("Sample Algo : %s, %i steps" % (flags.sample_algo, sample_steps))
+        if(layer_model is not None):
+
+            print("Layer Sample Algo : %s, %i steps" % (flags.layer_sample_algo, flags.layer_sample_steps))
         for i,(E,layers_, d_batch) in enumerate(data_loader):
+            batch_start = time.time()
             if(E.shape[0] == 0): continue
             E = E.to(device=device)
             d_batch = d_batch.to(device=device)
 
-            #TODO Condition on generated layer energies
-            cond_layers = layers_.to(device = device)
+            layer_shape = (E.shape[0], dataset_config['SHAPE_PAD'][2]+1)
+            if(layer_model is not None):
+                gen_layers_ = model.Sample(E, num_steps = flags.layer_sample_steps, sample_algo = flags.layer_sample_algo,model = layer_model, gen_shape = layer_shape)
+                cond_layers = torch.Tensor(gen_layers_).to(device = device)
+            else:
+                cond_layers = layers_.to(device = device)
 
-            out = model.Sample(E, layers = cond_layers, num_steps = sample_steps, cold_noise_scale = cold_noise_scale, sample_algo = flags.sample_algo,
+            if(flags.layer_only):#one shot generation
+                shower_steps, shower_algo = 1, 'consis'
+            else:
+                shower_steps, shower_algo = sample_steps, flags.sample_algo
+
+            out = model.Sample(E, layers = cond_layers, num_steps = shower_steps, cold_noise_scale = cold_noise_scale, sample_algo = shower_algo,
                     debug = flags.debug, sample_offset = flags.sample_offset)
 
 
@@ -208,8 +238,15 @@ if flags.sample:
             else: gen = out
 
         
-            if(i == 0): generated = gen
-            else: generated = np.concatenate((generated, gen))
+            if(i == 0): 
+                generated = gen
+                gen_layers = gen_layers_
+            else: 
+                generated = np.concatenate((generated, gen))
+                if(gen_layers is not None): gen_layers = np.concatenate((gen_layers, gen_layers_))
+
+            batch_end = time.time()
+            print("Time to sample %i events is %.3f seconds" % (E.shape[0], batch_end - batch_start))
             del E, d_batch
         end_time = time.time()
         print("Total sampling time %.3f seconds" % (end_time - start_time))
@@ -227,8 +264,8 @@ if flags.sample:
         make_histogram([generated.reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
                         num_bins = 40, normalize = True, fname = fout_ex)
 
-    out_layers = layers if (len(flags.layer_model) == 0) else gen_layers
-    generated,energies = utils.ReverseNorm(generated,energies[:nevts], layers = layers,
+    out_layers = layers if (gen_layers is None) else gen_layers
+    generated,energies = utils.ReverseNorm(generated,energies[:nevts], layerE = out_layers,
                                            shape=dataset_config['SHAPE'],
                                            logE=dataset_config['logE'],
                                            max_deposit=dataset_config['MAXDEP'],
@@ -241,7 +278,9 @@ if flags.sample:
                                            )
 
     energies = np.reshape(energies,(-1,1))
-    if(dataset_num > 1):
+    do_mask = False
+
+    if(do_mask  and dataset_num > 1):
         #mask for voxels that are always empty
         mask_file = os.path.join(flags.data_folder,dataset_config['EVAL'][0].replace('.hdf5','_mask.hdf5'))
         if(not os.path.exists(mask_file)):
@@ -273,9 +312,10 @@ if(not flags.sample or flags.job_idx < 0):
         geom_conv = GeomConverter(bins)
 
     def LoadSamples(fname):
+        end = None if flags.nevts < 0 else flags.nevts
         with h5.File(fname,"r") as h5f:
-            generated = h5f['showers'][:flags.nevts]/1000.
-            energies = h5f['incident_energies'][:flags.nevts]/1000.
+            generated = h5f['showers'][:end]/1000.
+            energies = h5f['incident_energies'][:end]/1000.
         energies = np.reshape(energies,(-1,1))
         if(dataset_num <= 1):
             generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy()
@@ -295,6 +335,7 @@ if(not flags.sample or flags.job_idx < 0):
             f_sample = os.path.join(checkpoint_folder,'generated_{}_{}.h5'.format(dataset_config['CHECKPOINT_NAME'], model))
         else:
             f_sample = flags.generated
+
         if np.size(energies) == 0:
             data,energies = LoadSamples(f_sample)
             data_dict[utils.name_translate[model]]=data
@@ -333,6 +374,8 @@ if(not flags.sample or flags.job_idx < 0):
 
     #Plot high level distributions and compare with real values
     #assert np.allclose(true_energies,energies), 'ERROR: Energies between samples dont match'
+
+
 
 
 
@@ -675,14 +718,15 @@ if(not flags.sample or flags.job_idx < 0):
          'Energy':HistEtot,
          '2D Energy scatter split':ScatterESplit,
          'Energy Ratio split':HistERatio,
-         'Nhits':HistNhits,
-         'VoxelE':HistVoxelE,
     }
+    if(not flags.layer_only):
+        plot_routines['Nhits'] = HistNhits
+        plot_routines['VoxelE'] = HistVoxelE
+        plot_routines['Shower width']=AverageShowerWidth
+        plot_routines['Max voxel']=HistMaxELayer
+        plot_routines['Energy per radius']=AverageER
+        plot_routines['Energy per phi']=AverageEPhi
 
-    plot_routines['Shower width']=AverageShowerWidth        
-    plot_routines['Max voxel']=HistMaxELayer
-    plot_routines['Energy per radius']=AverageER
-    plot_routines['Energy per phi']=AverageEPhi
     if(do_cart_plots):
         plot_routines['2D average shower']=Plot_Shower_2D
 

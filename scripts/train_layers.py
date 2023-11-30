@@ -87,6 +87,7 @@ if __name__ == '__main__':
     #print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
     torch_E_tensor = torch.from_numpy(energies)
     torch_layer_tensor =  torch.from_numpy(layers)
+
     del data
     #train_data, val_data = utils.split_data_np(data,flags.frac)
 
@@ -131,7 +132,7 @@ if __name__ == '__main__':
 
 
 
-    os.system('cp {} {}'.format(flags.config,checkpoint_folder)) # bkp of config file
+    os.system('cp {} {}/config.json'.format(flags.config,checkpoint_folder)) # bkp of config file
 
     early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], mode = 'diff', min_delta = 1e-5)
     if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
@@ -153,6 +154,9 @@ if __name__ == '__main__':
         training_losses = checkpoint['train_loss_hist']
         val_losses = checkpoint['val_loss_hist']
         start_epoch = checkpoint['epoch'] + 1
+        if(len(training_losses) < num_epochs): 
+            training_losses = np.concatenate((training_losses, [0]*(num_epochs - len(training_losses))))
+            val_losses = np.concatenate((val_losses, [0]*(num_epochs - len(val_losses))))
 
     #training loop
     for epoch in range(start_epoch, num_epochs):

@@ -62,7 +62,8 @@ training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
 dataset_num = dataset_config.get('DATASET_NUM', 2)
 layer_norm = 'layer' in dataset_config['SHOWERMAP']
 
-sample_steps = dataset_config["NSTEPS"] if flags.sample_steps < 0 else flags.sample_steps
+model_nsteps = dataset_config["NSTEPS"] if flags.sample_steps < 0 else flags.sample_steps
+if('consis' in flags.sample_algo): model_nsteps = dataset_config['CONSIS_NSTEPS']
 
 batch_size = flags.batch_size
 shower_embed = dataset_config.get('SHOWER_EMBED', '')
@@ -178,12 +179,12 @@ if flags.sample:
         shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
 
 
-        model = CaloDiffu(shape, config=dataset_config , training_obj = training_obj,NN_embed = NN_embed, nsteps = sample_steps,
+        model = CaloDiffu(shape, config=dataset_config , training_obj = training_obj,NN_embed = NN_embed, nsteps = model_nsteps,
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins).to(device = device)
 
         saved_model = torch.load(flags.model_loc, map_location = device)
         if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
-        elif(len(saved_model.keys()) > 1): model.load_state_dict(saved_model)
+        else: model.load_state_dict(saved_model)
 
 
         layer_model = None
@@ -192,14 +193,15 @@ if flags.sample:
 
             layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5).to(device = device)
             saved_layer = torch.load(flags.layer_model, map_location = device)
-            layer_model.load_state_dict(saved_layer['model_state_dict'])
+            if('model_state_dict' in saved_layer.keys()): layer_model.load_state_dict(saved_layer['model_state_dict'])
+            else: layer_model.load_state_dict(saved_layer)
 
         gen_layers = []
         generated = []
         gen_layers_ = None
         start_time = time.time()
 
-        print("Sample Algo : %s, %i steps" % (flags.sample_algo, sample_steps))
+        print("Sample Algo : %s, %i steps" % (flags.sample_algo, flags.sample_steps))
         if(layer_model is not None):
 
             print("Layer Sample Algo : %s, %i steps" % (flags.layer_sample_algo, flags.layer_sample_steps))
@@ -211,7 +213,8 @@ if flags.sample:
 
             layer_shape = (E.shape[0], dataset_config['SHAPE_PAD'][2]+1)
             if(layer_model is not None):
-                gen_layers_ = model.Sample(E, num_steps = flags.layer_sample_steps, sample_algo = flags.layer_sample_algo,model = layer_model, gen_shape = layer_shape)
+                gen_layers_ = model.Sample(E, num_steps = flags.layer_sample_steps, sample_algo = flags.layer_sample_algo,
+                                           model = layer_model, gen_shape = layer_shape, layer_sample = True)
                 cond_layers = torch.Tensor(gen_layers_).to(device = device)
             else:
                 cond_layers = layers_.to(device = device)
@@ -219,7 +222,7 @@ if flags.sample:
             if(flags.layer_only):#one shot generation
                 shower_steps, shower_algo = 1, 'consis'
             else:
-                shower_steps, shower_algo = sample_steps, flags.sample_algo
+                shower_steps, shower_algo = flags.sample_steps, flags.sample_algo
 
             out = model.Sample(E, layers = cond_layers, num_steps = shower_steps, cold_noise_scale = cold_noise_scale, sample_algo = shower_algo,
                     debug = flags.debug, sample_offset = flags.sample_offset)
@@ -243,7 +246,7 @@ if flags.sample:
                 gen_layers = gen_layers_
             else: 
                 generated = np.concatenate((generated, gen))
-                if(gen_layers is not None): gen_layers = np.concatenate((gen_layers, gen_layers_))
+                if(gen_layers_ is not None): gen_layers = np.concatenate((gen_layers, gen_layers_))
 
             batch_end = time.time()
             print("Time to sample %i events is %.3f seconds" % (E.shape[0], batch_end - batch_start))
@@ -497,21 +500,34 @@ if(not flags.sample or flags.job_idx < 0):
 
         return feed_dict_r2
 
-    def AverageELayer(data_dict):
+    def ELayer(data_dict):
         
         def _preprocess(data):
             preprocessed = np.reshape(data,(total_evts,dataset_config['SHAPE'][1],-1))
-            preprocessed = np.sum(preprocessed,-1)
+            layer_sum = np.sum(preprocessed, -1)
+            totalE = np.sum(preprocessed, -1)
+            layer_mean = np.mean(layer_sum,0)
+            layer_std = np.std(layer_sum,0) / layer_mean
+            layer_nonzero = layer_sum > (1e-6 * totalE)
             #preprocessed = np.mean(preprocessed,0)
-            return preprocessed
+            return layer_mean, layer_std, layer_nonzero
         
-        feed_dict = {}
+        feed_dict_avg = {}
+        feed_dict_std = {}
+        feed_dict_nonzero = {}
         for key in data_dict:
-            feed_dict[key] = _preprocess(data_dict[key])
+            feed_dict_avg[key], feed_dict_std[key], feed_dict_nonzero[key] = _preprocess(data_dict[key])
 
-        fig,ax0 = utils.PlotRoutine(feed_dict,xlabel='Layer number', ylabel= 'Mean dep. energy [GeV]', plot_label = flags.plot_label)
+        fig,ax0 = utils.PlotRoutine(feed_dict_avg,xlabel='Layer number', ylabel= 'Mean dep. energy [GeV]', plot_label = flags.plot_label, no_mean = True)
         for plt_ext in plt_exts: fig.savefig('{}/FCC_EnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
-        return feed_dict
+
+        fig,ax0 = utils.PlotRoutine(feed_dict_std,xlabel='Layer number', ylabel= 'Std. Dev. / Mean of energy [GeV]', plot_label = flags.plot_label, no_mean = True)
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_StdEnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+
+        fig,ax0 = utils.PlotRoutine(feed_dict_nonzero,xlabel='Layer number', ylabel= 'Freq. > $10^{-6}$ Total Energy', plot_label = flags.plot_label)
+        for plt_ext in plt_exts: fig.savefig('{}/FCC_NonZeroEnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+
+        return feed_dict_avg
 
     def AverageER(data_dict):
 
@@ -714,7 +730,7 @@ if(not flags.sample or flags.job_idx < 0):
     print("Do cartesian plots " + str(do_cart_plots))
     high_level = []
     plot_routines = {
-         'Energy per layer':AverageELayer,
+         'Energy per layer':ELayer,
          'Energy':HistEtot,
          '2D Energy scatter split':ScatterESplit,
          'Energy Ratio split':HistERatio,

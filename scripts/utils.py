@@ -33,7 +33,7 @@ def split_data_np(data, frac=0.8):
 def create_phi_image(device, shape = (1,45,16,9)):
 
     n_phi = shape[-2]
-    phi_bins = torch.linspace(0., 1., n_phi)
+    phi_bins = torch.linspace(0., 1., n_phi, dtype = torch.float32)
     phi_image = torch.zeros(shape, device = device)
     for i in range(n_phi):
         phi_image[:,:,i,:] = phi_bins[i]
@@ -154,7 +154,7 @@ def SetGrid(ratio=True):
 
 
 
-def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_label = ""):
+def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_label = "", no_mean = False):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
     fig,gs = SetGrid() 
@@ -163,10 +163,16 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
     ax1 = plt.subplot(gs[1],sharex=ax0)
 
     for ip,plot in enumerate(feed_dict.keys()):
+        if(no_mean): 
+            d = feed_dict[plot]
+            ref = feed_dict[reference_name]
+        else: 
+            d = np.mean(feed_dict[plot], 0)
+            ref = np.mean(feed_dict[reference_name], 0)
         if 'steps' in plot or 'r=' in plot:
-            ax0.plot(np.mean(feed_dict[plot],0),label=plot,marker=line_style[plot],color=colors[plot],lw=0)
+            ax0.plot(d,label=plot,marker=line_style[plot],color=colors[plot],lw=0)
         else:
-            ax0.plot(np.mean(feed_dict[plot],0),label=plot,linestyle=line_style[plot],color=colors[plot])
+            ax0.plot(d,label=plot,linestyle=line_style[plot],color=colors[plot])
         if(len(plot_label) > 0): ax0.set_title(plot_label, fontsize = 20, loc = 'right', style = 'italic')
         if reference_name!=plot:
 
@@ -174,7 +180,7 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
             ax0.set_ymargin(0)
 
             eps = 1e-8
-            ratio = 100*np.divide(np.mean(feed_dict[reference_name],0)-np.mean(feed_dict[plot],0),np.mean(feed_dict[reference_name],0) + eps)
+            ratio = 100*np.divide(ref-d, d + eps)
             #ax1.plot(ratio,color=colors[plot],marker='o',ms=10,lw=0,markerfacecolor='none',markeredgewidth=3)
 
             plt.axhline(y=0.0, color='black', linestyle='-',linewidth=2)
@@ -340,8 +346,17 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
     return fig,ax0
 
 
+def reverse_logit(x, alpha = 1e-6):
+    exp = np.exp(x)    
+    o = exp/(1+exp)
+    o = (o-alpha)/(1 - 2*alpha)
+    return o
 
 
+def logit(x, alpha = 1e-6):
+    o = alpha + (1 - 2*alpha)*x
+    o = np.ma.log(o/(1-o)).filled(0)    
+    return o
 
 
 
@@ -384,11 +399,11 @@ def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2,
         binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
         bins = XMLHandler("pion", binning_file)
 
-    if(dataset_num > 1 or not orig_shape): 
-        shower = shower.reshape(shape)
-    else:
+    if(dataset_num  <= 1 and not orig_shape): 
         g = GeomConverter(bins)
         shower = g.convert(g.reshape(shower))
+    elif(not orig_shape):
+        shower = shower.reshape(shape)
 
 
 
@@ -409,54 +424,56 @@ def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2,
 
 
     alpha = 1e-6
+    per_layer_norm = False
 
     layerE = None
+    prefix = ""
     if('layer' in showerMap):
-        shower = np.ma.divide(shower, (max_deposit*e.reshape(-1,1,1,1,1)))
+        eshape = (-1, *(1,)*(len(shower.shape) -1))
+        shower = np.ma.divide(shower, (max_deposit*e.reshape(eshape)))
         #regress total deposited energy and fraction in each layer
-        if(dataset_num > 1 or not orig_shape):
+        if(dataset_num % 10 > 1 or not orig_shape):
             layers = np.sum(shower,(3,4),keepdims=True)
             totalE = np.sum(shower, (2,3,4), keepdims = True)
-            shower = np.ma.divide(shower,layers)
+            if(per_layer_norm): shower = np.ma.divide(shower,layers)
             shower = np.reshape(shower,(shower.shape[0],-1))
 
         else:
             #use XML handler to deal with irregular binning of layers for dataset 1
-            layers = np.zeros(shower.shape[0], len(bins.layer_boundaries))
-            totalE = np.sum(shower, 2, keepdims = True)
-            for idx in len(bins.layer_boundaries):
-                layers[idx] = np.sum(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], 1, keepdims=True)
-                shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]] = np.ma.divide(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], layers[idx])
+            boundaries = np.unique(bins.GetBinEdges())
+            layers = np.zeros((shower.shape[0], boundaries.shape[0]-1), dtype = np.float32)
+
+            totalE = np.sum(shower, 1, keepdims = True)
+            for idx in range(boundaries.shape[0] -1):
+                layers[:,idx] = np.sum(shower[:,boundaries[idx]:boundaries[idx+1]], 1)
+                if(per_layer_norm): shower[:,boundaries[idx]:boundaries[idx+1]] = np.ma.divide(shower[:,boundaries[idx]:boundaries[idx+1]], layers[:,idx:idx+1])
 
 
         #only logit transform for layers
+        layer_alpha = 1e-6
         layers = np.ma.divide(layers,totalE)
-        x = alpha + (1 - 2*alpha)*layers
-        layers = np.ma.log(x/(1-x)).filled(0)    
+        layers = logit(layers)
+
 
         layers = (layers - c['layers_mean']) / c['layers_std']
         totalE = (totalE - c['totalE_mean']) / c['totalE_std']
         #append totalE to layerE array
         totalE = np.reshape(totalE, (totalE.shape[0], 1))
         layers = np.squeeze(layers)
-        print(totalE.shape, layers.shape)
         layerE = np.concatenate((totalE,layers), axis = 1)
 
-        prefix = "layerN_"
-        print("LAY", layerE.shape)
+        if(per_layer_norm): prefix = "layerN_"
     else:
 
         shower = np.reshape(shower,(shower.shape[0],-1))
         shower = shower/(max_deposit*e)
-        prefix = ""
 
 
 
 
 
     if('logit' in showerMap):
-        x = alpha + (1 - 2*alpha)*shower
-        shower = np.ma.log(x/(1-x)).filled(0)    
+        shower = logit(shower)
 
         if('norm' in showerMap): shower = (shower - c[prefix +'logit_mean']) / c[prefix+'logit_std']
         elif('scaled' in showerMap): shower = 2.0 * (shower - c['logit_min']) / (c['logit_max'] - c['logit_min']) - 1.0
@@ -504,15 +521,14 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None,
     print('dset', dataset_num)
     c = dataset_params[dataset_num]
 
-    #shape=voxels.shape
     alpha = 1e-6
     if logE:
         energy = emin*(emax/emin)**e
     else:
         energy = emin + (emax-emin)*e
 
-    if('layer' in showerMap): prefix = "layerN_"
-    else: prefix = ""
+    prefix = ""
+    #if('layer' in showerMap): prefix = "layerN_"
 
     if('quantile' in showerMap and c['qt'] is not None):
         print("Loading quantile transform from %s" % c['qt'])
@@ -528,9 +544,7 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None,
         #avoid overflows
         #voxels = np.minimum(voxels, np.log(max_deposit/(1-max_deposit)))
 
-        exp = np.exp(voxels)    
-        x = exp/(1+exp)
-        data = (x-alpha)/(1 - 2*alpha)
+        data = reverse_logit(voxels)
 
     elif('log' in showerMap):
         if('norm' in showerMap): voxels = (voxels * c[prefix+'log_std']) + c[prefix+'log_mean']
@@ -541,31 +555,45 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None,
 
         data = np.exp(voxels)
 
-    #reverse per layer energy normalization
+    #Per layer energy normalization
     if('layer' in showerMap):
         assert(layerE is not None)
         totalE, layers = layerE[:,:1], layerE[:,1:]
         totalE = (totalE * c['totalE_std']) + c['totalE_mean']
         layers = (layers * c['layers_std']) + c['layers_mean']
 
-        exp = np.exp(layers)    
-        x = exp/(1+exp)
-        layers = (x-alpha)/(1 - 2*alpha)
+        layers = reverse_logit(layers)
 
         #scale layer energies to total deposited energy
         layers /= np.sum(layers, axis = 1, keepdims = True)
         layers *= totalE
 
-        data = np.squeeze(data)
-        #Make sure channel is first, otherwise dimmension logic is wrong
 
-        if(dataset_num > 1 or not orig_shape):
-            data /= np.sum(data,(2,3),keepdims=True)
-            data *=layers.reshape((-1,data.shape[1],1,1))
+        data = np.squeeze(data)
+
+        #remove voxels with negative energies so they don't mess up sums
+        eps = 1e-6
+        data[data < 0] = 0 
+        #layers[layers < 0] = eps
+
+
+        #Renormalize layer energies
+        if(dataset_num%10 > 1 or not orig_shape):
+            prev_layers = np.sum(data,(2,3),keepdims=True)
+            layers = layers.reshape((-1,data.shape[1],1,1))
+            rescale_facs =  layers / (prev_layers + 1e-10)
+            #If layer is essential zero from base network or layer network, don't rescale
+            rescale_facs[layers < eps] = 1.0
+            rescale_facs[prev_layers < eps] = 1.0
+            data *= rescale_facs
         else:
-            for idx in len(bins.layer_boundaries):
-                prev_norm = np.sum(shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]], layers[idx], keepdims = True)
-                shower[:,self.layer_boundaries[idx]:self.layer_boundaries[idx+1]] *= layers[:,idx] / prev_norm
+            boundaries = np.unique(bins.GetBinEdges())
+            for idx in range(boundaries.shape[0] -1):
+                prev_layer = np.sum(data[:,boundaries[idx]:boundaries[idx+1]], 1, keepdims=True)
+                rescale_fac  = layers[:,idx:idx+1] / (prev_layer + 1e-10)
+                rescale_fac[layers[:, idx:idx+1] < eps] = 1.0
+                rescale_fac[prev_layer < eps] = 1.0
+                data[:,boundaries[idx]:boundaries[idx+1]] *= rescale_fac
                     
                 
 
@@ -586,33 +614,6 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None,
     
     return data,energy
     
-
-def polar_to_cart(polar_data,nr=9,nalpha=16,nx=12,ny=12):
-    cart_img = np.zeros((nx,ny))
-    ntotal = 0
-    nfilled = 0
-
-    if not hasattr(polar_to_cart, "x_interval"):
-        polar_to_cart.x_interval = np.linspace(-1,1,nx)
-        polar_to_cart.y_interval = np.linspace(-1,1,ny)
-        polar_to_cart.alpha_pos = np.linspace(1e-5,1,nalpha)
-        polar_to_cart.r_pos = np.linspace(1e-5,1,nr)
-
-    for alpha in range(nalpha):
-        for r in range(nr):
-            if(polar_data[alpha,r] > 0):
-                x = polar_to_cart.r_pos[r] * np.cos(polar_to_cart.alpha_pos[alpha]*np.pi*2)
-                y = polar_to_cart.r_pos[r] * np.sin(polar_to_cart.alpha_pos[alpha]*np.pi*2)
-                binx = np.argmax(polar_to_cart.x_interval>x)
-                biny = np.argmax(polar_to_cart.y_interval>y)
-                ntotal+=1
-                if cart_img[binx,biny] >0:
-                    nfilled+=1
-                cart_img[binx,biny]+=polar_data[alpha,r]
-    return cart_img
-
-    
-
 
 class NNConverter(nn.Module):
     "Convert irregular geometry to regular one, initialized with regular geometric conversion, but uses trainable linear map"

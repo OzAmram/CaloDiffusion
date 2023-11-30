@@ -35,13 +35,14 @@
     'BETA_MAX' : 0.02,
     'NOISE_SCHED': 'log',
     'NSTEPS': 400,
+    'CONSIS_NSTEPS': 100,
     'COLD_DIFFU' : False,
     'COLD_NOISE' : 1.0,
     'TRAINING_OBJ' : 'hybrid_weight',
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
-    'CHECKPOINT_NAME':'dataset2_sep27_layer_norm',
+    'CHECKPOINT_NAME':'dataset2_oct11_layer_norm',
 
 
 }

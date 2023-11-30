@@ -11,7 +11,7 @@ from ConsistencyModel import *
 from CaloDiffu import *
 from models import *
 
-def compute_consis_loss(x, E, t = None, teacher_model = None, model = None, ema_model = None, nsteps = 400, sample_algo = 'ddim'):   
+def compute_consis_loss(x, E, t = None, layers = None,  teacher_model = None, model = None, ema_model = None, nsteps = 100, sample_algo = 'ddim'):   
 
     noise = torch.randn_like(x)
     if(t is None): t = torch.randint(1, nsteps, (x.size()[0],), device=x.device).long()
@@ -29,13 +29,13 @@ def compute_consis_loss(x, E, t = None, teacher_model = None, model = None, ema_
 
     with torch.no_grad():
         #denoise 1 step using fixed diffusion model
-        x_prev = teacher_model.p_sample(x_noisy, E, t, sample_algo = sample_algo)
+        x_prev = teacher_model.p_sample(x_noisy, E, t, layers = layers, sample_algo = sample_algo)
 
         #predict using ema model on one-step denoised x
-        x0_ema = model.denoise(x_prev, E, sigma_prev, model = ema_model.model.model)
+        x0_ema = model.denoise(x_prev, E, sigma_prev, layers = layers, model = ema_model.model.model)
 
     #predict using model on noisy x
-    x0 = model.denoise(x_noisy, E,sigma, model = model.model)
+    x0 = model.denoise(x_noisy, E,sigma, layers = layers, model = model.model)
 
     loss = torch.nn.functional.mse_loss(x0_ema, x0)
     return loss
@@ -53,7 +53,6 @@ if __name__ == '__main__':
     parser.add_argument('--data_folder', default='../data/', help='Folder containing data and MC files')
     parser.add_argument('--model', default='Diffu', help='Diffusion model to train. Options are: VPSDE, VESDE and subVPSDE')
     parser.add_argument('--sample_algo', default='ddim', help='Sampling algorithm for consistency training')
-    parser.add_argument('--sample_steps', type=int, default=200,help='How many discrete steps for sampler of consitency training')
     parser.add_argument('-c', '--config', default='configs/test.json', help='Config file with training parameters')
     parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
@@ -84,10 +83,13 @@ if __name__ == '__main__':
     dataset_num = dataset_config.get('DATASET_NUM', 2)
     shower_embed = dataset_config.get('SHOWER_EMBED', '')
     orig_shape = ('orig' in shower_embed)
+    layer_norm = 'layer' in dataset_config['SHOWERMAP']
+
+    sample_steps = dataset_config.get('CONSIS_NSTEPS', 100)
 
 
     for i, dataset in enumerate(dataset_config['FILES']):
-        data_,e_ = DataLoader(
+        data_,e_,layers_ = DataLoader(
             os.path.join(flags.data_folder,dataset),
             dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
@@ -97,37 +99,18 @@ if __name__ == '__main__':
             showerMap = dataset_config['SHOWERMAP'],
             nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
             dataset_num  = dataset_num,
+            orig_shape = orig_shape,
         )
 
 
         if(i ==0): 
             data = data_
             energies = e_
+            if(layer_norm): layers = layers_
         else:
             data = np.concatenate((data, data_))
             energies = np.concatenate((energies, e_))
-        
-    dshape = dataset_config['SHAPE_PAD']
-    energies = np.reshape(energies,(-1))    
-    data = np.reshape(data,dshape)
-    num_data = data.shape[0]
-    print("Data Shape " + str(data.shape))
-    data_size = data.shape[0]
-    #print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
-    torch_data_tensor = torch.from_numpy(data)
-    torch_E_tensor = torch.from_numpy(energies)
-    del data
-    #train_data, val_data = utils.split_data_np(data,flags.frac)
-
-    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_data_tensor)
-    nTrain = int(round(flags.frac * num_data))
-    nVal = num_data - nTrain
-    train_dataset, val_dataset = torch.utils.data.random_split(torch_dataset, [nTrain, nVal])
-
-    loader_train = torchdata.DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
-    loader_val = torchdata.DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
-
-    del torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
+            if(layer_norm): layers = np.concatenate((layers, layers_))
 
     NN_embed = None
     if('NN' in shower_embed):
@@ -140,6 +123,30 @@ if __name__ == '__main__':
 
         NN_embed = NNConverter(bins = bins).to(device = device)
 
+        
+    dshape = dataset_config['SHAPE_PAD']
+    if(layer_norm): layers = np.reshape(layers, (layers.shape[0], -1))
+    if(not orig_shape): data = np.reshape(data,dshape)
+    else: data = np.reshape(data, (len(data), -1))
+
+    num_data = data.shape[0]
+    #print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
+    torch_data_tensor = torch.from_numpy(data)
+    torch_E_tensor = torch.from_numpy(energies)
+    torch_layer_tensor =  torch.from_numpy(layers) if layer_norm else torch.zeros_like(torch_E_tensor)
+    del data
+    #train_data, val_data = utils.split_data_np(data,flags.frac)
+
+    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_layer_tensor, torch_data_tensor)
+    nTrain = int(round(flags.frac * num_data))
+    nVal = num_data - nTrain
+    train_dataset, val_dataset = torch.utils.data.random_split(torch_dataset, [nTrain, nVal])
+
+    loader_train = torchdata.DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
+    loader_val = torchdata.DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
+
+    del torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
+
 
 
 
@@ -151,7 +158,7 @@ if __name__ == '__main__':
     diffu_checkpoint = torch.load(diffu_checkpoint_path, map_location = device)
 
     shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
-    diffu_model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = dataset_config['NSTEPS'],).to(device = device)
+    diffu_model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = sample_steps).to(device = device)
     diffu_model.eval()
 
     if('model_state_dict' in diffu_checkpoint.keys()): diffu_model.load_state_dict(diffu_checkpoint['model_state_dict'])
@@ -161,8 +168,8 @@ if __name__ == '__main__':
     consis_model = copy.deepcopy(diffu_model)
 
     checkpoint = dict()
-    if(flags.load):
-        checkpoint_path = os.path.join(checkpoint_folder, "consis_checkpoint.pth")
+    checkpoint_path = os.path.join(checkpoint_folder, "consis_checkpoint.pth")
+    if(flags.load and os.path.exists(checkpoint_path)): 
         print("Loading consis model from %s" % checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location = device)
         consis_model.load_state_dict(checkpoint['model_state_dict'])
@@ -208,16 +215,18 @@ if __name__ == '__main__':
 
         consis_model.model.train()
         ema_model.eval()
-        for i, (E,data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
+        for i, (E,layers, data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
             consis_model.model.zero_grad()
             optimizer.zero_grad()
 
             data = data.to(device = device)
             E = E.to(device = device)
+            layers = layers.to(device = device)
 
             t = torch.randint(1, consis_model.nsteps, (data.size()[0],), device=device).long()
 
-            batch_loss = compute_consis_loss(data, E, t=t, model = consis_model, ema_model = ema_model, teacher_model = diffu_model, nsteps = flags.sample_steps, sample_algo = flags.sample_algo)
+            batch_loss = compute_consis_loss(data, E, t=t, layers = layers, model = consis_model, ema_model = ema_model, teacher_model = diffu_model, 
+                                             nsteps = consis_model.nsteps, sample_algo = flags.sample_algo)
             batch_loss.backward()
 
             optimizer.step()
@@ -233,13 +242,15 @@ if __name__ == '__main__':
 
         val_loss = 0
         consis_model.eval()
-        for i, (vE, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
+        for i, (vE, vlayers, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
             vdata = vdata.to(device=device)
             vE = vE.to(device = device)
+            vlayers = vlayers.to(device = device)
 
             t = torch.randint(1, consis_model.nsteps, (vdata.size()[0],), device=device).long()
 
-            batch_loss = compute_consis_loss(vdata, vE, t=t, model = consis_model, ema_model = ema_model, teacher_model = diffu_model, nsteps = flags.sample_steps, sample_algo = flags.sample_algo)
+            batch_loss = compute_consis_loss(vdata, vE, t=t, layers = vlayers, model = consis_model, ema_model = ema_model, teacher_model = diffu_model, 
+                                             nsteps = consis_model.nsteps, sample_algo = flags.sample_algo)
 
             val_loss+=batch_loss.item()
             del vdata,vE, batch_loss

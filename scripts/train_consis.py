@@ -27,6 +27,7 @@ def compute_consis_loss(x, E, t = None, layers = None,  teacher_model = None, mo
     sigma2 = sigma**2
 
 
+
     with torch.no_grad():
         #denoise 1 step using fixed diffusion model
         x_prev = teacher_model.p_sample(x_noisy, E, t, layers = layers, sample_algo = sample_algo)
@@ -36,6 +37,9 @@ def compute_consis_loss(x, E, t = None, layers = None,  teacher_model = None, mo
 
     #predict using model on noisy x
     x0 = model.denoise(x_noisy, E,sigma, layers = layers, model = model.model)
+
+    #print(t[0],sigma[0], torch.std(x_noisy), torch.mean(x0_ema), torch.std(x0_ema))
+    #print(sigma_prev[0], torch.std(x_prev), torch.mean(x0), torch.std(x0))
 
     loss = torch.nn.functional.mse_loss(x0_ema, x0)
     return loss
@@ -223,7 +227,8 @@ if __name__ == '__main__':
             E = E.to(device = device)
             layers = layers.to(device = device)
 
-            t = torch.randint(1, consis_model.nsteps, (data.size()[0],), device=device).long()
+            #t = torch.randint(1, consis_model.nsteps, (data.size()[0],), device=device).long()
+            t = torch.repeat_interleave(torch.randint(1, consis_model.nsteps, (1,), device=device).long(), data.size()[0])
 
             batch_loss = compute_consis_loss(data, E, t=t, layers = layers, model = consis_model, ema_model = ema_model, teacher_model = diffu_model, 
                                              nsteps = consis_model.nsteps, sample_algo = flags.sample_algo)

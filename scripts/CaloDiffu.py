@@ -379,37 +379,30 @@ class CaloDiffu(nn.Module):
         x0_pred = self.denoise(x, E, sigma, layers = layers, model = model, layer_pred = layer_sample)
         noise_pred = (x - x0_pred)/sigma
 
-        if(sample_algo == 'consis'):
-            sigma_next = extract(self.sqrt_one_minus_alphas_cumprod, t-1, x.shape) / extract(self.sqrt_alphas_cumprod, t-1, x.shape) if t[0] > 0 else 0.
-            #print(sigma[0], sigma_next[0])
-            out = x0_pred + sigma_next * noise
-
-
+        if(sample_algo == 'ddpm'):
+            #using result from ddim paper, which reformulates the ddpm sampler in their notation (See Eq. 12 and sigma definition)
+            ddim_eta = 1.0
         else:
-            if(sample_algo == 'ddpm'):
-                #using result from ddim paper, which reformulates the ddpm sampler in their notation (See Eq. 12 and sigma definition)
-                ddim_eta = 1.0
-            else:
-                #pure ddim (no stochasticity)
-                ddim_eta = 0.0
+            #pure ddim (no stochasticity)
+            ddim_eta = 0.0
 
-            alpha = extract(self.alphas_cumprod, t, x.shape)
-            alpha_prev = extract(self.alphas_cumprod_prev, t, x.shape)
+        alpha = extract(self.alphas_cumprod, t, x.shape)
+        alpha_prev = extract(self.alphas_cumprod_prev, t, x.shape)
 
-            denom = extract(self.sqrt_alphas_cumprod, torch.maximum(t-1, torch.zeros_like(t)), x.shape)
+        denom = extract(self.sqrt_alphas_cumprod, torch.maximum(t-1, torch.zeros_like(t)), x.shape)
 
-            ddim_sigma = ddim_eta * (( (1 - alpha_prev) / (1 - alpha)) * (1 - alpha / alpha_prev))**0.5
-            num = (1. - alpha_prev - ddim_sigma**2).sqrt()
-            sigma_prev = num / denom
+        ddim_sigma = ddim_eta * (( (1 - alpha_prev) / (1 - alpha)) * (1 - alpha / alpha_prev))**0.5
+        num = (1. - alpha_prev - ddim_sigma**2).sqrt()
+        sigma_prev = num / denom
 
 
-            dir_xt = sigma_prev * noise_pred
+        dir_xt = sigma_prev * noise_pred
 
-            #don't step for t= 0
-            mask = (t > 0).reshape(-1, *((1,) *(len(x.shape) - 1)))
+        #don't step for t= 0
+        mask = (t > 0).reshape(-1, *((1,) *(len(x.shape) - 1)))
 
 
-            out = x0_pred + mask * sigma_prev * noise_pred + ddim_sigma * noise / denom
+        out = x0_pred + mask * sigma_prev * noise_pred + ddim_sigma * noise / denom
 
 
         #elif('cold' in sample_algo):

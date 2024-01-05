@@ -17,7 +17,7 @@
     'EARLYSTOP':20,
     'LAYER_SIZE_AE':[32,64, 64,32],
     'DIM_RED_AE':[0,2, 0, 2],
-    'LAYER_SIZE_UNET' : [32, 32, 32, 64],
+    'LAYER_SIZE_UNET' : [32, 32, 64, 96],
     'COND_SIZE_UNET' : 128,
     'KERNEL':[3,3,3],
     'STRIDE':[3,2,2],
@@ -38,7 +38,7 @@
     'BETA_MAX' : 0.02,
     'NOISE_SCHED': 'log',
     'NSTEPS': 400,
-    'CONSIS_NSTEPS': 100,
+    'CONSIS_NSTEPS': 30,
     'COLD_DIFFU' : False,
     'COLD_NOISE' : 1.0,
     'TRAINING_OBJ' : 'hybrid_weight',
@@ -46,7 +46,7 @@
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : 'orig-NN',
-    'CHECKPOINT_NAME':'dataset1_photon_dec8_large',
+    'CHECKPOINT_NAME':'dataset1_photon_dec12_vlarge',
 
 
 }

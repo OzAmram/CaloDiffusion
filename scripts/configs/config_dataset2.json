@@ -15,7 +15,7 @@
     'EARLYSTOP':20,
     'LAYER_SIZE_AE':[32,64, 64,32],
     'DIM_RED_AE':[0,2, 0, 2],
-    'LAYER_SIZE_UNET' : [16, 16, 16, 32],
+    'LAYER_SIZE_UNET' : [32, 32, 64, 96],
     'COND_SIZE_UNET' : 128,
     'KERNEL':[3,3,3],
     'STRIDE':[3,2,2],
@@ -42,7 +42,7 @@
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
-    'CHECKPOINT_NAME':'dataset2_oct11_layer_norm',
+    'CHECKPOINT_NAME':'dataset2_dec14_vlarge_test',
 
 
 }

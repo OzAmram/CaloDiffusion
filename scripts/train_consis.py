@@ -212,6 +212,7 @@ if __name__ == '__main__':
         val_losses = checkpoint['val_loss_hist']
         start_epoch = checkpoint['epoch'] + 1
 
+    print("Using %i steps for consistency training" % consis_model.nsteps)
     #training loop
     for epoch in range(start_epoch, num_epochs):
         print("Beginning epoch %i" % epoch, flush=True)
@@ -227,8 +228,8 @@ if __name__ == '__main__':
             E = E.to(device = device)
             layers = layers.to(device = device)
 
-            #t = torch.randint(1, consis_model.nsteps, (data.size()[0],), device=device).long()
-            t = torch.repeat_interleave(torch.randint(1, consis_model.nsteps, (1,), device=device).long(), data.size()[0])
+            t = torch.randint(1, consis_model.nsteps, (data.size()[0],), device=device).long()
+            #t = torch.repeat_interleave(torch.randint(1, consis_model.nsteps, (1,), device=device).long(), data.size()[0])
 
             batch_loss = compute_consis_loss(data, E, t=t, layers = layers, model = consis_model, ema_model = ema_model, teacher_model = diffu_model, 
                                              nsteps = consis_model.nsteps, sample_algo = flags.sample_algo)

@@ -1,4 +1,5 @@
 import sys
+sys.path.append("../..")
 sys.path.append("..")
 from utils import *
 
@@ -22,6 +23,7 @@ orig_shape = False
 ###dataset = "../data/dataset_1_pions_1.hdf5"
 ###dataset_num = 0
 ###shape_pad = [-1,1,7,10,23]
+
 #max_dep = 3.1
 #emax = 4194.304
 #emin = 0.256
@@ -33,6 +35,9 @@ orig_shape = False
 nevts =1000
 logE = True
 showerMap = 'layer-orig-logit-norm'
+
+
+
 
 
 
@@ -56,6 +61,7 @@ if(dataset_num > 1):
     data = np.reshape(data_,shape_pad)
 else:
     data = data_
+
 
 
 data_rev, e_rev = ReverseNorm( data, e_, shape_pad, layerE = layers, emax = emax,emin = emin, 
@@ -98,3 +104,6 @@ if(not orig_shape):
     print(data_rev.shape)
     print("AVG LAYER DIFF: ", np.mean( layer_rev[:100] - raw_layer[:100]))
 
+print("REVERSED: \n")
+#print(data_rev[0,0,10])
+print("AVG DIFF: ", torch.mean(torch.tensor(data_rev[:100]) - raw_shower[:100]))

@@ -1,6 +1,5 @@
-# CaloDiffusion official repository
+# CaloDiffusion unofficial repository (WIP)
 
-Repo for diffusion based calorimeter generation.
 
 Pytorch v1.9  was used to implement all models. 
 

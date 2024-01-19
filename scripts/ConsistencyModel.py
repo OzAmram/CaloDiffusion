@@ -9,7 +9,6 @@ from utils import *
 from models import *
 from CaloDiffu import *
 
-from ema_pytorch import EMA
 
 
 class ConsistencyTrainer(nn.Module):

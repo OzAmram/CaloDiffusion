@@ -80,6 +80,16 @@ class CylindricalConv(nn.Module):
         x = self.conv(x)
         return x
 
+def zero_module(module):
+    #make model parameters zero
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
+
+def make_zero_conv(dim, cylindrical=True):
+    #Make a 'zero convolution' layer
+    return zero_module(CylindricalConv(dim, dim, kernel_size=1, padding=0))
+
 class Residual(nn.Module):
     def __init__(self, fn):
         super().__init__()
@@ -87,6 +97,17 @@ class Residual(nn.Module):
 
     def forward(self, x, *args, **kwargs):
         return self.fn(x, *args, **kwargs) + x
+
+class ScalarAddLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.mu = nn.Parameter(torch.tensor(1e-6))
+
+    def forward(self, x1, x2):
+        #print("Mu", self.mu)
+        out = (1-self.mu) * x1 + self.mu * x2
+        #out = x1 + x2
+        return out
 
 
 def extract(a, t, x_shape):
@@ -267,6 +288,7 @@ class PreNorm(nn.Module):
     def forward(self, x):
         x = self.norm(x)
         return self.fn(x)
+
 
 
 #up and down sample in 2 dims but keep z dimm
@@ -540,16 +562,14 @@ class CondUnet(nn.Module):
         else:  final_lay = CylindricalConv(layer_sizes[0], out_dim, 1)
         self.final_conv = nn.Sequential( block_klass(layer_sizes[1], layer_sizes[0]),  final_lay )
 
-    def forward(self, x, cond, time):
+    def forward(self, x, cond, time, controls = None):
 
         x = self.init_conv(x)
 
         t = self.time_mlp(time)
         c = self.cond_mlp(cond)
-
         conditions = torch.cat([t,c], axis = -1)
-
-
+        
         h = []
 
         # downsample
@@ -560,10 +580,21 @@ class CondUnet(nn.Module):
             h.append(x)
             x = downsample(x)
 
+        #Add hidden state from controlnet
+        if(controls is not None):
+            for i in range(len(h)):
+                add_fn, control_h = controls[i]
+                h[i] = add_fn(h[i], control_h)
+
         # bottleneck
         x = self.mid_block1(x, conditions)
         if(self.mid_attn): x = self.mid_attn(x)
         x = self.mid_block2(x, conditions)
+
+        #Add hidden state from controlnet
+        if(controls is not None):
+            add_fn, control_h = controls[-1]
+            x = add_fn(x, control_h)
 
 
         # upsample
@@ -575,3 +606,34 @@ class CondUnet(nn.Module):
             x = upsample(x)
 
         return self.final_conv(x)
+
+    def get_hiddens(self, x, cond, time):
+        #Get list of hidden states of controlnet
+        x = self.init_conv(x)
+
+        t = self.time_mlp(time)
+        c = self.cond_mlp(cond)
+
+        conditions = torch.cat([t,c], axis = -1)
+
+
+        hs = []
+
+        # downsample
+        for i, (block1, block2, downsample) in enumerate(self.downs):
+            x = block1(x, conditions)
+            x = block2(x, conditions)
+            if(self.block_attn): x = self.downs_attn[i](x)
+            hs.append(x)
+            x = downsample(x)
+
+        # bottleneck
+        x = self.mid_block1(x, conditions)
+        if(self.mid_attn): x = self.mid_attn(x)
+        x = self.mid_block2(x, conditions)
+        hs.append(x)
+
+        return hs
+
+
+

@@ -4,7 +4,7 @@
     'EVAL':['dataset_1_photons_2.hdf5'],
     'BIN_FILE': "/work1/cms_mlsim/oamram/CaloDiffusion/CaloChallenge/code/binning_dataset_1_photons.xml",
     'PART_TYPE' : 'photon',
-    'AVG_SHOWER_LOC' : "/wclustre/cms_mlsim/denoise/CaloChallenge/dataset_2_avg_showers.hdf5",
+    'AVG_SHOWER_LOC' : "dataset_1_photons_avg_showers.h5",
     'DATASET_NUM' : 1,
     'HOLDOUT' : 0,
     'SHAPE_ORIG': [-1,368],

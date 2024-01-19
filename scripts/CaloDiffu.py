@@ -178,7 +178,7 @@ class CaloDiffu(nn.Module):
     
     def lookup_avg_std_shower(self, inputEs):
         idxs = torch.bucketize(inputEs, self.E_bins)  - 1 #NP indexes bins starting at 1 
-        return self.avg_showers[idxs], self.std_showers[idxs]
+        return torch.squeeze(self.avg_showers[idxs]), torch.squeeze(self.std_showers[idxs])
 
 
 
@@ -259,21 +259,21 @@ class CaloDiffu(nn.Module):
         if(embed_type == "log"):
             return 0.5 * torch.log(sigma)
 
-    def pred(self, x, E, t_emb, model = None, layers = None, layer_pred = False):
+    def pred(self, x, E, t_emb, model = None, layers = None, layer_pred = False, controls = None):
         if(model is None): model = self.model
 
         if(self.NN_embed is not None and not layer_pred): x = self.NN_embed.enc(x).to(x.device)
         if(self.layer_cond and layers is not None): E = torch.cat([E, layers], dim = 1)
-        out = model(self.add_RZPhi(x), E, t_emb)
+        out = model(self.add_RZPhi(x), E, t_emb, controls = controls)
         if(self.NN_embed is not None and not layer_pred): out = self.NN_embed.dec(out).to(x.device)
         return out
 
-    def denoise(self, x, E =None, sigma=None, model = None, layers = None, layer_pred = False):
+    def denoise(self, x, E =None, sigma=None, model = None, layers = None, layer_pred = False, controls = None):
         t_emb = self.do_time_embed(embed_type = self.time_embed, sigma = sigma.reshape(-1))
         sigma = sigma.reshape(-1, *(1,)*(len(x.shape)-1))
         c_in = 1 / (sigma**2 + 1).sqrt()
 
-        pred = self.pred(x * c_in, E, t_emb, model = model, layers = layers, layer_pred = layer_pred)
+        pred = self.pred(x * c_in, E, t_emb, model = model, layers = layers, layer_pred = layer_pred, controls = controls)
 
         if('noise_pred' in self.training_obj):
             return (x - sigma * pred)

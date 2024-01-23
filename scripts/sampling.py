@@ -508,3 +508,85 @@ def sample_dpmpp_3m_sde(model, x, sigmas, extra_args=None, callback=None, disabl
     return x
 
 
+def sample_consis(model, x, sigmas = None, extra_args = None, sigma_min = 0.002):
+
+    gen_size = x_start.shape[0]
+    x = x_start * t_steps[0]
+    
+    x0s = []
+    xs = []
+
+
+    for i, (sigma_cur, sigma_next) in enumerate(zip(sigmas[:-1], sigmas[1:])): # 0, ..., N-1
+
+        x0 = model.denoise(x, sigma_cur, **extra_args).to(torch.float32) 
+
+        sigma_next = torch.clip(sigma_next, sigma_min, None)
+        if(sigma_min.item() > sigma_min):
+            noise = torch.randn_like(x)
+            x = x0 + noise * torch.sqrt(sigma_next**2 - sigma_min**2)
+        else: x = x0
+
+        x0s.append(x0)
+        xs.append(x)
+
+    return x,xs,x0
+
+
+    @torch.no_grad()
+    def sample_dd(model, x, time_steps, sample_algo = 'ddpm', debug = False, extra_args = None):
+        #One step of ddpm or ddim sampler
+        #Using formalism / notation of EDM paper
+
+        for time_step in time_steps:      
+            times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
+            out = self.p_sample(x, E, times, layers = layers, noise = fixed_noise, sample_algo = sample_algo, debug = debug, model = model, layer_sample = layer_sample)
+            if(debug): 
+                x, x0_pred = out
+                xs.append(x.detach().cpu().numpy())
+                x0s.append(x0_pred.detach().cpu().numpy())
+            else: x = out
+
+        if(self.nsteps != old_nsteps):
+            self.set_sampling_steps(old_nsteps)
+        return x, xs, x0s
+
+        if(noise is None): 
+            noise = torch.randn(x.shape, device = x.device)
+
+        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
+        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, x.shape)
+        posterior_variance_t = extract(self.posterior_variance, t, x.shape)
+
+        sigma = sqrt_one_minus_alphas_cumprod_t / sqrt_alphas_cumprod_t
+
+        x0_pred = self.denoise(x, E, sigma, layers = layers, model = model, layer_pred = layer_sample)
+        noise_pred = (x - x0_pred)/sigma
+
+        if(sample_algo == 'ddpm'):
+            #using result from ddim paper, which reformulates the ddpm sampler in their notation (See Eq. 12 and sigma definition)
+            ddim_eta = 1.0
+        else:
+            #pure ddim (no stochasticity)
+            ddim_eta = 0.0
+
+        alpha = extract(self.alphas_cumprod, t, x.shape)
+        alpha_prev = extract(self.alphas_cumprod_prev, t, x.shape)
+
+        denom = extract(self.sqrt_alphas_cumprod, torch.maximum(t-1, torch.zeros_like(t)), x.shape)
+
+        ddim_sigma = ddim_eta * (( (1 - alpha_prev) / (1 - alpha)) * (1 - alpha / alpha_prev))**0.5
+        num = (1. - alpha_prev - ddim_sigma**2).sqrt()
+        sigma_prev = num / denom
+
+
+        dir_xt = sigma_prev * noise_pred
+
+        #don't step for t= 0
+        mask = (t > 0).reshape(-1, *((1,) *(len(x.shape) - 1)))
+
+
+        out = x0_pred + mask * sigma_prev * noise_pred + ddim_sigma * noise / denom
+
+        if(debug): return out, x0_pred
+        return out

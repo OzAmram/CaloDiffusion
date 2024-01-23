@@ -28,7 +28,11 @@ class ControlledUNet(nn.Module):
         self.control_adds.append(ScalarAddLayer())
 
         
-    def denoise(self, x, c_x, E = None, sigma = None, layers = None):
+    def denoise(self, x, c_x = None, E = None, sigma = None, layers = None):
+
+        if(c_x is None):
+            avg_showers, std_showers = self.UNet.lookup_avg_std_shower(E)
+            c_x = avg_showers
 
         #Prepare controlnet inputs
         t_emb = self.UNet.do_time_embed(embed_type = self.UNet.time_embed, sigma = sigma.reshape(-1))

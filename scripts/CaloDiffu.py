@@ -291,54 +291,6 @@ class CaloDiffu(nn.Module):
 
 
 
-    @torch.no_grad()
-    def p_sample(self, x, E, t, layers = None, cold_noise_scale = 0., noise = None, sample_algo = 'ddpm', debug = False, model = None, layer_sample = False):
-        #One step of ddpm or ddim sampler
-        #Using formalism / notation of EDM paper
-
-        if(noise is None): 
-            noise = torch.randn(x.shape, device = x.device)
-            if(self.cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
-                noise = self.gen_cold_image(E, cold_noise_scale, noise)
-
-        betas_t = extract(self.betas, t, x.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, x.shape)
-        #print(t, self.sqrt_one_minus_alphas_cumprod[t])
-        posterior_variance_t = extract(self.posterior_variance, t, x.shape)
-
-        sigma = sqrt_one_minus_alphas_cumprod_t / sqrt_alphas_cumprod_t
-
-        x0_pred = self.denoise(x, E, sigma, layers = layers, model = model, layer_pred = layer_sample)
-        noise_pred = (x - x0_pred)/sigma
-
-        if(sample_algo == 'ddpm'):
-            #using result from ddim paper, which reformulates the ddpm sampler in their notation (See Eq. 12 and sigma definition)
-            ddim_eta = 1.0
-        else:
-            #pure ddim (no stochasticity)
-            ddim_eta = 0.0
-
-        alpha = extract(self.alphas_cumprod, t, x.shape)
-        alpha_prev = extract(self.alphas_cumprod_prev, t, x.shape)
-
-        denom = extract(self.sqrt_alphas_cumprod, torch.maximum(t-1, torch.zeros_like(t)), x.shape)
-
-        ddim_sigma = ddim_eta * (( (1 - alpha_prev) / (1 - alpha)) * (1 - alpha / alpha_prev))**0.5
-        num = (1. - alpha_prev - ddim_sigma**2).sqrt()
-        sigma_prev = num / denom
-
-
-        dir_xt = sigma_prev * noise_pred
-
-        #don't step for t= 0
-        mask = (t > 0).reshape(-1, *((1,) *(len(x.shape) - 1)))
-
-
-        out = x0_pred + mask * sigma_prev * noise_pred + ddim_sigma * noise / denom
-
-        if(debug): return out, x0_pred
-        return out
 
     def gen_cold_image(self, E, cold_noise_scale, noise = None):
 
@@ -407,80 +359,13 @@ class CaloDiffu(nn.Module):
         x = x_start * sigma_start
 
 
-        for time_step in time_steps:      
-            times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
-            out = self.p_sample(x, E, times, layers = layers, noise = fixed_noise, sample_algo = sample_algo, debug = debug, model = model, layer_sample = layer_sample)
-            if(debug): 
-                x, x0_pred = out
-                xs.append(x.detach().cpu().numpy())
-                x0s.append(x0_pred.detach().cpu().numpy())
-            else: x = out
-
-        if(self.nsteps != old_nsteps):
-            self.set_sampling_steps(old_nsteps)
-        return x, xs, x0s
-
-    def consis_sampler(self, x_start, E, num_steps = 1, layers = None, model = None, layer_sample = False):
-
-
-        t_min = 0.002
-        t_max = 500.0
-        rho=7.0
-
-        orig_num_steps = self.nsteps
-
-        sample_idxs = [1, 50, 70, 90, 95]
-
-        # Time step discretization from edm paper
-        step_indices = torch.arange(orig_num_steps, dtype=torch.float32, device=x_start.device)
-        t_all_steps = (t_max ** (1 / rho) + step_indices / (orig_num_steps - 1) * (t_min ** (1 / rho) - t_max ** (1 / rho))) ** rho
-
-        orig_schedule = True
-
-
-        if(orig_schedule): #use steps from original iDDPM schedule , have to reverse order
-            t_all_steps = [self.sqrt_one_minus_alphas_cumprod[orig_num_steps - t -1]/ self.sqrt_alphas_cumprod[orig_num_steps - t -1] for t in torch.arange(orig_num_steps)]
-
-
-        if(num_steps > 1):
-            t_steps = torch.tensor([t_all_steps[i] for i in sample_idxs[:num_steps]])
-        else:
-            t_steps = torch.tensor([t_all_steps[0]])
-
-        t_steps = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # end point is zero noise
-
-        gen_size = x_start.shape[0]
-        x = x_start * t_steps[0]
-        
-        x0s = []
-        xs = []
-
-
-        for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
-
-            t_cur_full = torch.full((gen_size,), t_cur, device=x_start.device)
-            x0 = self.denoise(x, E, t_cur_full, layers = layers, model = model, layer_pred = layer_sample).to(torch.float32) 
-
-            t_next = torch.clip(t_next, t_min, t_max)
-            if(t_next.item() > t_min):
-                noise = torch.randn_like(x)
-                x = x0 + noise * torch.sqrt(t_next**2 - t_min**2)
-            else: x = x0
-
-            #print(i, t_cur.item(), t_next.item(), torch.mean(x0), torch.std(x0)**2, torch.mean(x), torch.std(x)**2)
-
-            x0s.append(x0)
-            xs.append(x)
-
-        return x,xs,x0
-
 
 
 
 
 
     @torch.no_grad()
-    def Sample(self, E, layers = None, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0, model = None, gen_shape = None, layer_sample = False):
+    def Sample(self, E, layers = None, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0, model = None, gen_shape = None, layer_sample = False, denoise_fn = self.denoise):
         """Generate samples from diffusion model.
         
         Args:
@@ -491,7 +376,6 @@ class CaloDiffu(nn.Module):
         Returns: 
         Samples.
         """
-
 
 
         # Full sample (all steps)
@@ -522,15 +406,41 @@ class CaloDiffu(nn.Module):
             orig_schedule = False
 
             x,xs, x0s = edm_sampler(self,x_start,E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
-                    S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule, layer_sample = layer_sample)
+                    S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule, layer_sample = layer_sample, denoise_fn = denoise_fn)
 
         elif('consis' in sample_algo):
-            x,xs, x0s = self.consis_sampler(x_start, E, layers = layers, num_steps = num_steps, model = model, layer_sample = layer_sample)
+            t_min = 0.002
+            t_max = 500.0
+            rho=7.0
+
+            orig_num_steps = self.nsteps
+
+            sample_idxs = [1, 50, 70, 90, 95]
+
+            # Time step discretization from edm paper
+            step_indices = torch.arange(orig_num_steps, dtype=torch.float32, device=x_start.device)
+            t_all_steps = (t_max ** (1 / rho) + step_indices / (orig_num_steps - 1) * (t_min ** (1 / rho) - t_max ** (1 / rho))) ** rho
+
+            orig_schedule = True
+
+
+            if(orig_schedule): #use steps from original iDDPM schedule , have to reverse order
+                t_all_steps = [self.sqrt_one_minus_alphas_cumprod[orig_num_steps - t -1]/ self.sqrt_alphas_cumprod[orig_num_steps - t -1] for t in torch.arange(orig_num_steps)]
+
+
+            if(num_steps > 1):
+                t_steps = torch.tensor([t_all_steps[i] for i in sample_idxs[:num_steps]])
+            else:
+                t_steps = torch.tensor([t_all_steps[0]])
+
+            t_steps = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # end point is zero noise
+
+            x,xs, x0s = consis_sampler(x_start, E, layers = layers, num_steps = num_steps, model = model, layer_sample = layer_sample, denoise_fn = denoise_fn)
         elif('dpm' in sample_algo):
-            x, xs, x0s = self.dpm_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, debug = debug, model = model, layer_sample = layer_sample)
+            x, xs, x0s = self.dpm_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, debug = debug, model = model, layer_sample = layer_sample, denoise_fn = denoise_fn)
         else:
             x, xs, x0s = self.dd_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_offset = sample_offset, sample_algo = sample_algo, 
-                    debug = debug, model = model, layer_sample = layer_sample)
+                    debug = debug, model = model, layer_sample = layer_sample, denoise_fn = denoise_fn)
 
         if(debug):
             return x.detach().cpu().numpy(), xs, x0s

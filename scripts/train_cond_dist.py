@@ -5,14 +5,47 @@ import argparse
 import h5py as h5
 import torch.optim as optim
 import torch.utils.data as torchdata
+from ema_pytorch import EMA
 
 from utils import *
-from CaloDiffu import *
-from models import *
+from ControlNet import *
+
+def compute_cond_dist_loss(x, E, t = None, layers = None,  model = None, ema_model = None):   
+
+    noise = torch.randn_like(x)
+    if(t is None): t = torch.randint(1, nsteps, (x.size()[0],), device=x.device).long()
+
+    sigma = extract(model.UNet.sqrt_one_minus_alphas_cumprod, t, x.shape) / extract(model.UNet.sqrt_alphas_cumprod, t, x.shape)
+    sigma_prev = extract(model.UNet.sqrt_one_minus_alphas_cumprod, t-1, x.shape) / extract(model.UNet.sqrt_alphas_cumprod, t-1, x.shape)
+
+    avg_showers, std_showers =model.UNet.lookup_avg_std_shower(E)
+    c_x = avg_showers
+
+    x_noisy = x + sigma * noise
+    sigma2 = sigma**2
+
+    #predict x0 and noise using model
+    x0 = model.denoise(x_noisy, c_x, E, sigma, layers = layers)
+    noise_pred = (x_noisy - x0)/sigma
+
+    #Use true noise plus estimated x0 to construct new sample
+    x_noisy_new = x0 + sigma_prev * noise
+
+
+    #predict noise using ema model constructed from pred. x0 
+    x0_ema = ema_model.model.denoise(x_noisy_new, c_x, E, sigma_prev, layers = layers)
+
+    noise_pred_ema = (x_noisy_new - x0_ema) / sigma_prev
+
+
+    #combine two terms for loss
+    loss = torch.nn.functional.mse_loss(x, x0) + torch.nn.functional.mse_loss(noise_pred_ema, noise_pred)
+    return loss
+
 
 
 if __name__ == '__main__':
-    print("TRAIN DIFFU")
+    print("TRAIN COND DIST")
 
     if(torch.cuda.is_available()): device = torch.device('cuda')
     else: device = torch.device('cpu')
@@ -21,15 +54,18 @@ if __name__ == '__main__':
     
     parser.add_argument('--data_folder', default='../data/', help='Folder containing data and MC files')
     parser.add_argument('--model', default='Diffu', help='Diffusion model to train. Options are: VPSDE, VESDE and subVPSDE')
+    parser.add_argument('--sample_algo', default='ddim', help='Sampling algorithm for consistency training')
     parser.add_argument('-c', '--config', default='configs/test.json', help='Config file with training parameters')
-    parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
+    parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
-    parser.add_argument('--seed', type=int, default=1234,help='Pytorch seed')
+    parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
     parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
 
     dataset_config = LoadJson(flags.config)
+    data = []
+    energies = []
 
     print("TRAINING OPTIONS")
     print(dataset_config, flush = True)
@@ -51,6 +87,9 @@ if __name__ == '__main__':
     orig_shape = ('orig' in shower_embed)
     layer_norm = 'layer' in dataset_config['SHOWERMAP']
 
+    sample_steps = dataset_config.get('CONSIS_NSTEPS', 100)
+
+
     for i, dataset in enumerate(dataset_config['FILES']):
         data_,e_,layers_ = DataLoader(
             os.path.join(flags.data_folder,dataset),
@@ -60,7 +99,6 @@ if __name__ == '__main__':
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
-
             nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
             dataset_num  = dataset_num,
             orig_shape = orig_shape,
@@ -76,15 +114,6 @@ if __name__ == '__main__':
             energies = np.concatenate((energies, e_))
             if(layer_norm): layers = np.concatenate((layers, layers_))
 
-        
-    avg_showers = std_showers = E_bins = None
-    if(cold_diffu):
-        f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
-        #Already pre-processed
-        avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
-        std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
-        E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
-
     NN_embed = None
     if('NN' in shower_embed):
         if(dataset_num == 1):
@@ -95,16 +124,14 @@ if __name__ == '__main__':
             bins = XMLHandler("pion", binning_file)
 
         NN_embed = NNConverter(bins = bins).to(device = device)
-        
 
+        
     dshape = dataset_config['SHAPE_PAD']
     if(layer_norm): layers = np.reshape(layers, (layers.shape[0], -1))
     if(not orig_shape): data = np.reshape(data,dshape)
     else: data = np.reshape(data, (len(data), -1))
 
     num_data = data.shape[0]
-    print("Data Shape " + str(data.shape))
-    data_size = data.shape[0]
     #print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
     torch_data_tensor = torch.from_numpy(data)
     torch_E_tensor = torch.from_numpy(energies)
@@ -121,46 +148,69 @@ if __name__ == '__main__':
     loader_val = torchdata.DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
 
     del torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
+
+
+
+    f_avg_shower = h5.File(flags.data_folder + dataset_config["AVG_SHOWER_LOC"])
+    #Already pre-processed
+    avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
+    std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
+    E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
+
+
+
+
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
-    if not os.path.exists(checkpoint_folder):
-        os.makedirs(checkpoint_folder)
+
+    #load teacher diffusion model
+    diffu_checkpoint_path = os.path.join(checkpoint_folder, "checkpoint.pth")
+    print("Loading teacher diffu model from %s" % diffu_checkpoint_path)
+    diffu_checkpoint = torch.load(diffu_checkpoint_path, map_location = device)
+
+    shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
+    diffu_model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = sample_steps, 
+            E_bins = E_bins, avg_showers = avg_showers, std_showers = std_showers).to(device = device)
+    diffu_model.eval()
+
+    if('model_state_dict' in diffu_checkpoint.keys()): diffu_model.load_state_dict(diffu_checkpoint['model_state_dict'])
+    elif(len(diffu_checkpoint.keys()) > 1): diffu_model.load_state_dict(diffu_checkpoint)
+
+    #init controlnet model 
+    controlnet_model = copy.deepcopy(diffu_model)
+    #Upsampling layers not used
+    controlnet_model.model.ups = None
+
+
+    cond_dist_model = ControlledUNet(diffu_model, controlnet_model)
+    cond_dist_model.train()
+    #Freeze UNet part
+    cond_dist_model.UNet.model.eval()
+
 
     checkpoint = dict()
-    checkpoint_path = os.path.join(checkpoint_folder, "checkpoint.pth")
+    checkpoint_path = os.path.join(checkpoint_folder, "cond_dist_checkpoint.pth")
     if(flags.load and os.path.exists(checkpoint_path)): 
-        print("Loading training checkpoint from %s" % checkpoint_path, flush = True)
+        print("Loading cond_dist model from %s" % checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location = device)
-        print(checkpoint.keys())
+        cond_dist_model.load_state_dict(checkpoint['model_state_dict'])
 
 
-    if(flags.model == "Diffu"):
-        shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
-        model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = dataset_config['NSTEPS'],
-                cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
+    ema_model = EMA(cond_dist_model, 
+                beta = 0.95,              # exponential moving average factor
+                update_after_step = 10,    # only after this number of .update() calls will it start updating
+                update_every = 1,          # how often to actually update
+               )
+    ema_model.eval()
 
 
-        #sometimes save only weights, sometimes save other info
-        if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
-        elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
 
-
-    else:
-        print("Model %s not supported!" % flags.model)
-        exit(1)
-
-
-    os.system('cp CaloDiffu.py {}'.format(checkpoint_folder)) # bkp of model def
-    os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
-    os.system('cp {} {}/config.json'.format(flags.config,checkpoint_folder)) # bkp of config file
 
     early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], mode = 'diff', min_delta = 1e-5)
     if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
     print(early_stopper.__dict__)
     
-
-    criterion = nn.MSELoss().to(device = device)
-
-    optimizer = optim.Adam(model.parameters(), lr = float(dataset_config["LR"]))
+    #optimizer only on moving controlnet model (not EMA)
+    optimizer = optim.Adam(controlnet_model.model.parameters(), lr = float(dataset_config["LR"]))
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 15, verbose = True) 
     if('optimizer_state_dict' in checkpoint.keys() and not flags.reset_training): optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     if('scheduler_state_dict' in checkpoint.keys() and not flags.reset_training): scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -169,62 +219,60 @@ if __name__ == '__main__':
     val_losses = np.zeros(num_epochs)
     start_epoch = 0
     min_validation_loss = 99999.
-    if('train_loss_hist' in checkpoint.keys() and not flags.reset_training): 
+    if('train_loss_hist' in checkpoint.keys()): 
         training_losses = checkpoint['train_loss_hist']
         val_losses = checkpoint['val_loss_hist']
         start_epoch = checkpoint['epoch'] + 1
-        if(len(training_losses) < num_epochs): 
-            training_losses = np.concatenate((training_losses, [0]*(num_epochs - len(training_losses))))
-            val_losses = np.concatenate((val_losses, [0]*(num_epochs - len(val_losses))))
 
+    print("Using %i steps for cond_dist training" % sample_steps)
     #training loop
     for epoch in range(start_epoch, num_epochs):
         print("Beginning epoch %i" % epoch, flush=True)
         train_loss = 0
 
-        model.train()
-        for i, (E,layers,data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
-            model.zero_grad()
+        cond_dist_model.ControlNet.model.train()
+        for i, (E,layers, data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
+            cond_dist_model.zero_grad()
             optimizer.zero_grad()
 
             data = data.to(device = device)
             E = E.to(device = device)
             layers = layers.to(device = device)
 
-            t = torch.randint(0, model.nsteps, (data.size()[0],), device=device).long()
-            noise = torch.randn_like(data)
+            #t = torch.randint(1, cond_dist_model.nsteps, (data.size()[0],), device=device).long()
+            t = torch.repeat_interleave(torch.randint(1, sample_steps, (1,), device=device).long(), data.size()[0])
 
-            if(cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
-                noise = model.gen_cold_image(E, cold_noise_scale, noise)
-                
 
-            batch_loss = model.compute_loss(data, E, noise = noise, layers = layers, t = t, loss_type = loss_type )
+            batch_loss = compute_cond_dist_loss(data, E, t=t, layers = layers, model = cond_dist_model, ema_model = ema_model)
+
+
             batch_loss.backward()
-
             optimizer.step()
+
+            ema_model.update()
+
             train_loss+=batch_loss.item()
 
-            del data, E, layers, noise, batch_loss
+            del data, E, batch_loss
 
         train_loss = train_loss/len(loader_train)
         training_losses[epoch] = train_loss
         print("loss: "+ str(train_loss))
 
         val_loss = 0
-        model.eval()
+        cond_dist_model.ControlNet.model.eval()
         for i, (vE, vlayers, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
             vdata = vdata.to(device=device)
             vE = vE.to(device = device)
             vlayers = vlayers.to(device = device)
 
-            t = torch.randint(0, model.nsteps, (vdata.size()[0],), device=device).long()
-            noise = torch.randn_like(vdata)
-            if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)
+            #t = torch.randint(1, cond_dist_model.nsteps, (vdata.size()[0],), device=device).long()
+            t = torch.repeat_interleave(torch.randint(1, sample_steps, (1,), device=device).long(), vdata.size()[0])
 
-            batch_loss = model.compute_loss(vdata, vE, noise = noise, layers = vlayers, t = t, loss_type = loss_type  )
+            batch_loss = compute_cond_dist_loss(vdata, vE, t=t, layers = vlayers, model = cond_dist_model, ema_model = ema_model)
 
             val_loss+=batch_loss.item()
-            del vdata,vE, vlayers, noise, batch_loss
+            del vdata,vE, batch_loss
 
         val_loss = val_loss/len(loader_val)
         #scheduler.step(torch.tensor([val_loss]))
@@ -234,22 +282,23 @@ if __name__ == '__main__':
         scheduler.step(torch.tensor([train_loss]))
 
         if(val_loss < min_validation_loss):
-            torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
+            torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'cond_dist_best_val.pth'))
             min_validation_loss = val_loss
 
         if(early_stopper.early_stop(val_loss - train_loss)):
             print("Early stopping!")
             break
+        print(early_stopper.__dict__)
 
         # save the model
-        model.eval()
+        cond_dist_model.eval()
         print("SAVING")
         #torch.save(model.state_dict(), checkpoint_path)
         
         #save full training state so can be resumed
         torch.save({
             'epoch': epoch,
-            'model_state_dict': model.state_dict(),
+            'model_state_dict': ema_model.ema_model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
             'train_loss_hist': training_losses,
@@ -264,7 +313,7 @@ if __name__ == '__main__':
 
 
     print("Saving to %s" % checkpoint_folder, flush=True)
-    torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'final.pth'))
+    torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'final.pth'))
 
     with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
         tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")

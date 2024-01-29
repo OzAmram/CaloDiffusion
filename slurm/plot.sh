@@ -17,7 +17,7 @@ apptainer exec --no-home -p --nv --bind `pwd` --bind /cvmfs --bind /cvmfs/unpack
 }
 
 cd /work1/cms_mlsim/oamram/CaloDiffusion/scripts
-torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; python plot.py --config MDIR/config.json --model MODEL --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --model_loc MDIR/MNAME --plot_folder ../plots/JOB_NAME --nevts NEVTS  --batch_size BATCH_SIZE --sample --sample_algo SAMPLE_ALGO --sample_offset SAMPLE_OFFSET --sample_steps SAMPLE_STEPS --job_idx JOBIDX"
+torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; python plot.py --config MDIR/config.json --model MODEL --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --model_loc MDIR/MNAME --plot_folder ../plots/JOB_NAME --nevts NEVTS  --batch_size BATCH_SIZE --sample --sample_algo SAMPLE_ALGO --sample_offset SAMPLE_OFFSET --sample_steps SAMPLE_STEPS --job_idx JOBIDX --layer_model LAYMODEL"
 
 EVAL=EVAL_VAR
 

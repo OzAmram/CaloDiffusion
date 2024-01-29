@@ -8,7 +8,7 @@ parser.add_argument('--model', default='Diffu', help='Model for plotting')
 parser.add_argument('-d', '--model_dir', default='../models/TEST', help='Directory containing saved model')
 parser.add_argument('-n', '--name', default='test', help='job name')
 parser.add_argument('-v', '--model_version', default='checkpoint.pth', help='Which model to plot (best_val.pth, checkpoint.pth, final.pth)')
-parser.add_argument('--sample_algo', default='euler', help='Sampling algo')
+parser.add_argument('--sample_algo', default='ddpm', help='Sampling algo')
 parser.add_argument('--sample_offset', default=0, type = int, help='Offset for sampling')
 parser.add_argument('--sample_steps', default=-1, type = int, help='Number of sampling steps')
 parser.add_argument('--nevts', default=1000, type = int, help='Offset for sampling')
@@ -18,6 +18,7 @@ parser.add_argument("--memory", default = 16000 , help='RAM')
 parser.add_argument("--num_jobs", type = int, default = 1 , help='How many jobs to split among')
 parser.add_argument("--batch_size", type = int, default = 100 , help='Batch size for sampling')
 parser.add_argument("--chip_type",  default = 'gpu' , help='gpu or cpu')
+parser.add_argument("--layer_model", default = False, action = 'store_true', help='Sep model for layer energies')
 flags = parser.parse_args()
 
 
@@ -47,11 +48,18 @@ if(flags.model == 'Diffu'):
         if(flags.chip_type == 'gpu'):
             os.system("sed -i 's/DOGPU/SBATCH/g' %s" % (script_loc))
 
+        if(flags.layer_model):
+            os.system("sed -i 's/LAYMODEL/%s/g' %s" % (base_dir + model_dir_tail +"\/" + "layer_checkpoint.pth", script_loc) )
+        else:
+            os.system("""sed -i "s/LAYMODEL/''/g" %s""" % (script_loc) )
+
         os.system("sed -i 's/JOB_NAME/%s/g' %s" % (flags.name, script_loc))
         os.system("sed -i 's/JOB_OUT/%s/g' %s" % (flags.name, script_loc))
         os.system("sed -i 's/MODEL/%s/g' %s" % (flags.model, script_loc) )
         os.system("sed -i 's/MDIR/%s/g' %s" % (base_dir +  model_dir_tail, script_loc) )
         os.system("sed -i 's/MNAME/%s/g' %s" % (flags.model_version, script_loc) )
+
+
         os.system("sed -i 's/SAMPLE_ALGO/%s/g' %s" % (flags.sample_algo, script_loc) )
         os.system("sed -i 's/SAMPLE_OFFSET/%s/g' %s" % (flags.sample_offset, script_loc) )
         os.system("sed -i 's/SAMPLE_STEPS/%s/g' %s" % (flags.sample_steps, script_loc) )

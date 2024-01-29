@@ -46,7 +46,6 @@
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : 'orig-NN',
-    'CHECKPOINT_NAME':'dataset1_photon_dec12_vlarge',
-
+    'CHECKPOINT_NAME':'dataset1_photon_dec8_large',
 
 }

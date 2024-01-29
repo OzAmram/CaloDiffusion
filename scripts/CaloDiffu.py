@@ -359,11 +359,6 @@ class CaloDiffu(nn.Module):
         x = x_start * sigma_start
 
 
-
-
-
-
-
     @torch.no_grad()
     def Sample(self, E, layers = None, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0, model = None, gen_shape = None, layer_sample = False, denoise_fn = self.denoise):
         """Generate samples from diffusion model.

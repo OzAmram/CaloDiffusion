@@ -215,8 +215,8 @@ if flags.sample:
 
         print("Sample Algo : %s, %i steps" % (flags.sample_algo, flags.sample_steps))
         if(layer_model is not None):
-
             print("Layer Sample Algo : %s, %i steps" % (flags.layer_sample_algo, flags.layer_sample_steps))
+
         for i,(E,layers_, d_batch) in enumerate(data_loader):
             batch_start = time.time()
             if(E.shape[0] == 0): continue
@@ -308,9 +308,11 @@ if flags.sample:
         generated = generated*(np.reshape(mask,(1,-1))==0)
     
     if(flags.generated == ""):
-        fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.model, job_label))
+        fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.sample_algo + str(flags.sample_steps), job_label))
     else:
         fout = flags.generated
+
+    flags.generated = fout
 
     print("Creating " + fout)
     with h5.File(fout,"w") as h5f:
@@ -339,23 +341,23 @@ if(not flags.sample or flags.job_idx < 0):
         return generated,energies
 
 
-    models = [flags.model]
+    model = flags.model
 
     energies = []
     data_dict = {}
-    for model in models:
 
-        checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'], model)
-        if(flags.generated == ""):
-            f_sample = os.path.join(checkpoint_folder,'generated_{}_{}.h5'.format(dataset_config['CHECKPOINT_NAME'], model))
-        else:
-            f_sample = flags.generated
+    checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'], model)
+    
+    if(flags.generated == ""):
+        print("Missing data file to plot!")
+        exit(1)
+    f_sample = flags.generated
 
-        if np.size(energies) == 0:
-            data,energies = LoadSamples(f_sample)
-            data_dict[utils.name_translate[model]]=data
-        else:
-            data_dict[utils.name_translate[model]]=LoadSamples(f_sample)[0]
+    if np.size(energies) == 0:
+        data,energies = LoadSamples(f_sample)
+        data_dict[utils.name_translate[model]]=data
+    else:
+        data_dict[utils.name_translate[model]]=LoadSamples(f_sample)[0]
     total_evts = energies.shape[0]
 
 

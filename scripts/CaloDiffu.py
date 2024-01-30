@@ -27,6 +27,7 @@ class CaloDiffu(nn.Module):
         self.std_showers = std_showers
         self.training_obj = training_obj
         self.shower_embed = self.config.get('SHOWER_EMBED', '')
+        self.consis_nsteps = self.config.get('CONSIS_NSTEPS', 100)
         self.fully_connected = ('FCN' in self.shower_embed)
         self.NN_embed = NN_embed
         self.layer_model = layer_model
@@ -259,21 +260,22 @@ class CaloDiffu(nn.Module):
         if(embed_type == "log"):
             return 0.5 * torch.log(sigma)
 
-    def pred(self, x, E, t_emb, model = None, layers = None, layer_pred = False, controls = None):
+    def pred(self, x, E, t_emb, model = None, layers = None, layer_sample = False, controls = None):
         if(model is None): model = self.model
 
-        if(self.NN_embed is not None and not layer_pred): x = self.NN_embed.enc(x).to(x.device)
+
+        if(self.NN_embed is not None and not layer_sample): x = self.NN_embed.enc(x).to(x.device)
         if(self.layer_cond and layers is not None): E = torch.cat([E, layers], dim = 1)
-        out = model(self.add_RZPhi(x), E, t_emb, controls = controls)
-        if(self.NN_embed is not None and not layer_pred): out = self.NN_embed.dec(out).to(x.device)
+        out = model(self.add_RZPhi(x), cond=E, time=t_emb, controls = controls)
+        if(self.NN_embed is not None and not layer_sample): out = self.NN_embed.dec(out).to(x.device)
         return out
 
-    def denoise(self, x, E =None, sigma=None, model = None, layers = None, layer_pred = False, controls = None):
+    def denoise(self, x, E =None, sigma=None, model = None, layers = None, layer_sample = False, controls = None):
         t_emb = self.do_time_embed(embed_type = self.time_embed, sigma = sigma.reshape(-1))
         sigma = sigma.reshape(-1, *(1,)*(len(x.shape)-1))
         c_in = 1 / (sigma**2 + 1).sqrt()
 
-        pred = self.pred(x * c_in, E, t_emb, model = model, layers = layers, layer_pred = layer_pred, controls = controls)
+        pred = self.pred(x * c_in, E, t_emb, model = model, layers = layers, layer_sample = layer_sample, controls = controls)
 
         if('noise_pred' in self.training_obj):
             return (x - sigma * pred)
@@ -285,7 +287,9 @@ class CaloDiffu(nn.Module):
             sigma2 = sigma**2
             c_skip = 1. / (sigma2 + 1.)
             c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
+
             return (c_skip * x + c_out * pred)
+
     def __call__(self, x, **kwargs):
         return self.denoise(x, **kwargs)
 
@@ -360,7 +364,7 @@ class CaloDiffu(nn.Module):
 
 
     @torch.no_grad()
-    def Sample(self, E, layers = None, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0, model = None, gen_shape = None, layer_sample = False, denoise_fn = self.denoise):
+    def Sample(self, E, layers = None, num_steps = 200, cold_noise_scale = 0., sample_algo = 'ddpm', debug = False, sample_offset = 0, model = None, gen_shape = None, layer_sample = False):
         """Generate samples from diffusion model.
         
         Args:
@@ -371,6 +375,7 @@ class CaloDiffu(nn.Module):
         Returns: 
         Samples.
         """
+
 
 
         # Full sample (all steps)
@@ -389,6 +394,8 @@ class CaloDiffu(nn.Module):
         if(self.cold_diffu): #cold diffu starts using avg images
             x_start = self.gen_cold_image(E, cold_noise_scale)
 
+        if(model is None): model = self.model
+        extra_args = {'E':E, 'layers':layers, 'layer_sample' : layer_sample, 'model' : model}
 
         if('euler' in sample_algo or 'edm' in sample_algo or 'heun' in sample_algo):
             S_churn = 40 if (sample_algo == 'edm' or 'noise' in sample_algo) else 0  #Number of steps to 'reverse' to add back noise
@@ -401,41 +408,36 @@ class CaloDiffu(nn.Module):
             orig_schedule = False
 
             x,xs, x0s = edm_sampler(self,x_start,E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
-                    S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule, layer_sample = layer_sample, denoise_fn = denoise_fn)
+                    S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule, extra_args=extra_args)
 
         elif('consis' in sample_algo):
-            t_min = 0.002
-            t_max = 500.0
-            rho=7.0
-
             orig_num_steps = self.nsteps
 
-            sample_idxs = [1, 50, 70, 90, 95]
+            self.set_sampling_steps(self.consis_nsteps)
+            print("Consis steps %i" % self.consis_nsteps)
 
-            # Time step discretization from edm paper
-            step_indices = torch.arange(orig_num_steps, dtype=torch.float32, device=x_start.device)
-            t_all_steps = (t_max ** (1 / rho) + step_indices / (orig_num_steps - 1) * (t_min ** (1 / rho) - t_max ** (1 / rho))) ** rho
+            #hardcoded for now...
+            sample_idxs = [0, int(round(self.consis_nsteps*0.5)), int(round(self.consis_nsteps*0.7)), int(round(self.consis_nsteps*0.9)), int(round(self.consis_nsteps*0.95))]
 
-            orig_schedule = True
-
-
-            if(orig_schedule): #use steps from original iDDPM schedule , have to reverse order
-                t_all_steps = [self.sqrt_one_minus_alphas_cumprod[orig_num_steps - t -1]/ self.sqrt_alphas_cumprod[orig_num_steps - t -1] for t in torch.arange(orig_num_steps)]
-
+            t_all_steps = [self.sqrt_one_minus_alphas_cumprod[self.consis_nsteps - t -1]/ self.sqrt_alphas_cumprod[self.consis_nsteps - t -1] for t in torch.arange(self.consis_nsteps)]
 
             if(num_steps > 1):
                 t_steps = torch.tensor([t_all_steps[i] for i in sample_idxs[:num_steps]])
             else:
                 t_steps = torch.tensor([t_all_steps[0]])
+            sigmas = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # end point is zero noise
 
-            t_steps = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # end point is zero noise
+            x,xs, x0s = sample_consis(self, x_start, sigmas, extra_args = extra_args)
+            self.set_sampling_steps(orig_num_steps)
 
-            x,xs, x0s = consis_sampler(x_start, E, layers = layers, num_steps = num_steps, model = model, layer_sample = layer_sample, denoise_fn = denoise_fn)
+        elif(sample_algo == 'ddim' or sample_algo =='ddpm'):
+            x, xs, x0s = sample_dd(self, x_start, num_steps, sample_offset = sample_offset, sample_algo = sample_algo, debug = debug, extra_args=extra_args )
+
         elif('dpm' in sample_algo):
-            x, xs, x0s = self.dpm_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, debug = debug, model = model, layer_sample = layer_sample, denoise_fn = denoise_fn)
+            x, xs, x0s = self.dpm_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, debug = debug, model = model, extra_args = extra_args)
         else:
-            x, xs, x0s = self.dd_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_offset = sample_offset, sample_algo = sample_algo, 
-                    debug = debug, model = model, layer_sample = layer_sample, denoise_fn = denoise_fn)
+            print("Unrecognized sampling algo %s" % sample_algo)
+            exit(1)
 
         if(debug):
             return x.detach().cpu().numpy(), xs, x0s

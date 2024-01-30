@@ -31,6 +31,7 @@ def compute_consis_loss(x, E, t = None, layers = None,  teacher_model = None, mo
 
     with torch.no_grad():
         #denoise 1 step using fixed diffusion model
+        #TODO
         x_prev = teacher_model.p_sample(x_noisy, E, t, layers = layers, sample_algo = sample_algo)
 
         #predict using ema model on one-step denoised x
@@ -301,7 +302,7 @@ if __name__ == '__main__':
 
 
     print("Saving to %s" % checkpoint_folder, flush=True)
-    torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'final.pth'))
+    torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'consis_final.pth'))
 
     with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
         tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")

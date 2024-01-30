@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=JOB_NAME
 #SBATCH --output=JOB_OUT/log_plot_JOBIDX.txt
-#SBATCH --partition=TYPE_gce
+#SBATCH --partition=wc_gpu
 #SBATCH --nodes=1
 #DOGPU --gres=TYPE:1
 #DOGPU --constraint=(CONSTRAINT)

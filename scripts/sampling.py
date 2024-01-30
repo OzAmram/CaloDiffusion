@@ -4,8 +4,22 @@ import torch.nn as nn
 import math
 import torchsde
 
-
 from scipy import integrate
+
+def extract(a, t, x_shape):
+    batch_size = t.shape[0]
+    out = a.gather(-1, t.cpu())
+    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
+
+def cosine_beta_schedule(nsteps, s=0.008):
+    """
+    cosine schedule as proposed in https://arxiv.org/abs/2102.09672
+    """
+    x = torch.linspace(0, nsteps, nsteps+1)
+    alphas_cumprod = torch.cos(((x / nsteps) + s) / (1 + s) * np.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clip(betas, 0.0001, 0.9999)
 
 def default_noise_sampler(x):
     return lambda sigma, sigma_next: torch.randn_like(x)
@@ -21,7 +35,7 @@ def get_ancestral_step(sigma_from, sigma_to, eta=1.):
 
 
 def edm_sampler( model, x, E, layers = None, sample_algo = 'euler', randn_like=torch.randn_like, num_steps=400, sigma_min=0.002, sigma_max=1, rho=7,
-    S_churn=0, S_min=0, S_max=1.0, S_noise=1,sample_offset = 0, orig_schedule = False, layer_sample = False):
+    S_churn=0, S_min=0, S_max=1.0, S_noise=1,sample_offset = 0, orig_schedule = False, extra_args = None):
     #EDM sampler (and variations), adapted from  https://github.com/NVlabs/edm
 
 
@@ -62,7 +76,7 @@ def edm_sampler( model, x, E, layers = None, sample_algo = 'euler', randn_like=t
         x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
 
         t_hat_full = torch.full((gen_size,), t_hat, device=x.device)
-        denoised = model.denoise(x_hat, E, t_hat_full, layers = layers, layer_pred = layer_sample).to(torch.float32) 
+        denoised = model(x_hat, sigma=t_hat_full, **extra_args).to(torch.float32) 
        
         d_cur = (x_hat - denoised)/t_hat
         h = t_next - t_hat
@@ -76,7 +90,7 @@ def edm_sampler( model, x, E, layers = None, sample_algo = 'euler', randn_like=t
             # 2nd order correction.
             assert ('heun' in sample_algo or 'edm' in sample_algo)
             t_prime_full = torch.full((gen_size,), t_prime, device = x.device)
-            denoised = model.denoise(x_prime, E, t_prime_full,layers = layers, layer_pred = layer_sample).to(torch.float32)
+            denoised = model(x_prime, sigma=t_prime_full, **extra_args).to(torch.float32) 
             d_prime = (x_next - denoised) / t_next
             x_next = x_hat + h * (0.5 * d_cur + 0.5 * d_prime)
 
@@ -510,19 +524,22 @@ def sample_dpmpp_3m_sde(model, x, sigmas, extra_args=None, callback=None, disabl
 
 def sample_consis(model, x, sigmas = None, extra_args = None, sigma_min = 0.002):
 
-    gen_size = x_start.shape[0]
-    x = x_start * t_steps[0]
+    x = x * sigmas[0]
     
     x0s = []
     xs = []
 
+    gen_size=x.shape[0]
+
 
     for i, (sigma_cur, sigma_next) in enumerate(zip(sigmas[:-1], sigmas[1:])): # 0, ..., N-1
 
-        x0 = model.denoise(x, sigma_cur, **extra_args).to(torch.float32) 
+        sigma_full = torch.full((gen_size,), sigma_cur, device=x.device, dtype=torch.float32)
+
+        x0 = model(x, sigma=sigma_full, **extra_args).to(torch.float32) 
 
         sigma_next = torch.clip(sigma_next, sigma_min, None)
-        if(sigma_min.item() > sigma_min):
+        if(sigma_next > sigma_min):
             noise = torch.randn_like(x)
             x = x0 + noise * torch.sqrt(sigma_next**2 - sigma_min**2)
         else: x = x0
@@ -532,35 +549,54 @@ def sample_consis(model, x, sigmas = None, extra_args = None, sigma_min = 0.002)
 
     return x,xs,x0
 
+@torch.no_grad()
+def sample_dd(model, x, num_steps, time_steps = None, sample_offset = 0, sample_algo = 'ddpm', debug = False, extra_args = None):
+    #Ddpm or ddim sampler
+    #Using formalism / notation of EDM paper
 
-    @torch.no_grad()
-    def sample_dd(model, x, time_steps, sample_algo = 'ddpm', debug = False, extra_args = None):
-        #One step of ddpm or ddim sampler
-        #Using formalism / notation of EDM paper
+    #Precompute various quantities
+    betas = cosine_beta_schedule(num_steps)
+    alphas = 1. - betas
+    alphas_cumprod = torch.cumprod(alphas, axis = 0)
 
-        for time_step in time_steps:      
-            times = torch.full((gen_size,), time_step, device=device, dtype=torch.long)
-            out = self.p_sample(x, E, times, layers = layers, noise = fixed_noise, sample_algo = sample_algo, debug = debug, model = model, layer_sample = layer_sample)
-            if(debug): 
-                x, x0_pred = out
-                xs.append(x.detach().cpu().numpy())
-                x0s.append(x0_pred.detach().cpu().numpy())
-            else: x = out
+    alphas_cumprod_prev = torch.nn.functional.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
 
-        if(self.nsteps != old_nsteps):
-            self.set_sampling_steps(old_nsteps)
-        return x, xs, x0s
+    sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
+    sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
+    sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod)
 
-        if(noise is None): 
-            noise = torch.randn(x.shape, device = x.device)
+    posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
 
-        sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
-        sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, x.shape)
-        posterior_variance_t = extract(self.posterior_variance, t, x.shape)
+    gen_size = x.shape[0]
+
+    if(time_steps is None):
+        time_steps = torch.arange(num_steps)
+        time_steps = torch.flip(time_steps,[0])
+
+
+    if(sample_offset >0):
+        time_steps = time_steps[sample_offset:]
+
+    sigma_start = sqrt_one_minus_alphas_cumprod[time_steps[0]] / sqrt_alphas_cumprod[time_steps[0]]
+    x = x * sigma_start
+
+    xs  = []
+    x0s = []
+
+    for t in time_steps:   
+        t = torch.full((gen_size,), t, device=x.device, dtype=torch.long)
+
+        sqrt_one_minus_alphas_cumprod_t = extract(sqrt_one_minus_alphas_cumprod, t, x.shape)
+        sqrt_alphas_cumprod_t = extract(sqrt_alphas_cumprod, t, x.shape)
+        posterior_variance_t = extract(posterior_variance, t, x.shape)
+
+        alpha = extract(alphas_cumprod, t, x.shape)
+        alpha_prev = extract(alphas_cumprod_prev, t, x.shape)
+        denom = extract(sqrt_alphas_cumprod, torch.maximum(t-1, torch.zeros_like(t)), x.shape)
 
         sigma = sqrt_one_minus_alphas_cumprod_t / sqrt_alphas_cumprod_t
 
-        x0_pred = self.denoise(x, E, sigma, layers = layers, model = model, layer_pred = layer_sample)
+        x0_pred = model(x, sigma=sigma, **extra_args)
         noise_pred = (x - x0_pred)/sigma
 
         if(sample_algo == 'ddpm'):
@@ -570,10 +606,7 @@ def sample_consis(model, x, sigmas = None, extra_args = None, sigma_min = 0.002)
             #pure ddim (no stochasticity)
             ddim_eta = 0.0
 
-        alpha = extract(self.alphas_cumprod, t, x.shape)
-        alpha_prev = extract(self.alphas_cumprod_prev, t, x.shape)
-
-        denom = extract(self.sqrt_alphas_cumprod, torch.maximum(t-1, torch.zeros_like(t)), x.shape)
+        noise = torch.randn(x.shape, device = x.device)
 
         ddim_sigma = ddim_eta * (( (1 - alpha_prev) / (1 - alpha)) * (1 - alpha / alpha_prev))**0.5
         num = (1. - alpha_prev - ddim_sigma**2).sqrt()
@@ -585,8 +618,11 @@ def sample_consis(model, x, sigmas = None, extra_args = None, sigma_min = 0.002)
         #don't step for t= 0
         mask = (t > 0).reshape(-1, *((1,) *(len(x.shape) - 1)))
 
+        x = x0_pred + mask * sigma_prev * noise_pred + ddim_sigma * noise / denom
 
-        out = x0_pred + mask * sigma_prev * noise_pred + ddim_sigma * noise / denom
+        x0s.append(x0_pred)
+        xs.append(x)
 
-        if(debug): return out, x0_pred
-        return out
+    return x,xs,x0s
+
+

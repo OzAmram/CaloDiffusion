@@ -40,6 +40,7 @@ parser.add_argument('--sample', action='store_true', default=False,help='Sample 
 parser.add_argument('--sample_steps', default = -1, type = int, help='How many steps for sampling (override config)')
 parser.add_argument('--sample_offset', default = 0, type = int, help='Skip some iterations in the sampling (noisiest iters most unstable)')
 parser.add_argument('--sample_algo', default = 'ddpm', help = 'What sampling algorithm (ddpm, ddim, cold, cold2)')
+parser.add_argument('--cond_dist_model', default = False, action='store_true', help = 'Is the model conditional distillation')
 
 parser.add_argument('--layer_only', default=False, action= 'store_true', help='Only sample layer energies')
 parser.add_argument('--layer_model', default='', help='Location of model for layer energies')
@@ -134,7 +135,7 @@ if flags.sample:
     data_loader = torchdata.DataLoader(torch_dataset, batch_size = batch_size, shuffle = False)
 
     avg_showers = std_showers = E_bins = None
-    if(cold_diffu or flags.model == 'Avg'):
+    if(cold_diffu or flags.model == 'Avg' or flags.cond_dist_model):
         f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
         #Already pre-processed
         avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
@@ -183,6 +184,17 @@ if flags.sample:
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins).to(device = device)
 
         saved_model = torch.load(flags.model_loc, map_location = device)
+
+        if(flags.cond_dist_model):
+            #init controlnet model 
+            controlnet_model = copy.deepcopy(model)
+            #Upsampling layers not used
+            controlnet_model.model.ups = None
+
+
+            model = ControlledUNet(model, controlnet_model)
+            #Freeze UNet part
+
         if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
         else: model.load_state_dict(saved_model)
 
@@ -203,8 +215,8 @@ if flags.sample:
 
         print("Sample Algo : %s, %i steps" % (flags.sample_algo, flags.sample_steps))
         if(layer_model is not None):
-
             print("Layer Sample Algo : %s, %i steps" % (flags.layer_sample_algo, flags.layer_sample_steps))
+
         for i,(E,layers_, d_batch) in enumerate(data_loader):
             batch_start = time.time()
             if(E.shape[0] == 0): continue
@@ -296,9 +308,11 @@ if flags.sample:
         generated = generated*(np.reshape(mask,(1,-1))==0)
     
     if(flags.generated == ""):
-        fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.model, job_label))
+        fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.sample_algo + str(flags.sample_steps), job_label))
     else:
         fout = flags.generated
+
+    flags.generated = fout
 
     print("Creating " + fout)
     with h5.File(fout,"w") as h5f:
@@ -327,23 +341,23 @@ if(not flags.sample or flags.job_idx < 0):
         return generated,energies
 
 
-    models = [flags.model]
+    model = flags.model
 
     energies = []
     data_dict = {}
-    for model in models:
 
-        checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'], model)
-        if(flags.generated == ""):
-            f_sample = os.path.join(checkpoint_folder,'generated_{}_{}.h5'.format(dataset_config['CHECKPOINT_NAME'], model))
-        else:
-            f_sample = flags.generated
+    checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'], model)
+    
+    if(flags.generated == ""):
+        print("Missing data file to plot!")
+        exit(1)
+    f_sample = flags.generated
 
-        if np.size(energies) == 0:
-            data,energies = LoadSamples(f_sample)
-            data_dict[utils.name_translate[model]]=data
-        else:
-            data_dict[utils.name_translate[model]]=LoadSamples(f_sample)[0]
+    if np.size(energies) == 0:
+        data,energies = LoadSamples(f_sample)
+        data_dict[utils.name_translate[model]]=data
+    else:
+        data_dict[utils.name_translate[model]]=LoadSamples(f_sample)[0]
     total_evts = energies.shape[0]
 
 

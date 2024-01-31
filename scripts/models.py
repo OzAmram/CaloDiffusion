@@ -22,15 +22,6 @@ def default(val, d):
 
 
 
-def cosine_beta_schedule(nsteps, s=0.008):
-    """
-    cosine schedule as proposed in https://arxiv.org/abs/2102.09672
-    """
-    x = torch.linspace(0, nsteps, nsteps+1)
-    alphas_cumprod = torch.cos(((x / nsteps) + s) / (1 + s) * np.pi * 0.5) ** 2
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, 0.0001, 0.9999)
 
 
 class CylindricalConvTrans(nn.Module):
@@ -109,11 +100,6 @@ class ScalarAddLayer(nn.Module):
         #out = x1 + x2
         return out
 
-
-def extract(a, t, x_shape):
-    batch_size = t.shape[0]
-    out = a.gather(-1, t.cpu())
-    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
 
 
 class SinusoidalPositionEmbeddings(nn.Module):
@@ -375,7 +361,7 @@ class ResNet(nn.Module):
 
 
 
-    def forward(self, x, cond, time):
+    def forward(self, x, cond=None, time=None, controls = None):
 
         c = self.cond_mlp(cond)
         t = self.time_mlp(time)
@@ -562,7 +548,7 @@ class CondUnet(nn.Module):
         else:  final_lay = CylindricalConv(layer_sizes[0], out_dim, 1)
         self.final_conv = nn.Sequential( block_klass(layer_sizes[1], layer_sizes[0]),  final_lay )
 
-    def forward(self, x, cond, time, controls = None):
+    def forward(self, x, cond=None, time=None, controls = None):
 
         x = self.init_conv(x)
 
@@ -634,6 +620,5 @@ class CondUnet(nn.Module):
         hs.append(x)
 
         return hs
-
 
 

@@ -4,7 +4,7 @@ import argparse
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', default='diffu', help='Model to train (diffu, layers, consis)')
+parser.add_argument('--model', default='diffu', help='Model to train (diffu, layers, consis, cond_dist)')
 parser.add_argument('-c', '--config', default='config_dataset2.json', help='Config file with training parameters')
 parser.add_argument('-n', '--name', default='test', help='job name')
 parser.add_argument("--resubmit", default = False, action='store_true')
@@ -16,7 +16,7 @@ if(flags.name[-1] =="/"): flags.name = flags.name[:-1]
 print(flags.name)
 
 base_dir = r"\/work1\/cms_mlsim\/oamram\/CaloDiffusion\/slurm\/"
-if(flags.model in ['diffu', 'layers', 'consis']):
+if(flags.model in ['diffu', 'layers', 'consis', 'cond_dist']):
     if(not os.path.exists(flags.name)): os.system("mkdir %s" % flags.name)
     cfg_loc = flags.name + "/config.json"
     script_loc = flags.name + "/diffu_train.sh"

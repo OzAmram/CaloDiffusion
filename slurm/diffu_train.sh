@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=JOB_NAME
 #SBATCH --output=JOB_OUT/log.txt
-#SBATCH --partition=gpu_gce
+#SBATCH --partition=wc_gpu
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=MEMORY

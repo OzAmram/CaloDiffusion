@@ -32,7 +32,7 @@ class CaloDiffu(nn.Module):
         self.NN_embed = NN_embed
         self.layer_model = layer_model
 
-        supported = ['noise_pred', 'mean_pred', 'hybrid']
+        supported = ['noise_pred', 'mean_pred', 'hybrid', 'minsnr']
         is_obj = [s in self.training_obj for s in supported]
         if(not any(is_obj)):
             print("Training objective %s not supported!" % self.training_obj)
@@ -63,6 +63,7 @@ class CaloDiffu(nn.Module):
             self.discrete_time = False
             self.P_mean = -1.2
             self.P_std = 1.2
+            self.sigma_data = 0.5
 
         self.set_sampling_steps(nsteps)
 
@@ -182,11 +183,20 @@ class CaloDiffu(nn.Module):
         return torch.squeeze(self.avg_showers[idxs]), torch.squeeze(self.std_showers[idxs])
 
 
+    #utils function for min snr weighting
+    def get_scalings(self, sigma):
+        c_skip = self.sigma_data ** 2 / (sigma ** 2 + self.sigma_data ** 2)
+        c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2) ** 0.5
+        c_in = 1 / (sigma ** 2 + self.sigma_data ** 2) ** 0.5
+        return c_skip, c_out, c_in
+
+    def weighting_soft_min_snr(self, sigma, k = 2):
+        return (sigma * self.sigma_data) ** 2 / (sigma ** 2 + self.sigma_data ** k) ** 2
 
 
 
 
-    def compute_loss(self, data, E, noise = None, t = None, layers = None, loss_type = "l2", rnd_normal = None, layer_loss = False ):
+    def compute_loss(self, data, E, noise = None, t = None, layers = None, loss_type = "l2", rnd_normal = None, layer_loss = False, scale=1 ):
         if noise is None:
             noise = torch.randn_like(data)
 
@@ -226,6 +236,17 @@ class CaloDiffu(nn.Module):
             target = data
             weight = 1./ sigma2
             pred = x0_pred
+            
+        elif('minsnr' in self.training_obj):
+            sigma0 = (rnd_normal * self.P_std + self.P_mean).exp()
+            c_skip, c_out, c_in = self.get_scalings(sigma)
+            c_weight = self.weighting_soft_min_snr(sigma0)
+            x_pred = self.pred(x_noisy*c_in, E, sigma0, model = model, layers = layers)
+            target = (data - c_skip * x_noisy) / c_out
+            
+                
+            
+            
 
 
         if loss_type == 'l1':
@@ -238,13 +259,21 @@ class CaloDiffu(nn.Module):
 
         elif loss_type == "huber":
             loss =torch.nn.functional.smooth_l1_loss(target, pred)
+            
+        elif loss_type == "minsnr":
+            loss = (((x_pred - target) ** 2).flatten(1).mean(1) * c_weight).sum()
+            if (scale != 1):                
+                sq_error = dct(model_output - target) ** 2
+                f_weight = freq_weight_nd(sq_error.shape[2:], self.scales, dtype=sq_error.dtype, device=sq_error.device)
+                loss = ((sq_error * f_weight).flatten(1).mean(1) * c_weight).sum()
         else:
             raise NotImplementedError()
 
 
         return loss
         
-
+        
+  
 
     def do_time_embed(self, t = None, embed_type = "identity",  sigma = None,):
         if(sigma is None): sigma = self.sqrt_one_minus_alphas_cumprod[t] /self.sqrt_alphas_cumprod[t]
@@ -304,7 +333,7 @@ class CaloDiffu(nn.Module):
         cold_scales = cold_noise_scale
         return torch.add(avg_shower, cold_scales * (noise * std_shower))
 
-    def dpm_sampler(self, x_start, E, layers = None, num_steps = 400, sample_algo = 'dpm', model = None, debug = False, layer_sample = False):
+    def dpm_sampler(self, x_start, E, layers = None, num_steps = 400, sample_algo = 'dpm', model = None, debug = False, extra_args = None):
         #dpm family of samplers
 
         old_nsteps = self.nsteps
@@ -332,13 +361,15 @@ class CaloDiffu(nn.Module):
             x = sample_dpmpp_2m_sde(self, x, sigmas, extra_args={'E':E, 'layers':layers})
         elif('++' in sample_algo):
             x = sample_dpmpp_2m(self, x, sigmas, extra_args={'E':E, 'layers':layers})
+        elif('unipc' in sample_algo):
+            x = sample_unipc(self, x, sigmas, extra_args={'E':E, 'layers':layers})
         else:
             x = sample_dpm_fast(self, x, sigma_min, sigma_max, num_steps, extra_args={'E':E, 'layers':layers})
 
         return x, None,None
 
 
-    def dd_sampler(self, x_start, E, layers = None, num_steps = 400, sample_offset = 0, sample_algo = 'ddpm', model = None, debug = False, layer_sample = False):
+    def dd_sampler(self, x_start, E, layers = None, num_steps = 400, sample_offset = 0, sample_algo = 'ddpm', model = None, debug = False, extra_args = None):
         #ddpm and ddim samplers
 
         old_nsteps = self.nsteps
@@ -397,10 +428,10 @@ class CaloDiffu(nn.Module):
         if(model is None): model = self.model
         extra_args = {'E':E, 'layers':layers, 'layer_sample' : layer_sample, 'model' : model}
 
-        if('euler' in sample_algo or 'edm' in sample_algo or 'heun' in sample_algo):
+        if('euler' in sample_algo or 'edm' in sample_algo or 'heun' in sample_algo or 'dpm2' in sample_algo or 'restart' in sample_algo or 'lms' in sample_algo):
             S_churn = 40 if (sample_algo == 'edm' or 'noise' in sample_algo) else 0  #Number of steps to 'reverse' to add back noise
             S_min = 0.01
-            S_max = 50
+            S_max = 50 if (sample_algo == 'edm' or 'noise' in sample_algo) else 1
             S_noise = 1.003
             sigma_min = 0.002
             #sigma_max = 500.0

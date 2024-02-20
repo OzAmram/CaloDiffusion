@@ -308,4 +308,3 @@ if __name__ == '__main__':
         tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")
     with open(checkpoint_folder + "/validation_losses.txt","w") as vfileout:
         vfileout.write("\n".join("{}".format(vl) for vl in val_losses)+"\n")
-

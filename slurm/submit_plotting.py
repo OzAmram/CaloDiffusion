@@ -51,7 +51,7 @@ if(flags.model == 'Diffu'):
         if(flags.layer_model):
             os.system("sed -i 's/LAYMODEL/%s/g' %s" % (base_dir + model_dir_tail +"\/" + "layer_checkpoint.pth", script_loc) )
         else:
-            os.system("""sed -i "s/LAYMODEL/''/g" %s""" % (script_loc) )
+            os.system("""sed -i "s/LAYMODEL//g" %s""" % (script_loc) )
 
         os.system("sed -i 's/JOB_NAME/%s/g' %s" % (flags.name, script_loc))
         os.system("sed -i 's/JOB_OUT/%s/g' %s" % (flags.name, script_loc))

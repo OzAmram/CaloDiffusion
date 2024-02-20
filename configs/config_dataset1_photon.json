@@ -41,11 +41,11 @@
     'CONSIS_NSTEPS': 30,
     'COLD_DIFFU' : False,
     'COLD_NOISE' : 1.0,
-    'TRAINING_OBJ' : 'hybrid_weight',
-    'LOSS_TYPE' : 'l2',
+    'TRAINING_OBJ' : 'minsnr',
+    'LOSS_TYPE' : 'minsnr',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : 'orig-NN',
-    'CHECKPOINT_NAME':'dataset1_photon_dec12_vlarge',
+    'CHECKPOINT_NAME':'dataset1_photon_feb20_minsnr',
 
 }

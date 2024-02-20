@@ -212,7 +212,6 @@ class CaloDiffu(nn.Module):
 
         else:
             if(rnd_normal is None): rnd_normal = torch.randn((data.size()[0],), device=data.device)
-
             sigma = (rnd_normal * self.P_std + self.P_mean).exp().reshape(const_shape)
 
         x_noisy = data + sigma * noise
@@ -221,28 +220,32 @@ class CaloDiffu(nn.Module):
         weight = 1.
 
         model = self.model if not layer_loss else self.layer_model
-        x0_pred = self.denoise(x_noisy, E, sigma, model = model, layers = layers)
 
-        if('hybrid' in self.training_obj ):
-            weight = torch.reshape(1. + (1./ sigma2), const_shape)
-            target = data
-            pred = x0_pred
-
-        elif('noise_pred' in self.training_obj):
-            pred = (data - x0_pred)/sigma
-            target = noise
-            weight = 1.
-        elif('mean_pred' in self.training_obj):
-            target = data
-            weight = 1./ sigma2
-            pred = x0_pred
-            
-        elif('minsnr' in self.training_obj):
+        if('minsnr' in self.training_obj):
             sigma0 = (rnd_normal * self.P_std + self.P_mean).exp()
             c_skip, c_out, c_in = self.get_scalings(sigma)
             c_weight = self.weighting_soft_min_snr(sigma0)
-            x_pred = self.pred(x_noisy*c_in, E, sigma0, model = model, layers = layers)
+            pred = self.pred(x_noisy*c_in, E, sigma0, model = model, layers = layers)
             target = (data - c_skip * x_noisy) / c_out
+
+
+        else:
+            x0_pred = self.denoise(x_noisy, E, sigma, model = model, layers = layers)
+
+            if('hybrid' in self.training_obj ):
+                weight = torch.reshape(1. + (1./ sigma2), const_shape)
+                target = data
+                pred = x0_pred
+
+            elif('noise_pred' in self.training_obj):
+                pred = (data - x0_pred)/sigma
+                target = noise
+                weight = 1.
+            elif('mean_pred' in self.training_obj):
+                target = data
+                weight = 1./ sigma2
+                pred = x0_pred
+            
             
                 
             
@@ -261,7 +264,7 @@ class CaloDiffu(nn.Module):
             loss =torch.nn.functional.smooth_l1_loss(target, pred)
             
         elif loss_type == "minsnr":
-            loss = (((x_pred - target) ** 2).flatten(1).mean(1) * c_weight).sum()
+            loss = (((pred - target) ** 2).flatten(1).mean(1) * c_weight).sum()
             if (scale != 1):                
                 sq_error = dct(model_output - target) ** 2
                 f_weight = freq_weight_nd(sq_error.shape[2:], self.scales, dtype=sq_error.dtype, device=sq_error.device)
@@ -301,23 +304,27 @@ class CaloDiffu(nn.Module):
 
     def denoise(self, x, E =None, sigma=None, model = None, layers = None, layer_sample = False, controls = None):
         t_emb = self.do_time_embed(embed_type = self.time_embed, sigma = sigma.reshape(-1))
-        sigma = sigma.reshape(-1, *(1,)*(len(x.shape)-1))
-        c_in = 1 / (sigma**2 + 1).sqrt()
+        if('minsnr' in self.training_obj):
+            c_skip, c_out, c_in = self.get_scalings(sigma)
+        else:
+            sigma = sigma.reshape(-1, *(1,)*(len(x.shape)-1))
+            c_in = 1 / (sigma**2 + 1).sqrt()
+            sigma2 = sigma**2
+            c_skip = 1. / (sigma2 + 1.)
+            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
+
 
         pred = self.pred(x * c_in, E, t_emb, model = model, layers = layers, layer_sample = layer_sample, controls = controls)
 
         if('noise_pred' in self.training_obj):
             return (x - sigma * pred)
 
-        if('mean_pred' in self.training_obj):
+        elif('mean_pred' in self.training_obj):
             return pred
         elif('hybrid' in self.training_obj):
 
-            sigma2 = sigma**2
-            c_skip = 1. / (sigma2 + 1.)
-            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
-
             return (c_skip * x + c_out * pred)
+
 
     def __call__(self, x, **kwargs):
         return self.denoise(x, **kwargs)

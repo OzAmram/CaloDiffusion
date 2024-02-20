@@ -149,8 +149,6 @@ if __name__ == '__main__':
         exit(1)
 
 
-    os.system('cp CaloDiffu.py {}'.format(checkpoint_folder)) # bkp of model def
-    os.system('cp models.py {}'.format(checkpoint_folder)) # bkp of model def
     os.system('cp {} {}/config.json'.format(flags.config,checkpoint_folder)) # bkp of config file
 
     early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], mode = 'diff', min_delta = 1e-5)

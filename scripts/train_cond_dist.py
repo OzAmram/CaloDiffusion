@@ -25,7 +25,7 @@ def compute_cond_dist_loss(x, E, t = None, layers = None,  model = None, ema_mod
     sigma2 = sigma**2
 
     #predict x0 and noise using model
-    x0 = model.denoise(x_noisy, c_x, E, sigma, layers = layers)
+    x0 = model.denoise(x_noisy, c_x = c_x, E =E, sigma=sigma, layers = layers)
     noise_pred = (x_noisy - x0)/sigma
 
     #Use true noise plus estimated x0 to construct new sample
@@ -282,7 +282,17 @@ if __name__ == '__main__':
         scheduler.step(torch.tensor([train_loss]))
 
         if(val_loss < min_validation_loss):
-            torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'cond_dist_best_val.pth'))
+            val_path = os.path.join(checkpoint_folder, 'cond_dist_best_val.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': ema_model.ema_model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'train_loss_hist': training_losses,
+                'val_loss_hist': val_losses,
+                'early_stop_dict': early_stopper.__dict__,
+                }, val_path)
+
             min_validation_loss = val_loss
 
         if(early_stopper.early_stop(val_loss - train_loss)):
@@ -313,7 +323,18 @@ if __name__ == '__main__':
 
 
     print("Saving to %s" % checkpoint_folder, flush=True)
-    torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'final.pth'))
+
+    torch.save(ema_model.ema_model.state_dict(), os.path.join(checkpoint_folder, 'cond_dist_final.pth'))
+    final_path = os.path.join(checkpoint_folder, 'cond_dist_final.pth')
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': ema_model.ema_model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'train_loss_hist': training_losses,
+        'val_loss_hist': val_losses,
+        'early_stop_dict': early_stopper.__dict__,
+        }, final_path)
 
     with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
         tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")

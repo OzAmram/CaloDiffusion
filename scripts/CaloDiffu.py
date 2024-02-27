@@ -230,7 +230,7 @@ class CaloDiffu(nn.Module):
 
 
         else:
-            x0_pred = self.denoise(x_noisy, E, sigma, model = model, layers = layers)
+            x0_pred = self.denoise(x_noisy, E=E, sigma=sigma, model = model, layers = layers)
 
             if('hybrid' in self.training_obj ):
                 weight = torch.reshape(1. + (1./ sigma2), const_shape)
@@ -314,6 +314,9 @@ class CaloDiffu(nn.Module):
             c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
 
 
+        print(sigma.shape)
+        print(x.shape)
+        print(c_in.shape)
         pred = self.pred(x * c_in, E, t_emb, model = model, layers = layers, layer_sample = layer_sample, controls = controls)
 
         if('noise_pred' in self.training_obj):
@@ -321,9 +324,10 @@ class CaloDiffu(nn.Module):
 
         elif('mean_pred' in self.training_obj):
             return pred
-        elif('hybrid' in self.training_obj):
-
+        elif('hybrid' in self.training_obj or 'minsnr' in self.training_obj):
             return (c_skip * x + c_out * pred)
+        else:
+            print("??? Training obj %s" % self.training_obj)
 
 
     def __call__(self, x, **kwargs):
@@ -432,7 +436,7 @@ class CaloDiffu(nn.Module):
         if(self.cold_diffu): #cold diffu starts using avg images
             x_start = self.gen_cold_image(E, cold_noise_scale)
 
-        if(model is None): model = self.model
+        caller = self if (model is None or layer_sample) else model
         extra_args = {'E':E, 'layers':layers, 'layer_sample' : layer_sample, 'model' : model}
 
         if('euler' in sample_algo or 'edm' in sample_algo or 'heun' in sample_algo or 'dpm2' in sample_algo or 'restart' in sample_algo or 'lms' in sample_algo):
@@ -445,7 +449,7 @@ class CaloDiffu(nn.Module):
             sigma_max = 80.0
             orig_schedule = False
 
-            x,xs, x0s = edm_sampler(self,x_start,E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
+            x,xs, x0s = edm_sampler(model,x_start,E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
                     S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule, extra_args=extra_args)
 
         elif('consis' in sample_algo):
@@ -465,11 +469,11 @@ class CaloDiffu(nn.Module):
                 t_steps = torch.tensor([t_all_steps[0]])
             sigmas = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # end point is zero noise
 
-            x,xs, x0s = sample_consis(self, x_start, sigmas, extra_args = extra_args)
+            x,xs, x0s = sample_consis(caller, x_start, sigmas, extra_args = extra_args)
             self.set_sampling_steps(orig_num_steps)
 
         elif(sample_algo == 'ddim' or sample_algo =='ddpm'):
-            x, xs, x0s = sample_dd(self, x_start, num_steps, sample_offset = sample_offset, sample_algo = sample_algo, debug = debug, extra_args=extra_args )
+            x, xs, x0s = sample_dd(caller, x_start, num_steps, sample_offset = sample_offset, sample_algo = sample_algo, debug = debug, extra_args=extra_args )
 
         elif('dpm' in sample_algo):
             x, xs, x0s = self.dpm_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, debug = debug, model = model, extra_args = extra_args)

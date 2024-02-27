@@ -12,6 +12,7 @@ import torch
 import torch.utils.data as torchdata
 from CaloAE import *
 from CaloDiffu import *
+from ControlNet import *
 import h5py
 
 if(torch.cuda.is_available()): device = torch.device('cuda')
@@ -136,11 +137,12 @@ if flags.sample:
 
     avg_showers = std_showers = E_bins = None
     if(cold_diffu or flags.model == 'Avg' or flags.cond_dist_model):
-        f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
+        f_avg_shower = h5.File(flags.data_folder + dataset_config["AVG_SHOWER_LOC"])
         #Already pre-processed
         avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
         std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
         E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
+        print("AVG showers", avg_showers.shape)
 
     NN_embed = None
     if('NN' in shower_embed):
@@ -194,6 +196,8 @@ if flags.sample:
 
             model = ControlledUNet(model, controlnet_model)
             #Freeze UNet part
+
+        print(list(saved_model.keys()))
 
         if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
         else: model.load_state_dict(saved_model)

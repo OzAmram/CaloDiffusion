@@ -28,7 +28,7 @@ class ControlledUNet(nn.Module):
         self.control_adds.append(ScalarAddLayer())
 
         
-    def denoise(self, x, c_x = None, E = None, sigma = None, layers = None):
+    def denoise(self, x, c_x = None, E =None, sigma=None, model = None, layers = None, layer_sample = False, controls = None):
 
         if(c_x is None):
             avg_showers, std_showers = self.UNet.lookup_avg_std_shower(E)
@@ -46,6 +46,20 @@ class ControlledUNet(nn.Module):
 
         out = self.UNet.denoise(x, conds, sigma, controls = controls)
         return out
+
+    def __call__(self, x, **kwargs):
+        return self.denoise(x, **kwargs)
+
+    def Sample(self, E, layer_sample = False, model = None, **kwargs):
+
+        if(layer_sample): 
+            return self.UNet.Sample(E, layer_sample = True, model = model, **kwargs)
+
+        else:
+            return self.UNet.Sample(E, model = self, **kwargs)
+
+
+
 
 
 

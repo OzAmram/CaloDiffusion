@@ -314,9 +314,6 @@ class CaloDiffu(nn.Module):
             c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
 
 
-        print(sigma.shape)
-        print(x.shape)
-        print(c_in.shape)
         pred = self.pred(x * c_in, E, t_emb, model = model, layers = layers, layer_sample = layer_sample, controls = controls)
 
         if('noise_pred' in self.training_obj):

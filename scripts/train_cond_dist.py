@@ -59,6 +59,7 @@ if __name__ == '__main__':
     parser.add_argument('--nevts', type=float,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
+    parser.add_argument('--freeze_baseline_model', action='store_true', default=False,help='Only optimize control net, leaving base diffusion model frozen')
     parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
     parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
@@ -184,7 +185,7 @@ if __name__ == '__main__':
     cond_dist_model = ControlledUNet(diffu_model, controlnet_model)
     cond_dist_model.train()
     #Freeze UNet part
-    cond_dist_model.UNet.model.eval()
+    if(flags.freeze_baseline_model): cond_dist_model.UNet.model.eval()
 
 
     checkpoint = dict()
@@ -209,8 +210,11 @@ if __name__ == '__main__':
     if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
     print(early_stopper.__dict__)
     
-    #optimizer only on moving controlnet model (not EMA)
-    optimizer = optim.Adam(controlnet_model.model.parameters(), lr = float(dataset_config["LR"]))
+    #optimizer on only controlnet or full model (not EMA)
+    if(flags.freeze_baseline_model): optimizer = optim.Adam(controlnet_model.model.parameters(), lr = float(dataset_config["LR"]))
+    else: optimizer = optim.Adam(cond_dist_model.parameters(), lr = float(dataset_config["LR"]))
+
+
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 15, verbose = True) 
     if('optimizer_state_dict' in checkpoint.keys() and not flags.reset_training): optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     if('scheduler_state_dict' in checkpoint.keys() and not flags.reset_training): scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -230,7 +234,8 @@ if __name__ == '__main__':
         print("Beginning epoch %i" % epoch, flush=True)
         train_loss = 0
 
-        cond_dist_model.ControlNet.model.train()
+        if(flags.freeze_baseline_model): cond_dist_model.ControlNet.model.train()
+        else: cond_dist_model.train()
         for i, (E,layers, data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
             cond_dist_model.zero_grad()
             optimizer.zero_grad()
@@ -260,7 +265,8 @@ if __name__ == '__main__':
         print("loss: "+ str(train_loss))
 
         val_loss = 0
-        cond_dist_model.ControlNet.model.eval()
+        if(flags.freeze_baseline_model): cond_dist_model.ControlNet.model.eval()
+        else: cond_dist_model.eval()
         for i, (vE, vlayers, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
             vdata = vdata.to(device=device)
             vE = vE.to(device = device)

@@ -284,7 +284,7 @@ if flags.sample:
                         num_bins = 40, normalize = True, fname = fout_ex)
 
     out_layers = layers if (gen_layers is None) else gen_layers
-    generated,energies = utils.ReverseNorm(generated,energies[:nevts], layerE = out_layers,
+    generated,energies = utils.ReverseNorm(generated,energies, layerE = out_layers,
                                            shape=dataset_config['SHAPE'],
                                            logE=dataset_config['logE'],
                                            max_deposit=dataset_config['MAXDEP'],

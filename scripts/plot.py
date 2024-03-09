@@ -41,7 +41,7 @@ parser.add_argument('--sample', action='store_true', default=False,help='Sample 
 parser.add_argument('--sample_steps', default = -1, type = int, help='How many steps for sampling (override config)')
 parser.add_argument('--sample_offset', default = 0, type = int, help='Skip some iterations in the sampling (noisiest iters most unstable)')
 parser.add_argument('--sample_algo', default = 'ddpm', help = 'What sampling algorithm (ddpm, ddim, cold, cold2)')
-parser.add_argument('--cond_dist_model', default = False, action='store_true', help = 'Is the model conditional distillation')
+parser.add_argument('--controlnet', default = False, action='store_true', help = 'Does the model have a controlnet')
 
 parser.add_argument('--layer_only', default=False, action= 'store_true', help='Only sample layer energies')
 parser.add_argument('--layer_model', default='', help='Location of model for layer energies')
@@ -136,7 +136,7 @@ if flags.sample:
     data_loader = torchdata.DataLoader(torch_dataset, batch_size = batch_size, shuffle = False)
 
     avg_showers = std_showers = E_bins = None
-    if(cold_diffu or flags.model == 'Avg' or flags.cond_dist_model):
+    if(cold_diffu or flags.model == 'Avg' or flags.controlnet):
         f_avg_shower = h5.File(flags.data_folder + dataset_config["AVG_SHOWER_LOC"])
         #Already pre-processed
         avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
@@ -187,7 +187,7 @@ if flags.sample:
 
         saved_model = torch.load(flags.model_loc, map_location = device)
 
-        if(flags.cond_dist_model):
+        if(flags.controlnet):
             #init controlnet model 
             controlnet_model = copy.deepcopy(model)
             #Upsampling layers not used

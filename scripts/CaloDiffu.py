@@ -196,7 +196,7 @@ class CaloDiffu(nn.Module):
 
 
 
-    def compute_loss(self, data, E, noise = None, t = None, layers = None, loss_type = "l2", rnd_normal = None, layer_loss = False, scale=1 ):
+    def compute_loss(self, data, E, model = None, noise = None, t = None, layers = None, loss_type = "l2", rnd_normal = None, layer_loss = False, scale=1 ):
         if noise is None:
             noise = torch.randn_like(data)
 
@@ -219,7 +219,8 @@ class CaloDiffu(nn.Module):
 
         weight = 1.
 
-        model = self.model if not layer_loss else self.layer_model
+        if (model is None):
+            model = self.model if not layer_loss else self.layer_model
 
         if('minsnr' in self.training_obj):
             sigma0 = (rnd_normal * self.P_std + self.P_mean).exp()
@@ -328,7 +329,11 @@ class CaloDiffu(nn.Module):
 
 
     def __call__(self, x, **kwargs):
-        return self.denoise(x, **kwargs)
+        #sometimes want to call Unet directly, sometimes need wrappers
+        if('cond' in kwargs.keys()):
+            return self.model(x, **kwargs)
+        else:
+            return self.denoise(x, **kwargs)
 
 
 
@@ -376,30 +381,6 @@ class CaloDiffu(nn.Module):
 
         return x, None,None
 
-
-    def dd_sampler(self, x_start, E, layers = None, num_steps = 400, sample_offset = 0, sample_algo = 'ddpm', model = None, debug = False, extra_args = None):
-        #ddpm and ddim samplers
-
-        old_nsteps = self.nsteps
-        if(self.nsteps != num_steps):
-            self.set_sampling_steps(num_steps)
-
-        gen_size = E.shape[0]
-        device = x_start.device 
-
-        fixed_noise = None
-        if('fixed' in sample_algo): 
-            print("Fixing noise to constant for sampling!")
-            fixed_noise = x_start
-        xs = []
-        x0s = []
-
-        time_steps = list(range(0, num_steps - sample_offset))
-        time_steps.reverse()
-
-        #scale starting point to appropriate noise level
-        sigma_start = self.sqrt_one_minus_alphas_cumprod[time_steps[0]] / self.sqrt_alphas_cumprod[time_steps[0]]
-        x = x_start * sigma_start
 
 
     @torch.no_grad()

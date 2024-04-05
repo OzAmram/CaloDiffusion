@@ -41,7 +41,7 @@
     'CONSIS_NSTEPS': 30,
     'COLD_DIFFU' : False,
     'COLD_NOISE' : 1.0,
-    'TRAINING_OBJ' : 'hybrid',
+    'TRAINING_OBJ' : 'hybrid_weight_minsnr',
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',

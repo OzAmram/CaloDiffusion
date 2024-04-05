@@ -298,7 +298,6 @@ if __name__ == '__main__':
         if(val_loss < min_validation_loss):
             val_path = os.path.join(checkpoint_folder, 'controlnet_best_val.pth')
             torch.save({
-                'epoch': epoch,
                 'model_state_dict': model.state_dict() if flags.control_only else ema_model.ema_model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
@@ -321,7 +320,6 @@ if __name__ == '__main__':
         
         #save full training state so can be resumed
         torch.save({
-            'epoch': epoch,
             'model_state_dict': model.state_dict() if flags.control_only else ema_model.ema_model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
@@ -340,7 +338,6 @@ if __name__ == '__main__':
 
     final_path = os.path.join(checkpoint_folder, 'controlnet_final.pth')
     torch.save({
-        'epoch': epoch,
         'model_state_dict': model.state_dict() if flags.control_only else ema_model.ema_model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),

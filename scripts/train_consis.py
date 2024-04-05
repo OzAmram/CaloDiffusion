@@ -163,19 +163,14 @@ if __name__ == '__main__':
 
 
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
+    shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
 
     #load teacher diffusion model
-    diffu_checkpoint_path = os.path.join(checkpoint_folder, "checkpoint.pth")
-    print("Loading teacher diffu model from %s" % diffu_checkpoint_path)
-    diffu_checkpoint = torch.load(diffu_checkpoint_path, map_location = device)
 
-    shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
     diffu_model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = sample_steps, 
             E_bins = E_bins, avg_showers = avg_showers, std_showers = std_showers).to(device = device)
     diffu_model.eval()
 
-    if('model_state_dict' in diffu_checkpoint.keys()): diffu_model.load_state_dict(diffu_checkpoint['model_state_dict'])
-    elif(len(diffu_checkpoint.keys()) > 1): diffu_model.load_state_dict(diffu_checkpoint)
 
     if(flags.controlnet):
         #controlnet version
@@ -183,15 +178,33 @@ if __name__ == '__main__':
         controlnet_model = copy.deepcopy(diffu_model)
         #Upsampling layers not used
         controlnet_model.model.ups = None
-        consis_model = ControlledUNet(diffu_model, controlnet_model)
-        consis_model.train()
+        diffu_model = ControlledUNet(diffu_model, controlnet_model)
+
+        control_checkpoint_path = os.path.join(checkpoint_folder, "controlnet_checkpoint.pth")
+        print("Loading teacher controlnet model from %s" % control_checkpoint_path)
+
+        control_checkpoint = torch.load(control_checkpoint_path, map_location = device)
+        diffu_model.load_state_dict(control_checkpoint['model_state_dict'])
+
+        label = "consis_controlnet_"
 
     else:
         #regular consistency model
-        consis_model = copy.deepcopy(diffu_model)
+
+        diffu_checkpoint_path = os.path.join(checkpoint_folder, "checkpoint.pth")
+        print("Loading teacher diffu model from %s" % diffu_checkpoint_path)
+
+        diffu_checkpoint = torch.load(diffu_checkpoint_path, map_location = device)
+        if('model_state_dict' in diffu_checkpoint.keys()): diffu_model.load_state_dict(diffu_checkpoint['model_state_dict'])
+        elif(len(diffu_checkpoint.keys()) > 1): diffu_model.load_state_dict(diffu_checkpoint)
+
+        label = "consis_"
+
+    consis_model = copy.deepcopy(diffu_model)
+    consis_model.train()
 
     checkpoint = dict()
-    checkpoint_path = os.path.join(checkpoint_folder, "consis_checkpoint.pth")
+    checkpoint_path = os.path.join(checkpoint_folder, label + "checkpoint.pth")
     if(flags.load and os.path.exists(checkpoint_path)): 
         print("Loading consis model from %s" % checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location = device)
@@ -207,7 +220,6 @@ if __name__ == '__main__':
 
 
 
-    checkpoint_path = os.path.join(checkpoint_folder, "consis_checkpoint.pth")
 
     early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], mode = 'diff', min_delta = 1e-5)
     if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
@@ -289,7 +301,7 @@ if __name__ == '__main__':
         scheduler.step(torch.tensor([train_loss]))
 
         if(val_loss < min_validation_loss):
-            torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'consis_best_val.pth'))
+            torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, label + 'best_val.pth'))
             min_validation_loss = val_loss
 
         if(early_stopper.early_stop(val_loss - train_loss)):
@@ -320,7 +332,7 @@ if __name__ == '__main__':
 
 
     print("Saving to %s" % checkpoint_folder, flush=True)
-    torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'consis_final.pth'))
+    torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, label + 'final.pth'))
 
     with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
         tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")

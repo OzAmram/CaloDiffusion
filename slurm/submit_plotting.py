@@ -19,6 +19,7 @@ parser.add_argument("--num_jobs", type = int, default = 1 , help='How many jobs 
 parser.add_argument("--batch_size", type = int, default = 100 , help='Batch size for sampling')
 parser.add_argument("--chip_type",  default = 'gpu' , help='gpu or cpu')
 parser.add_argument("--layer_model", default = False, action = 'store_true', help='Sep model for layer energies')
+parser.add_argument("--extra_args", default = "" , help='RAM')
 flags = parser.parse_args()
 
 
@@ -74,6 +75,7 @@ if(flags.model == 'Diffu'):
         os.system("sed -i 's/TYPE/%s/' %s" % (flags.chip_type, script_loc))
         os.system("sed -i 's/CONSTRAINT/%s/' %s" % (flags.constraint, script_loc))
         os.system("sed -i 's/MEMORY/%s/' %s" % (flags.memory, script_loc))
+        os.system("sed -i 's/EXTRAARGS/%s/' %s" % (flags.extra_args, script_loc) )
 
         #submit
         os.system("sbatch %s" % script_loc)

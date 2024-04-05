@@ -27,6 +27,9 @@ class ControlledUNet(nn.Module):
         self.control_adds.append(ScalarAddLayer())
         self.control_adds.append(ScalarAddLayer())
 
+        self.sqrt_one_minus_alphas_cumprod = self.UNet.sqrt_one_minus_alphas_cumprod
+        self.sqrt_alphas_cumprod = self.UNet.sqrt_alphas_cumprod
+
         
     def denoise(self, x, c_x = None, E =None, sigma=None, model = None, layers = None, layer_sample = False, controls = None):
 
@@ -84,7 +87,7 @@ class ControlledUNet(nn.Module):
             loss = torch.nn.functional.l1_loss(target, pred)
         elif loss_type == 'l2':
             if('weight' in training_obj):
-                loss = (weight * ((pred - data) ** 2)).sum() / (torch.mean(weight) * self.nvoxels)
+                loss = (weight * ((pred - data) ** 2)).sum() / (torch.mean(weight) * self.UNet.nvoxels)
             else:
                 loss = torch.nn.functional.mse_loss(target, pred)
 

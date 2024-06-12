@@ -80,10 +80,12 @@ class CaloDiffu(nn.Module):
         if('layer' in config.get('SHOWERMAP', '')): 
             self.layer_cond = True
             #gen energy + total deposited energy + layer energy fractions
-            cond_size = 2 + config['SHAPE_PAD'][2]
+            cond_size = 2 + config['SHAPE_FINAL'][2]
         else: 
             self.layer_cond = False
             cond_size = 1
+        if(config.get("HGCAL", False)): 
+            cond_size += 2
         print("Cond size %i" % cond_size)
 
 
@@ -100,15 +102,16 @@ class CaloDiffu(nn.Module):
 
 
         else:
-            RZ_shape = config['SHAPE_PAD'][1:]
+            RZ_shape = config['SHAPE_FINAL'][1:]
 
             self.R_Z_inputs = config.get('R_Z_INPUT', False)
             self.phi_inputs = config.get('PHI_INPUT', False)
 
             in_channels = 1
 
-            self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = RZ_shape)
-            self.phi_image = create_phi_image(device, shape = RZ_shape)
+            dataset_num = config['DATASET_NUM']
+            self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = RZ_shape, dataset_num = dataset_num)
+            self.phi_image = create_phi_image(device, shape = RZ_shape, dataset_num = dataset_num)
 
             if(self.R_Z_inputs): in_channels = 3
 
@@ -392,7 +395,7 @@ class CaloDiffu(nn.Module):
             gen_shape.insert(0,gen_size)
 
         #start from pure noise
-        x_start = torch.randn(gen_shape, device=device)
+        x_start = torch.randn(gen_shape, device=device, dtype=torch.float32)
 
         avg_shower = std_shower = None
         if(self.cold_diffu): #cold diffu starts using avg images

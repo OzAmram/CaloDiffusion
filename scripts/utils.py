@@ -12,10 +12,15 @@ import joblib
 from sklearn.preprocessing import QuantileTransformer
 sys.path.append("..")
 from CaloChallenge.code.XMLHandler import *
+from HGCal_utils import *
 from consts import *
 
 #use tqdm if local, skip if batch job
 import sys
+
+
+byteToMb = 10**(-6)
+
 if sys.stderr.isatty():
     from tqdm import tqdm
 else:
@@ -30,7 +35,7 @@ def split_data_np(data, frac=0.8):
     return train_data,test_data
 
 
-def create_phi_image(device, shape = (1,45,16,9)):
+def create_phi_image(device, shape = (1,45,16,9), dataset_num = 0):
 
     n_phi = shape[-2]
     phi_bins = torch.linspace(0., 1., n_phi, dtype = torch.float32)
@@ -40,20 +45,24 @@ def create_phi_image(device, shape = (1,45,16,9)):
     return phi_image
 
 
-def create_R_Z_image(device, scaled = True, shape = (1,45,16,9)):
+def create_R_Z_image(device, dataset_num = 0, scaled = True, shape = (1,45,16,9)):
 
-    if(shape[-1] == 30): #dataset 1, photons
-        r_bins =  [ 0.,  2.,  4.,  5.,  6.,  8., 10., 12., 15., 20., 25., 30., 40., 50., 60., 70., 80., 90.,  100.,  
-                      120., 130.,  150.,  160.,  200.,  250.,  300.,  350.,  400.,  600., 1000., 2000.]
-    elif(shape[-1] == 23): #dataset 1, pions
+    if(dataset_num == 0): #dataset 1, pions
         r_bins = [0.00, 1.00, 4.00, 5.00, 7.00, 10.00, 15.00, 20.00, 30.00, 50.00, 80.00, 90.00, 100.00, 
                 130.00, 150.00, 160.00, 200.00, 250.00, 300.00, 350.00, 400.00, 600.00, 1000.00, 2000.00]
-    elif(shape[-1] == 9): #dataset 2
+    elif(dataset_num == 1): #dataset 1, photons
+        r_bins =  [ 0.,  2.,  4.,  5.,  6.,  8., 10., 12., 15., 20., 25., 30., 40., 50., 60., 70., 80., 90.,  100.,  
+                      120., 130.,  150.,  160.,  200.,  250.,  300.,  350.,  400.,  600., 1000., 2000.]
+    elif(dataset_num == 2): #dataset 2
         r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
-    else:#dataset 3
+    elif(dataset_num == 3):
         r_bins = [0,2.325,4.65,6.975,9.3,11.625,13.95,16.275,18.6,20.925,23.25,25.575,27.9,30.225,32.55,34.875,37.2,39.525,41.85]
+    elif(dataset_num >= 100): #HGCal
+        r_bins = torch.arange(0, shape[-1]+1)
 
     r_avgs = [(r_bins[i] + r_bins[i+1]) / 2.0 for i in range(len(r_bins) -1) ]
+    print(r_avgs)
+    print(len(r_avgs), shape)
     assert(len(r_avgs) == shape[-1])
     Z_image = torch.zeros(shape, device=device)
     R_image = torch.zeros(shape, device=device)
@@ -358,10 +367,22 @@ def logit(x, alpha = 1e-6):
     o = np.ma.log(o/(1-o)).filled(0)    
     return o
 
+def DataLoader(file_name,shape,emax,emin, hgcal = False, **kwargs): 
+    if(hgcal):
+        return DataLoaderHGCal(file_name, shape, emax, emin, **kwargs)
+    else:
+        return DataLoaderCaloChall(file_name, shape, emax, emin, **kwargs)
+
+def ReverseNorm(voxels,e,shape,emax,emin,hgcal = False, **kwargs):
+    if(hgcal):
+        return ReverseNormHGCal(voxels,e,shape,emax,emin, **kwargs)
+    else:
+        return ReverseNormCaloChall(voxels,e,shape,emax,emin, **kwargs)
 
 
-def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
-        evt_start = 0):
+
+def DataLoaderCaloChall(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
+        evt_start = 0, **kwargs):
 
     with h5.File(file_name,"r") as h5f:
         #holdout events for testing
@@ -502,7 +523,8 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
+
+def ReverseNormCaloChall(voxels,e,shape,emax,emin, max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
     '''Revert the transformations applied to the training set'''
 
     if(dataset_num > 3 or dataset_num <0 ): 

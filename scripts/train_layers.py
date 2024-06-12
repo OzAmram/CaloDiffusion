@@ -46,18 +46,24 @@ if __name__ == '__main__':
     loss_type = dataset_config.get("LOSS_TYPE", "l2")
     dataset_num = dataset_config.get('DATASET_NUM', 2)
     shower_embed = dataset_config.get('SHOWER_EMBED', '')
+
+    hgcal = dataset_config.get('HGCAL', False)
+    geom_file = dataset_config.get('BIN_FILE', '')
     orig_shape = ('orig' in shower_embed)
     layer_norm = 'layer' in dataset_config['SHOWERMAP']
+    max_cells = dataset_config.get('MAX_CELLS', None)
 
     for i, dataset in enumerate(dataset_config['FILES']):
         data_,e_,layers_ = DataLoader(
             os.path.join(flags.data_folder,dataset),
             dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
+            hgcal = hgcal,
             nevts = flags.nevts,
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
+            max_cells = max_cells,
 
             nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
             dataset_num  = dataset_num,
@@ -84,9 +90,9 @@ if __name__ == '__main__':
     num_data = data.shape[0]
     print("Data Shape " + str(data.shape))
     data_size = data.shape[0]
-    #print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
-    torch_E_tensor = torch.from_numpy(energies)
-    torch_layer_tensor =  torch.from_numpy(layers)
+    print("Pre-processed data mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
+    torch_E_tensor = torch.from_numpy(energies.astype(np.float32))
+    torch_layer_tensor =  torch.from_numpy(layers.astype(np.float32))
 
     del data
     #train_data, val_data = utils.split_data_np(data,flags.frac)
@@ -113,9 +119,11 @@ if __name__ == '__main__':
 
     shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
 
-    layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5).to(device = device)
+    cond_size =1
+    if(hgcal): cond_size += 2
+    layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5, cond_size = cond_size).to(device = device)
 
-    summary_shape = [[1, dataset_config['SHAPE_PAD'][2] +1], [[1,1]], [1]]
+    summary_shape = [[1, dataset_config['SHAPE_PAD'][2] +1], [[1,cond_size]], [1]]
 
     summary(layer_model, summary_shape)
 

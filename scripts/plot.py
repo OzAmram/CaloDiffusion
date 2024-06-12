@@ -48,6 +48,9 @@ parser.add_argument('--layer_model', default='', help='Location of model for lay
 parser.add_argument('--layer_sample_algo', default = 'ddim', help = 'What sampling algorithm for layer model(ddpm, ddim, cold, cold2)')
 parser.add_argument('--layer_sample_steps', default = 200, type = int, help='How many steps for sampling layer model (override config)')
 
+
+parser.add_argument('--geant_only', action='store_true', default=False,help='Plots with just geant')
+
 parser.add_argument('--job_idx', default = -1, type = int, help = 'Split generation among different jobs')
 parser.add_argument('--debug', action='store_true', default=False,help='Debugging options')
 parser.add_argument('--from_end', action='store_true', default = False, help='Use events from end of file (usually holdout set)')
@@ -61,8 +64,11 @@ emin = dataset_config['EMIN']
 cold_diffu = dataset_config.get('COLD_DIFFU', False)
 cold_noise_scale = dataset_config.get("COLD_NOISE", 1.0)
 training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
+geom_file = dataset_config.get('BIN_FILE', '')
 dataset_num = dataset_config.get('DATASET_NUM', 2)
 layer_norm = 'layer' in dataset_config['SHOWERMAP']
+hgcal = dataset_config.get('HGCAL', False)
+max_cells = dataset_config.get('MAX_CELLS', None)
 
 model_nsteps = dataset_config["NSTEPS"] if flags.sample_steps < 0 else flags.sample_steps
 if('consis' in flags.sample_algo): model_nsteps = dataset_config['CONSIS_NSTEPS']
@@ -98,18 +104,19 @@ if flags.sample:
             evt_start -= n_dataset
             continue
 
-        data_,e_,layers_ = utils.DataLoader(
+        data_,e_,layers_ = DataLoader(
             os.path.join(flags.data_folder,dataset),
             dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
+            hgcal = hgcal,
             nevts = flags.nevts,
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
-            from_end = flags.from_end,
+            max_cells = max_cells,
+
             dataset_num  = dataset_num,
             orig_shape = orig_shape,
-            evt_start = evt_start
         )
         
         if(data is None): 
@@ -126,9 +133,9 @@ if flags.sample:
     if(not orig_shape): data = np.reshape(data,dataset_config['SHAPE_PAD'])
     else: data = np.reshape(data, (len(data), -1))
 
-    torch_data_tensor = torch.from_numpy(data)
-    torch_E_tensor = torch.from_numpy(energies)
-    torch_layer_tensor =  torch.from_numpy(layers) if layer_norm else torch.zeros_like(torch_E_tensor)
+    torch_data_tensor = torch.from_numpy(data.astype(np.float32))
+    torch_E_tensor = torch.from_numpy(energies.astype(np.float32))
+    torch_layer_tensor =  torch.from_numpy(layers.astype(np.float32)) if layer_norm else torch.zeros_like(torch_E_tensor)
 
     print("DATA mean, std", torch.mean(torch_data_tensor), torch.std(torch_data_tensor))
 
@@ -145,15 +152,15 @@ if flags.sample:
         print("AVG showers", avg_showers.shape)
 
     NN_embed = None
-    if('NN' in shower_embed):
+    if('NN' in shower_embed and not hgcal):
         if(dataset_num == 1):
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
-            bins = XMLHandler("photon", binning_file)
+            bins = XMLHandler("photon", geom_file)
         else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
-            bins = XMLHandler("pion", binning_file)
+            bins = XMLHandler("pion", geom_file)
 
         NN_embed = NNConverter(bins = bins).to(device = device)
+    elif(hgcal):
+        NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device).to(device = device)
         
 
 
@@ -204,10 +211,13 @@ if flags.sample:
 
 
         layer_model = None
-        if(flags.layer_model != ""):
+        if(flags.layer_model != "" and "dummy" not in flags.layer_model):
             print("Loading Diffu model from " + flags.layer_model)
 
-            layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5).to(device = device)
+            cond_size =1
+            if(hgcal): cond_size += 2
+
+            layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5, cond_size = cond_size).to(device = device)
             saved_layer = torch.load(flags.layer_model, map_location = device)
             if('model_state_dict' in saved_layer.keys()): layer_model.load_state_dict(saved_layer['model_state_dict'])
             else: layer_model.load_state_dict(saved_layer)
@@ -276,7 +286,7 @@ if flags.sample:
         generated = model.gen_cold_image(torch_E_tensor, cold_noise_scale).numpy()
 
 
-    if(not orig_shape): generated = generated.reshape(dataset_config["SHAPE"])
+    if(not orig_shape): generated = generated.reshape(dataset_config["SHAPE_ORIG"])
 
     if(flags.debug):
         fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_exts[0])
@@ -285,7 +295,7 @@ if flags.sample:
 
     out_layers = layers if (gen_layers is None) else gen_layers
     generated,energies = utils.ReverseNorm(generated,energies, layerE = out_layers,
-                                           shape=dataset_config['SHAPE'],
+                                           shape=dataset_config['SHAPE_FINAL'],
                                            logE=dataset_config['logE'],
                                            max_deposit=dataset_config['MAXDEP'],
                                            emax = dataset_config['EMAX'],
@@ -294,9 +304,10 @@ if flags.sample:
                                            dataset_num  = dataset_num,
                                            orig_shape = orig_shape,
                                            ecut = dataset_config['ECUT'],
+                                           hgcal = hgcal,
                                            )
 
-    energies = np.reshape(energies,(-1,1))
+    energies = np.reshape(energies,(energies.shape[0],-1))
     do_mask = False
 
     if(do_mask  and dataset_num > 1):
@@ -319,9 +330,16 @@ if flags.sample:
     flags.generated = fout
 
     print("Creating " + fout)
-    with h5.File(fout,"w") as h5f:
-        dset = h5f.create_dataset("showers", data=1000*np.reshape(generated,(generated.shape[0],-1)), compression = 'gzip')
-        dset = h5f.create_dataset("incident_energies", data=1000*energies, compression = 'gzip')
+    if(not hgcal):
+        with h5.File(fout,"w") as h5f:
+            dset = h5f.create_dataset("showers", data=1000*np.reshape(generated, dataset_config["SHAPE_ORIG"]), compression = 'gzip')
+            dset = h5f.create_dataset("incident_energies", data=1000*energies, compression = 'gzip')
+    else:
+        with h5.File(fout,"w") as h5f:
+            energies[:,0] /= 100.
+            print(generated.shape)
+            dset = h5f.create_dataset("showers", data=(1./100.)* np.reshape(generated, dataset_config["SHAPE_ORIG"]), compression = 'gzip')
+            dset = h5f.create_dataset("gen_info", data=energies, compression = 'gzip')
 
 
 if(not flags.sample or flags.job_idx < 0):
@@ -331,16 +349,27 @@ if(not flags.sample or flags.job_idx < 0):
     if(dataset_num <= 1):
         bins = XMLHandler(dataset_config['PART_TYPE'], dataset_config['BIN_FILE'])
         geom_conv = GeomConverter(bins)
+    elif(hgcal):
+        NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = dataset_config['BIN_FILE'])
 
     def LoadSamples(fname):
         end = None if flags.nevts < 0 else flags.nevts
+        scale_fac = 100. if hgcal else (1/1000.)
         with h5.File(fname,"r") as h5f:
-            generated = h5f['showers'][:end]/1000.
-            energies = h5f['incident_energies'][:end]/1000.
+            if(hgcal): 
+                generated = h5f['showers'][:end,:,:dataset_config['MAX_CELLS']] * scale_fac
+                energies = h5f['gen_info'][:end,0] 
+            else: 
+                generated = h5f['showers'][:end] * scale_fac
+                energies = h5f['incident_energies'][:end] * scale_fac
         energies = np.reshape(energies,(-1,1))
         if(dataset_num <= 1):
             generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy()
-        generated = np.reshape(generated,dataset_config['SHAPE'])
+        elif(hgcal):
+            generated =torch.from_numpy(generated.astype(np.float32)).reshape(dataset_config['SHAPE_PAD'])
+            generated = NN_embed.enc(generated).detach().numpy()
+
+        generated = np.reshape(generated,dataset_config['SHAPE_FINAL'])
 
         return generated,energies
 
@@ -352,55 +381,50 @@ if(not flags.sample or flags.job_idx < 0):
 
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'], model)
     
-    if(flags.generated == ""):
-        print("Missing data file to plot!")
-        exit(1)
-    f_sample = flags.generated
-
-    if np.size(energies) == 0:
-        data,energies = LoadSamples(f_sample)
-        data_dict[utils.name_translate[model]]=data
-    else:
-        data_dict[utils.name_translate[model]]=LoadSamples(f_sample)[0]
-    total_evts = energies.shape[0]
-
 
     data = []
     true_energies = []
     for dataset in dataset_config['EVAL']:
-        with h5.File(os.path.join(flags.data_folder,dataset),"r") as h5f:
-            if(flags.from_end):
-                start = -int(total_evts)
-                end = None
-            else: 
-                start = evt_start
-                end = start + total_evts
-            show = h5f['showers'][start:end]/1000.
-            if(dataset_num <=1 ):
-                show = geom_conv.convert(geom_conv.reshape(show)).detach().numpy()
-            data.append(show)
-            true_energies.append(h5f['incident_energies'][start:end]/1000.)
-            if(data[-1].shape[0] == total_evts): break
+        showers, energies = LoadSamples("../data/" + dataset)
+        print('energies', energies.shape)
+        data.append(showers)
+        true_energies.append(energies)
+        #if(data[-1].shape[0] == total_evts): break
+
+    data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE_FINAL'])
+
+    if(not flags.geant_only):
+        if(flags.generated == ""):
+            print("Missing data file to plot!")
+            exit(1)
+        f_sample = flags.generated
+
+        if np.size(energies) == 0:
+            data,energies = LoadSamples( f_sample)
+            data_dict[utils.name_translate[model]]=data
+        else:
+            data_dict[utils.name_translate[model]]=LoadSamples(f_sample)[0]
+        total_evts = energies.shape[0]
+
+        print("Geant Avg", np.mean(data_dict['Geant4']))
+        print("Generated Avg", np.mean(data_dict[utils.name_translate[model]]))
+    else: 
+        energies = copy.copy(true_energies)
+        total_evts = data_dict['Geant4'].shape[0]
 
 
-    data_dict['Geant4']=np.reshape(data,dataset_config['SHAPE'])
+
     print(data_dict['Geant4'].shape)
-    print("Geant Avg", np.mean(data_dict['Geant4']))
-    print("Generated Avg", np.mean(data_dict[utils.name_translate[model]]))
     true_energies = np.reshape(true_energies,(-1,1))
     model_energies = np.reshape(energies,(-1,1))
+    print('true_energies', true_energies.shape)
     #assert(np.allclose(data_energies, model_energies))
-
-
 
     #Plot high level distributions and compare with real values
     #assert np.allclose(true_energies,energies), 'ERROR: Energies between samples dont match'
 
 
-
-
-
-    def HistERatio(data_dict,true_energies):
+    def HistERatio(data_dict,es):
         
 
         ratios =  []
@@ -418,13 +442,14 @@ if(not flags.sample or flags.job_idx < 0):
 
 
 
-    def ScatterESplit(data_dict,true_energies):
+    def ScatterESplit(data_dict,es):
         
 
         fig,ax = SetFig("Gen. energy [GeV]","Dep. energy [GeV]")
         for key in data_dict:
             x = true_energies[0:500] if 'Geant' in key else model_energies[0:500]
             y = np.sum(data_dict[key].reshape(data_dict[key].shape[0],-1),-1)[0:500]
+            print(key, len(x), len(y))
 
             ax.scatter(x, y, label=key)
 
@@ -450,12 +475,12 @@ if(not flags.sample or flags.job_idx < 0):
         #TODO : Use radial bins
         #r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
 
-        phi_matrix = GetMatrix(dataset_config['SHAPE'][2],dataset_config['SHAPE'][3], minval = -math.pi, maxval = math.pi)
-        phi_matrix = np.reshape(phi_matrix,(1,1,phi_matrix.shape[0],phi_matrix.shape[1],1))
+        phi_matrix = GetMatrix(dataset_config['SHAPE_FINAL'][3],dataset_config['SHAPE_FINAL'][4], minval = -math.pi, maxval = math.pi)
+        phi_matrix = np.reshape(phi_matrix,(1,1,1, phi_matrix.shape[0],phi_matrix.shape[1]))
         
         
-        r_matrix = np.transpose(GetMatrix(dataset_config['SHAPE'][3],dataset_config['SHAPE'][2]))
-        r_matrix = np.reshape(r_matrix,(1,1,r_matrix.shape[0],r_matrix.shape[1],1))
+        r_matrix = np.transpose(GetMatrix(dataset_config['SHAPE_FINAL'][4],dataset_config['SHAPE_FINAL'][3]))
+        r_matrix = np.reshape(r_matrix,(1,1,1,r_matrix.shape[0],r_matrix.shape[1]))
 
 
         def GetCenter(matrix,energies,power=1):
@@ -521,7 +546,7 @@ if(not flags.sample or flags.job_idx < 0):
     def ELayer(data_dict):
         
         def _preprocess(data):
-            preprocessed = np.reshape(data,(total_evts,dataset_config['SHAPE'][1],-1))
+            preprocessed = np.reshape(data,(total_evts,dataset_config['SHAPE_FINAL'][2],-1))
             layer_sum = np.sum(preprocessed, -1)
             totalE = np.sum(preprocessed, -1)
             layer_mean = np.mean(layer_sum,0)
@@ -551,7 +576,7 @@ if(not flags.sample or flags.job_idx < 0):
 
         def _preprocess(data):
             preprocessed = np.transpose(data,(0,3,1,2,4))
-            preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE'][3],-1))
+            preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE_FINAL'][4],-1))
             preprocessed = np.sum(preprocessed,-1)
             return preprocessed
             
@@ -574,7 +599,7 @@ if(not flags.sample or flags.job_idx < 0):
 
         def _preprocess(data):
             preprocessed = np.transpose(data,(0,2,1,3,4))
-            preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE'][2],-1))
+            preprocessed = np.reshape(preprocessed,(data.shape[0],dataset_config['SHAPE_FINAL'][3],-1))
             preprocessed = np.sum(preprocessed,-1)
             return preprocessed
 
@@ -650,7 +675,7 @@ if(not flags.sample or flags.job_idx < 0):
     def HistMaxELayer(data_dict):
 
         def _preprocess(data):
-            preprocessed = np.reshape(data,(data.shape[0],dataset_config['SHAPE'][1],-1))
+            preprocessed = np.reshape(data,(data.shape[0],dataset_config['SHAPE_FINAL'][2],-1))
             preprocessed = np.ma.divide(np.max(preprocessed,-1),np.sum(preprocessed,-1)).filled(0)
             return preprocessed
 
@@ -743,7 +768,8 @@ if(not flags.sample or flags.job_idx < 0):
 
             
 
-    do_cart_plots = (not dataset_config['CYLINDRICAL']) and dataset_config['SHAPE_PAD'][-1] == dataset_config['SHAPE_PAD'][-2]
+    #do_cart_plots = (not dataset_config['CYLINDRICAL']) and dataset_config['SHAPE_PAD'][-1] == dataset_config['SHAPE_PAD'][-2]
+    do_cart_plots = False
     dataset_config['cartesian_plot'] = do_cart_plots
     print("Do cartesian plots " + str(do_cart_plots))
     high_level = []

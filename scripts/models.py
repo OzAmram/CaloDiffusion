@@ -321,6 +321,7 @@ class ResNet(nn.Module):
             num_layers = 3, 
             hidden_dim = 256,
             cond_emb_dim = 128,
+            cond_size = 1,
             ):
 
         super().__init__()
@@ -337,7 +338,7 @@ class ResNet(nn.Module):
 
         cond_layers = []
         #if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
-        cond_layers = [nn.Linear(1, half_cond_dim//2),nn.GELU()]
+        cond_layers = [nn.Linear(cond_size, half_cond_dim//2),nn.GELU()]
         cond_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
 
 

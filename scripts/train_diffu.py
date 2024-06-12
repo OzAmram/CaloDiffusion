@@ -7,6 +7,7 @@ import torch.optim as optim
 import torch.utils.data as torchdata
 
 from utils import *
+from HGCal_utils import *
 from CaloDiffu import *
 from models import *
 
@@ -48,18 +49,25 @@ if __name__ == '__main__':
     loss_type = dataset_config.get("LOSS_TYPE", "l2")
     dataset_num = dataset_config.get('DATASET_NUM', 2)
     shower_embed = dataset_config.get('SHOWER_EMBED', '')
+
+    hgcal = dataset_config.get('HGCAL', False)
+    geom_file = dataset_config.get('BIN_FILE', '')
     orig_shape = ('orig' in shower_embed)
     layer_norm = 'layer' in dataset_config['SHOWERMAP']
+    max_cells = dataset_config.get('MAX_CELLS', None)
+
 
     for i, dataset in enumerate(dataset_config['FILES']):
         data_,e_,layers_ = DataLoader(
             os.path.join(flags.data_folder,dataset),
             dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
+            hgcal = hgcal,
             nevts = flags.nevts,
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
+            max_cells = max_cells,
 
             nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
             dataset_num  = dataset_num,
@@ -86,29 +94,35 @@ if __name__ == '__main__':
         E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
 
     NN_embed = None
-    if('NN' in shower_embed):
+    if('NN' in shower_embed and not hgcal):
         if(dataset_num == 1):
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
-            bins = XMLHandler("photon", binning_file)
+            bins = XMLHandler("photon", geom_file)
         else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
-            bins = XMLHandler("pion", binning_file)
+            bins = XMLHandler("pion", geom_file)
 
         NN_embed = NNConverter(bins = bins).to(device = device)
+    elif(hgcal):
+        NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device).to(device = device)
+
+
+    print('shower mem', sys.getsizeof(data)*byteToMb)
+    #print('embed size', sys.getsizeof(NN_embed) * byteToMb)
+
         
 
+    print('og shape', data.shape)
     dshape = dataset_config['SHAPE_PAD']
     if(layer_norm): layers = np.reshape(layers, (layers.shape[0], -1))
-    if(not orig_shape): data = np.reshape(data,dshape)
-    else: data = np.reshape(data, (len(data), -1))
+    if(orig_shape): data = np.reshape(data, dataset_config['SHAPE_ORIG'])
+    else : data = np.reshape(data, dataset_config['SHAPE_PAD'])
 
     num_data = data.shape[0]
     print("Data Shape " + str(data.shape))
     data_size = data.shape[0]
-    #print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
-    torch_data_tensor = torch.from_numpy(data)
-    torch_E_tensor = torch.from_numpy(energies)
-    torch_layer_tensor =  torch.from_numpy(layers) if layer_norm else torch.zeros_like(torch_E_tensor)
+    print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
+    torch_data_tensor = torch.from_numpy(data.astype(np.float32))
+    torch_E_tensor = torch.from_numpy(energies.astype(np.float32))
+    torch_layer_tensor =  torch.from_numpy(layers.astype(np.float32)) if layer_norm else torch.zeros_like(torch_E_tensor)
     del data
     #train_data, val_data = utils.split_data_np(data,flags.frac)
 
@@ -134,7 +148,7 @@ if __name__ == '__main__':
 
 
     if(flags.model == "Diffu"):
-        shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
+        shape = dataset_config['SHAPE_FINAL'][1:] 
         model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = dataset_config['NSTEPS'],
                 cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
 

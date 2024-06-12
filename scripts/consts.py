@@ -152,6 +152,27 @@ dataset3_params = {
 
 'qt' : 'qts/dset3_quantile_transform.gz',
 }
+
+
+hgcal_params = {
+'logit_mean' : -13.7371,
+'logit_std' : 0.68639,
+'logit_min': -13.81551,
+'logit_max' :  0.2909,
+
+'log_mean' : -1.1245,
+'log_std' : 3.3451,
+'log_min' : -18.6905,
+'log_max' : 0.0,
+
+
+'totalE_mean' : 0.0055,
+'totalE_std' : 0.00018,
+'layers_mean' : -4.4450,
+'layers_std' : 2.37667,
+
+}
+
 dataset_params = {
         0: dataset0_params, 
         1: dataset1_params, 
@@ -159,4 +180,6 @@ dataset_params = {
         3:dataset3_params,
         10: dataset0_origShape_params,
         11: dataset1_origShape_params,
+
+        100: hgcal_params, #HGCal
         }

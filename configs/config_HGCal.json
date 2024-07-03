@@ -2,8 +2,9 @@
 {
     'FILES':['HGCal_showers/HGCal_showers1.h5', 'HGCal_showers/HGCal_showers2.h5', 'HGCal_showers/HGCal_showers3.h5', 'HGCal_showers/HGCal_showers4.h5',],
     'EVAL':[ 'HGCal_showers/HGCal_showers5.h5', 'HGCal_showers/HGCal_showers6.h5'],
+    'EVALS':[ 'HGCal_showers/HGCal_showers5.h5'],
     'HGCAL' : True,
-    'BIN_FILE': '/work1/cms_mlsim/oamram/HGCal/geom.pkl',
+    'BIN_FILE': '/home/oamram/CaloDiffusion/HGCalShowers/geom.pkl',
     'PART_TYPE' : 'photon',
     'AVG_SHOWER_LOC' : 'dataset_1_photons_avg_showers.h5',
     'DATASET_NUM' : 100,
@@ -46,6 +47,6 @@
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : 'NN',
-    'CHECKPOINT_NAME':'HGCal_may24',
+    'CHECKPOINT_NAME':'HGCal_july3',
 
 }

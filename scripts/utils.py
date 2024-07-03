@@ -3,7 +3,9 @@ import os
 import h5py as h5
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm as LN
 from matplotlib import gridspec
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib.ticker as mtick
 import torch
 import torch.nn as nn
@@ -178,6 +180,7 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
         else: 
             d = np.mean(feed_dict[plot], 0)
             ref = np.mean(feed_dict[reference_name], 0)
+            print('plot', plot, d, ref)
         if 'steps' in plot or 'r=' in plot:
             ax0.plot(d,label=plot,marker=line_style[plot],color=colors[plot],lw=0)
         else:
@@ -195,6 +198,8 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
             plt.axhline(y=0.0, color='black', linestyle='-',linewidth=2)
             plt.axhline(y=10, color='gray', linestyle='--',linewidth=2)
             plt.axhline(y=-10, color='gray', linestyle='--',linewidth=2)
+
+            print("ratio", ratio)
 
             
             if 'steps' in plot or 'r=' in plot:
@@ -514,6 +519,72 @@ def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2,
         
 
     return shower,layerE
+
+
+def plot_shower_layer(data, fname = "", title=None, fig=None, subplot=(1, 1, 1),
+                     vmin = None, vmax=None, colbar='alone', r_edges = None):
+    """ draws the shower in layer_nr only """
+    if fig is None:
+        fig = plt.figure(figsize=(5, 5), dpi=200)
+
+    #r,phi
+    shape = data.shape
+    nPhi = shape[0]
+    nRad = shape[1]
+
+    pts_per_angular_bin = 50
+    num_splits = pts_per_angular_bin * nPhi
+
+
+    if(r_edges is None):
+        r_edges = np.arange(nRad + 1) 
+    max_r = np.amax(r_edges)
+
+    phi_bins = 2.*np.pi* np.arange(num_splits+1)/ num_splits
+
+    theta, rad = np.meshgrid(phi_bins, r_edges)
+    data_reshaped = data.reshape(nPhi, -1)
+    data_repeated = np.repeat(data_reshaped, (pts_per_angular_bin), axis=0)
+
+    ax = fig.add_subplot(*subplot, polar=True)
+    #ax = plt.subplot(111, projection='polar')
+    ax.grid(False)
+    if vmax is None: vmax = data.max()
+    if vmin is None: vmin = 1e-2 if data.max() > 1e-3 else data.max()/100.
+
+
+    pcm = ax.pcolormesh(theta, rad, data_repeated.T+1e-16, norm=LN(vmin=vmin, vmax=vmax))
+    ax.axes.get_xaxis().set_visible(False)
+    ax.axes.get_yaxis().set_visible(False)
+    ax.set_rmax(max_r)
+
+    if title is not None:
+        ax.set_title(title)
+
+    if colbar == 'alone':
+        axins = inset_axes(fig.get_axes()[-1], width='100%',
+                           height="15%", loc='lower center', bbox_to_anchor=(0., -0.2, 1, 1),
+                           bbox_transform=fig.get_axes()[-1].transAxes,
+                           borderpad=0)
+        cbar = plt.colorbar(pcm, cax=axins, fraction=0.2, orientation="horizontal")
+        cbar.set_label(r'Energy (GeV)', y=0.83, fontsize=12)
+    elif colbar == 'both':
+        axins = inset_axes(fig.get_axes()[-1], width='200%',
+                           height="15%", loc='lower center',
+                           bbox_to_anchor=(-0.625, -0.2, 1, 1),
+                           bbox_transform=fig.get_axes()[-1].transAxes,
+                           borderpad=0)
+        cbar = plt.colorbar(pcm, cax=axins, fraction=0.2, orientation="horizontal")
+        cbar.set_label(r'Energy (GeV)', y=0.83, fontsize=12)
+    elif colbar == 'None':
+        pass
+
+    plt.subplots_adjust(bottom=0.25, left = 0.02, right = 0.98, top = 0.95)
+
+
+    if fname is not None:
+        plt.savefig(fname, facecolor='white')
+    #return fig
 
         
 

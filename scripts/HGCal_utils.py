@@ -235,9 +235,6 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay):
     dim_out = num_alpha_bins * num_r_bins
 
     weight_mat = torch.zeros((num_alpha_bins, num_r_bins, dim_in))
-    #if(True): 
-    #    weight_mat = weight_mat.reshape((num_alpha_bins * num_r_bins, dim_in))
-    #    return weight_mat
 
     step_size = 2.*np.pi/num_alpha_bins
     ang_bins = torch.arange(0, 2.*np.pi + step_size, step_size)
@@ -261,8 +258,12 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay):
     close_boundaries = (diffs < eps) | (torch.abs(diffs - 2. * np.pi) < eps)
     #print('close', close_boundaries[mask])
 
+    #special init for first bin
+    #split among all ang bins in the central radial bin
+    weight_mat[:, 0, 0] = (1./ num_alpha_bins)
+
     #dumb slow for loop to initialize for now
-    for i in range(ncells): 
+    for i in range(1, ncells): 
     #matrix is size of largest layer, but only process up to size of this layer
         a_bin = cell_ang_bins[i]
         r_bin = int(round(geom.ring_map[ilay, i]))
@@ -297,8 +298,6 @@ class HGCalConverter(nn.Module):
     def __init__(self, bins = None, geom_file = None, hidden_size = 32, device = None):
         super().__init__()
         print("Loading geometry from %s " % geom_file)
-        
-        test = HGCalGeo(28, 20)	
 
         self.geom_file = open(geom_file, 'rb')
         self.device = device

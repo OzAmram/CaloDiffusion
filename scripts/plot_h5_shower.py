@@ -7,10 +7,11 @@ import numpy as np
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('-g', '--geom_file', default='/home/oamram/CaloDiffusion/HGCalShowers/geom.pkl', help='Geom file')
+parser.add_argument('-g', '--geom_file', default='/home/oamram/CaloDiffusion/HGCalShowers/geom_william.pkl', help='Geom file')
 parser.add_argument('-i', '--fin', default='', help='File with showers to plot')
 parser.add_argument('-n', '--nShowers', default=1, type = int, help='How many showers to plot')
 parser.add_argument('-o', '--outdir', default='../plots/showers/', help='Where to put output plots')
+parser.add_argument('--EMin', type = float, default=-1.0, help='Voxel min energy')
 flags = parser.parse_args()
 
 geom_file = open(flags.geom_file, 'rb')
@@ -20,6 +21,11 @@ if (not os.path.exists(flags.outdir)): os.system("mkdir " + flags.outdir)
 f = h5py.File(flags.fin)
 showers = f['showers'][:]
 showers *= 200.
+
+if(flags.EMin > 0.):
+    mask = showers < flags.EMin
+    showers[mask] = 0.
+
 print(geo.xmap.shape)
 
 for i in range(flags.nShowers):

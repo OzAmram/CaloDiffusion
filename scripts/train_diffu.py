@@ -23,7 +23,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_folder', default='../data/', help='Folder containing data and MC files')
     parser.add_argument('--model', default='Diffu', help='Diffusion model to train. Options are: VPSDE, VESDE and subVPSDE')
     parser.add_argument('-c', '--config', default='configs/test.json', help='Config file with training parameters')
-    parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
+    parser.add_argument('-n', '--nevts', type=int,default=-1, help='Number of events to load')
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     parser.add_argument('--seed', type=int, default=1234,help='Pytorch seed')

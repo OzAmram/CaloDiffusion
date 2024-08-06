@@ -180,7 +180,6 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
         else: 
             d = np.mean(feed_dict[plot], 0)
             ref = np.mean(feed_dict[reference_name], 0)
-            print('plot', plot, d, ref)
         if 'steps' in plot or 'r=' in plot:
             ax0.plot(d,label=plot,marker=line_style[plot],color=colors[plot],lw=0)
         else:
@@ -198,8 +197,6 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
             plt.axhline(y=0.0, color='black', linestyle='-',linewidth=2)
             plt.axhline(y=10, color='gray', linestyle='--',linewidth=2)
             plt.axhline(y=-10, color='gray', linestyle='--',linewidth=2)
-
-            print("ratio", ratio)
 
             
             if 'steps' in plot or 'r=' in plot:

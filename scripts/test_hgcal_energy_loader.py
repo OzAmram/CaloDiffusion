@@ -6,10 +6,10 @@ from utils import *
 
 hgcal = True
 
-dataset = "../data/HGCal_showers1.h5"
-dataset_num = 100
-shape_pad = [-1,1, 28,1414]
-max_ncell = 1414
+dataset = "../data/HGCal_showers_william_v2/HGCal_showers1.h5"
+dataset_num = 101
+shape_pad = [-1,1, 28,1988]
+max_ncell = 1988
 max_dep = 1.0
 ecut = 0.0000001
 orig_shape = False

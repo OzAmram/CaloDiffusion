@@ -44,10 +44,10 @@ def make_plots(flags):
     if(not os.path.exists(flags.plot_folder)): os.system("mkdir %s" % flags.plot_folder)
 
     geom_conv = None
-    def LoadSamples(fname):
+    def LoadSamples(fname, EMin = -1.0):
         print("Load %s" % fname)
         end = None if flags.nevts < 0 else flags.nevts
-        scale_fac = 100. if hgcal else (1/1000.)
+        scale_fac = 200. if hgcal else (1/1000.)
         with h5.File(fname,"r") as h5f:
             if(hgcal): 
                 generated = h5f['showers'][:end,:,:dataset_config['MAX_CELLS']] * scale_fac
@@ -69,6 +69,9 @@ def make_plots(flags):
                 print("HGCal in original shape")
 
         generated = np.reshape(generated,shape_plot)
+        if(EMin > 0.):
+            mask = generated < EMin
+            generated[mask] = 0.
 
         return generated,energies
 
@@ -84,10 +87,11 @@ def make_plots(flags):
     data = []
     true_energies = []
     for dataset in dataset_config['EVAL']:
-        showers, e_energies = LoadSamples("../data/" + dataset)
+        showers, e_energies = LoadSamples("../data/" + dataset, flags.EMin)
         data.append(showers)
         true_energies.append(e_energies)
         #if(data[-1].shape[0] == total_evts): break
+
 
     data_dict['Geant4']=np.reshape(data,shape_plot)
 
@@ -98,14 +102,16 @@ def make_plots(flags):
         f_sample = flags.generated
 
         if np.size(energies) == 0:
-            data,energies = LoadSamples( f_sample)
+            data,energies = LoadSamples( f_sample, flags.EMin)
             data_dict[utils.name_translate[model]]=data
         else:
-            data_dict[utils.name_translate[model]]=LoadSamples(f_sample)[0]
+            data_dict[utils.name_translate[model]]=LoadSamples(f_sample, flags.EMin)[0]
         total_evts = energies.shape[0]
 
         print("Geant Avg", np.mean(data_dict['Geant4']))
         print("Generated Avg", np.mean(data_dict[utils.name_translate[model]]))
+        print("Geant Range: ", np.min(data_dict['Geant4']), np.max(data_dict['Geant4']))
+        print("Generated Range: ", np.min(data_dict[utils.name_translate[model]]), np.max(data_dict[utils.name_translate[model]]))
     else: 
         energies = copy.copy(true_energies)
         total_evts = data_dict['Geant4'].shape[0]
@@ -174,30 +180,29 @@ def make_plots(flags):
 
     def AverageShowerWidth(data_dict):
 
-        def GetMatrix(sizex,sizey, minval=-1,maxval=1, binning = None):
+        def GetMatrix(sizex, minval=-1,maxval=1, binning = None):
             nbins = sizex
             if(binning is None): binning = np.linspace(minval,maxval,nbins+1)
             coord = [(binning[i] + binning[i+1])/2.0 for i in range(len(binning)-1)]
-            matrix = np.repeat(np.expand_dims(coord,-1),sizey,-1)
+            matrix = np.array(coord)
             return matrix
 
         
         #TODO : Use radial bins
         #r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
 
-        phi_matrix = GetMatrix(shape_plot[3],shape_plot[4], minval = -math.pi, maxval = math.pi)
-        phi_matrix = np.reshape(phi_matrix,(1,1,1, phi_matrix.shape[0],phi_matrix.shape[1]))
+        phi_matrix = GetMatrix(shape_plot[3], minval = -math.pi, maxval = math.pi)
+        phi_matrix = np.reshape(phi_matrix,(1,1, phi_matrix.shape[0]))
         
         
-        r_matrix = np.transpose(GetMatrix(shape_plot[4],shape_plot[3]))
-        r_matrix = np.reshape(r_matrix,(1,1,1,r_matrix.shape[0],r_matrix.shape[1]))
+        r_matrix = GetMatrix(shape_plot[4], minval = 0, maxval = shape_plot[4])
+        r_matrix = np.reshape(r_matrix,(1,1, r_matrix.shape[0]))
 
 
         def GetCenter(matrix,energies,power=1):
-            ec = energies*np.power(matrix,power)
+            ec = np.sum(energies*np.power(matrix,power),-1)
             sum_energies = np.sum(np.reshape(energies,(energies.shape[0],energies.shape[1],-1)),-1)
-            ec = np.reshape(ec,(ec.shape[0],ec.shape[1],-1)) #get value per layer
-            ec = np.ma.divide(np.sum(ec,-1),sum_energies).filled(0)
+            ec = np.ma.divide(ec,sum_energies).filled(0)
             return ec
 
         def ang_center_spread(matrix, energies):
@@ -227,10 +232,18 @@ def make_plots(flags):
         feed_dict_r2 = {}
         
         for key in data_dict:
-            feed_dict_phi[key], feed_dict_phi2[key] = ang_center_spread(phi_matrix, data_dict[key])
-            feed_dict_r[key] = GetCenter(r_matrix,data_dict[key])
-            feed_dict_r2[key] = GetWidth(feed_dict_r[key],GetCenter(r_matrix,data_dict[key],2))
-            
+
+            data = data_dict[key]
+            phi_preprocessed = np.reshape(data,(data.shape[0],shape_plot[2], shape_plot[3],-1))
+            phi_proj = preprocessed = np.sum(phi_preprocessed, axis = -1)
+
+            r_preprocessed = np.reshape(data,(data.shape[0],shape_plot[2], shape_plot[4],-1))
+            r_proj = preprocessed = np.sum(r_preprocessed, axis = -1)
+
+            feed_dict_phi[key], feed_dict_phi2[key] = ang_center_spread(phi_matrix, phi_proj)
+            feed_dict_r[key] = GetCenter(r_matrix, r_proj)
+            feed_dict_r2[key] = GetWidth(feed_dict_r[key],GetCenter(r_matrix,r_proj,2))
+
 
         if(dataset_config['cartesian_plot']): 
             xlabel1 = 'x'
@@ -253,6 +266,7 @@ def make_plots(flags):
 
         return feed_dict_r2
 
+
     def ELayer(data_dict):
         
         def _preprocess(data):
@@ -274,7 +288,7 @@ def make_plots(flags):
         fig,ax0 = utils.PlotRoutine(feed_dict_avg,xlabel='Layer number', ylabel= 'Mean dep. energy [GeV]', plot_label = flags.plot_label, no_mean = True)
         for plt_ext in plt_exts: fig.savefig('{}/EnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
 
-        fig,ax0 = utils.PlotRoutine(feed_dict_std,xlabel='Layer number', ylabel= 'Std. Dev. / Mean of energy [GeV]', plot_label = flags.plot_label, no_mean = True)
+        fig,ax0 = utils.PlotRoutine(feed_dict_std,xlabel='Layer number', ylabel= 'Std. dev. / Mean of energy [GeV]', plot_label = flags.plot_label, no_mean = True)
         for plt_ext in plt_exts: fig.savefig('{}/StdEnergyZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
 
         fig,ax0 = utils.PlotRoutine(feed_dict_nonzero,xlabel='Layer number', ylabel= 'Freq. > $10^{-6}$ Total Energy', plot_label = flags.plot_label)
@@ -282,11 +296,40 @@ def make_plots(flags):
 
         return feed_dict_avg
 
+
+    def SparsityLayer(data_dict):
+        
+        def _preprocess(data):
+            eps = 1e-6
+            preprocessed = np.reshape(data,(data.shape[0],shape_plot[2],-1))
+            layer_sparsity = np.sum(preprocessed > eps, axis = -1) / preprocessed.shape[2]
+            mean_sparsity = np.mean(layer_sparsity, axis = 0)
+            std_sparsity = np.std(layer_sparsity, axis = 0)
+            #preprocessed = np.mean(preprocessed,0)
+            return mean_sparsity, std_sparsity
+        
+        feed_dict_avg = {}
+        feed_dict_std = {}
+        feed_dict_nonzero = {}
+        for key in data_dict:
+            feed_dict_avg[key], feed_dict_std[key] = _preprocess(data_dict[key])
+
+        fig,ax0 = utils.PlotRoutine(feed_dict_avg,xlabel='Layer number', ylabel= 'Mean sparsity', plot_label = flags.plot_label, no_mean = True)
+        for plt_ext in plt_exts: fig.savefig('{}/SparsityZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+
+        fig,ax0 = utils.PlotRoutine(feed_dict_std,xlabel='Layer number', ylabel= 'Std. dev. sparsity', plot_label = flags.plot_label, no_mean = True)
+        for plt_ext in plt_exts: fig.savefig('{}/StdSparsityZ_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
+
+
+        return feed_dict_avg
+
+
+
+
     def AverageER(data_dict):
 
         def _preprocess(data):
             preprocessed = np.transpose(data,(0,4,1,2,3))
-            print("ER", preprocessed.shape)
             preprocessed = np.reshape(preprocessed,(data.shape[0],shape_plot[4],-1))
             preprocessed = np.sum(preprocessed,-1)
             return preprocessed
@@ -312,8 +355,6 @@ def make_plots(flags):
             preprocessed = np.transpose(data,(0,3,1,2,4))
             preprocessed = np.reshape(preprocessed,(data.shape[0],shape_plot[3],-1))
             preprocessed = np.sum(preprocessed,-1)
-            print(preprocessed.shape)
-            print(preprocessed[0])
             return preprocessed
 
         feed_dict = {}
@@ -352,15 +393,17 @@ def make_plots(flags):
     def HistNhits(data_dict):
 
         def _preprocess(data):
-            min_voxel = 1e-3 if not hgcal else 0. # 1 Mev
+            min_voxel = 1e-3
             preprocessed = np.reshape(data,(data.shape[0],-1))
             return np.sum(preprocessed>min_voxel,-1)
         
         feed_dict = {}
+        vMax = 0.
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
+            vMax = max(np.max(feed_dict[key]), vMax)
             
-        binning = np.linspace(np.quantile(feed_dict['Geant4'],0.0),np.quantile(feed_dict['Geant4'],1),20)
+        binning = np.linspace(np.min(feed_dict['Geant4']), vMax, 20)
         fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits (> 1 MeV)', label_loc='upper right', binning = binning, ratio = True, plot_label = flags.plot_label )
         yScalarFormatter = utils.ScalarFormatterClass(useMathText=True)
         yScalarFormatter.set_powerlimits((0,0))
@@ -370,16 +413,20 @@ def make_plots(flags):
 
     def HistVoxelE(data_dict):
 
-        def _preprocess(data):
-            return np.reshape(data, (-1))
+        def _preprocess(data, nShowers):
+            nShowers = min(nShowers, data.shape[0])
+            return np.reshape(data[:nShowers], (-1))
         
         feed_dict = {}
+        nShowers = 1000
+        vMax = 0.
         for key in data_dict:
-            feed_dict[key] = _preprocess(data_dict[key])
+            feed_dict[key] = _preprocess(data_dict[key], nShowers)
+            vMax = max(np.max(feed_dict[key]), vMax)
             
-        vmin = np.amin(feed_dict['Geant4'][feed_dict['Geant4'] > 0])
-        binning = np.geomspace(vmin,np.quantile(feed_dict['Geant4'],1.0),50)
-        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Voxel Energy [GeV]', logy= True, binning = binning, ratio = True, normalize = False, plot_label = flags.plot_label)
+        vMin= 1e-4
+        binning = np.geomspace(vMin,vMax, 50)
+        fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Voxel Energy [GeV]', logy= True, binning = binning, ratio = True, normalize = False,  plot_label = flags.plot_label)
         ax0.set_xscale("log")
         for plt_ext in plt_exts: fig.savefig('{}/VoxelE_{}_{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_ext))
         return feed_dict
@@ -491,14 +538,15 @@ def make_plots(flags):
          'Energy':HistEtot,
          '2D Energy scatter split':ScatterESplit,
          'Energy Ratio split':HistERatio,
+         'Layer Sparsity' : SparsityLayer,
     }
     if(flags.geant_only):
         plot_routines['IncidentE split'] = IncidentE
 
     if(hgcal and not flags.plot_reshape):
         plot_routines['Nhits'] = HistNhits
-        plot_routines['VoxelE'] = HistVoxelE
         plot_routines['Max voxel']=HistMaxELayer
+        plot_routines['VoxelE'] = HistVoxelE
 
     elif(not flags.layer_only):
         plot_routines['Energy per radius']=AverageER
@@ -529,10 +577,11 @@ if(__name__ == "__main__"):
     parser.add_argument('--generated', '-g', default='', help='Generated showers')
     parser.add_argument('--model_loc', default='test', help='Location of model')
     parser.add_argument('--config', '-c', default='config_dataset2.json', help='Training parameters')
-    parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
+    parser.add_argument('-n', '--nevts', type=int,default=-1, help='Number of events to load')
     parser.add_argument('--batch_size', type=int, default=100, help='Batch size for generation')
     parser.add_argument('--model', default='Diffu', help='Diffusion model to load. Options are: Diffu, AE, all')
     parser.add_argument('--plot_label', default='', help='Add to plot')
+    parser.add_argument('--EMin', type = float, default=-1.0, help='Voxel min energy')
 
     parser.add_argument('--layer_only', default=False, action= 'store_true', help='Only sample layer energies')
     parser.add_argument('--layer_model', default='', help='Location of model for layer energies')

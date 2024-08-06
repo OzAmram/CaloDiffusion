@@ -7,11 +7,11 @@ import numpy as np
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('-g', '--geom_file', default='/home/oamram/CaloDiffusion/HGCalShowers/geom.pkl', help='Geom file')
 parser.add_argument('-c', '--config', default='', help='Geom file')
 parser.add_argument('-i', '--fin', default='', help='File with showers to plot')
 parser.add_argument('-n', '--nShowers', default=1, type = int, help='How many showers to plot')
 parser.add_argument('-o', '--outdir', default='../plots/showers/', help='Where to put output plots')
+parser.add_argument('--EMin', type = float, default=-1.0, help='Voxel min energy')
 flags = parser.parse_args()
 
 dataset_config = LoadJson(flags.config)
@@ -20,15 +20,22 @@ hgcal = dataset_config.get('HGCAL', False)
 if (not os.path.exists(flags.outdir)): os.system("mkdir " + flags.outdir)
 f = h5py.File(flags.fin)
 
+scale_fac = 200. if hgcal else (1/1000.)
 nShowers = max(flags.nShowers, 10000)
-showers = f['showers'][:nShowers]
+
+showers = f['showers'][:nShowers] * scale_fac
+
+
+if(flags.EMin > 0.):
+    mask = showers < flags.EMin
+    showers[mask] = 0.
+
 
 
 if(hgcal):
     print("Embedding HGCal")
     vmin = 1e-4
     shape_plot = dataset_config['SHAPE_FINAL']
-    showers *= 200
     NN_embed = HGCalConverter(bins = shape_plot, geom_file = dataset_config['BIN_FILE'])
     showers = showers[:,:, :NN_embed.geom.max_ncell]
     showers =torch.from_numpy(showers.astype(np.float32)).reshape(dataset_config['SHAPE_PAD'])

@@ -33,6 +33,7 @@
     'logE':False,
     'MAXDEP':1.0,
     'CYLINDRICAL': True,
+    'TRAINABLE_EMBED': True,
     'SHOWERMAP': 'layer-logit-norm',
     'R_Z_INPUT': True,
     'PHI_INPUT': True,
@@ -47,6 +48,6 @@
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : 'NN',
-    'CHECKPOINT_NAME':'HGCal_july25',
+    'CHECKPOINT_NAME':'HGCal_aug6',
 
 }

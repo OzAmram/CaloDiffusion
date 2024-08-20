@@ -63,8 +63,6 @@ def create_R_Z_image(device, dataset_num = 0, scaled = True, shape = (1,45,16,9)
         r_bins = torch.arange(0, shape[-1]+1)
 
     r_avgs = [(r_bins[i] + r_bins[i+1]) / 2.0 for i in range(len(r_bins) -1) ]
-    print(r_avgs)
-    print(len(r_avgs), shape)
     assert(len(r_avgs) == shape[-1])
     Z_image = torch.zeros(shape, device=device)
     R_image = torch.zeros(shape, device=device)
@@ -720,8 +718,6 @@ class NNConverter(nn.Module):
         for i in range(len(self.gc.weight_mats)):
 
             rdim_in = len(self.gc.lay_r_edges[i]) - 1
-            #lay = nn.Sequential(*[nn.Linear(rdim_in, hidden_size), nn.GELU(), nn.Linear(hidden_size, hidden_size), 
-            #    nn.GELU(), nn.Linear(hidden_size, self.gc.dim_r_out)])
 
             lay = nn.Linear(rdim_in, self.gc.dim_r_out, bias = False)
             noise = torch.randn_like(self.gc.weight_mats[i])
@@ -730,8 +726,6 @@ class NNConverter(nn.Module):
             self.encs.append(lay)
 
 
-            #inv_lay = nn.Sequential(*[nn.Linear(self.gc.dim_r_out, hidden_size), nn.GELU(), nn.Linear(hidden_size, hidden_size), 
-                #nn.GELU(), nn.Linear(hidden_size, rdim_in)])
             inv_lay = nn.Linear(self.gc.dim_r_out, rdim_in, bias = False)
 
             inv_init = torch.linalg.pinv(self.gc.weight_mats[i])
@@ -739,6 +733,9 @@ class NNConverter(nn.Module):
             inv_lay.weight.data =  inv_init + eps*noise2
 
             self.decs.append(inv_lay)
+
+    def init(self):
+        return 
 
     def enc(self, x):
         n_shower = x.shape[0]

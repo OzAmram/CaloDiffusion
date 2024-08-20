@@ -57,6 +57,7 @@ if __name__ == '__main__':
     max_cells = dataset_config.get('MAX_CELLS', None)
 
 
+    #TODO proper datareader...
     for i, dataset in enumerate(dataset_config['FILES']):
         data_,e_,layers_ = DataLoader(
             os.path.join(flags.data_folder,dataset),
@@ -102,7 +103,8 @@ if __name__ == '__main__':
 
         NN_embed = NNConverter(bins = bins).to(device = device)
     elif(hgcal):
-        NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device).to(device = device)
+        trainable = dataset_config.get('TRAINABLE_EMBED', False)
+        NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
 
 
     print('shower mem', sys.getsizeof(data)*byteToMb)
@@ -146,6 +148,9 @@ if __name__ == '__main__':
         checkpoint = torch.load(checkpoint_path, map_location = device)
         print(checkpoint.keys())
 
+    else:
+        if(NN_embed is not None): NN_embed.init()
+
 
     if(flags.model == "Diffu"):
         shape = dataset_config['SHAPE_FINAL'][1:] 
@@ -156,7 +161,6 @@ if __name__ == '__main__':
         #sometimes save only weights, sometimes save other info
         if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
         elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
-
 
     else:
         print("Model %s not supported!" % flags.model)
@@ -217,6 +221,7 @@ if __name__ == '__main__':
             train_loss+=batch_loss.item()
 
             del data, E, layers, noise, batch_loss
+
 
         train_loss = train_loss/len(loader_train)
         training_losses[epoch] = train_loss

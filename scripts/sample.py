@@ -154,7 +154,10 @@ if('NN' in shower_embed and not hgcal):
 
     NN_embed = NNConverter(bins = bins).to(device = device)
 elif(hgcal):
-    NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device).to(device = device)
+    trainable = dataset_config.get('TRAINABLE_EMBED', False)
+    NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
+    if(not trainable):
+        NN_embed.init()
     
 
 

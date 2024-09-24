@@ -39,7 +39,11 @@ if __name__ == '__main__':
     shower_embed = dataset_config.get('SHOWER_EMBED', '')
     orig_shape = ('orig' in shower_embed)
     layer_norm = 'layer' in dataset_config['SHOWERMAP']
-
+    if 'BIN_FILE' in dataset_config.keys(): binning_file = dataset_config['BIN_FILE']
+    else: 
+        if(dataset_num == 1): binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
+        elif(dataset_num == 0):  binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
+        else: binning_file = None
 
     nFiles = len(dataset_config['FILES'])
     for i, dataset in enumerate(dataset_config['FILES']):
@@ -48,6 +52,7 @@ if __name__ == '__main__':
             dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
             nevts = flags.nevts,
+            binning_file=binning_file,
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
@@ -112,6 +117,7 @@ if __name__ == '__main__':
             raw_shower, raw_E = ReverseNorm(shower,E_center,
                     dataset_config['SHAPE_PAD'],
                     emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
+                    binning_file=binning_file,
                     max_deposit=dataset_config['MAXDEP'],
                     logE=dataset_config['logE'],
                     showerMap = dataset_config['SHOWERMAP'],

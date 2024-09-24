@@ -360,7 +360,7 @@ def logit(x, alpha = 1e-6):
 
 
 
-def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
+def DataLoader(file_name,shape,emax,emin, binning_file, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
         evt_start = 0):
 
     with h5.File(file_name,"r") as h5f:
@@ -379,7 +379,7 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, 
     e = np.reshape(e,(-1,1))
 
 
-    shower_preprocessed, layerE_preprocessed = preprocess_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
+    shower_preprocessed, layerE_preprocessed = preprocess_shower(shower, e, shape, binning_file, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
 
     if logE:        
         E_preprocessed = np.log10(e/emin)/np.log10(emax/emin)
@@ -390,13 +390,11 @@ def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, 
 
 
     
-def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2, orig_shape = False, ecut = 0, max_deposit = 2):
+def preprocess_shower(shower, e, shape, binning_file="../CaloChallenge/code/binning_dataset_1_photons.xml", showerMap = 'log-norm', dataset_num = 2, orig_shape = False, ecut = 0, max_deposit = 2):
 
     if(dataset_num == 1): 
-        binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
         bins = XMLHandler("photon", binning_file)
     elif(dataset_num == 0): 
-        binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
         bins = XMLHandler("pion", binning_file)
 
     if(dataset_num  <= 1 and not orig_shape): 
@@ -502,7 +500,7 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
+def ReverseNorm(voxels,e,shape,emax,emin, binning_file="../CaloChallenge/code/binning_dataset_1_photons.xml", max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
     '''Revert the transformations applied to the training set'''
 
     if(dataset_num > 3 or dataset_num <0 ): 
@@ -510,10 +508,8 @@ def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None,
         exit(1)
 
     if(dataset_num == 1): 
-        binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
         bins = XMLHandler("photon", binning_file)
     elif(dataset_num == 0): 
-        binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
         bins = XMLHandler("pion", binning_file)
 
 

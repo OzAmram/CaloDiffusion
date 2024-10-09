@@ -143,6 +143,19 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
                 append_h5(h5f, 'showers', (1./shower_scale) * generated)
                 append_h5(h5f, 'gen_info', energies)
 
+    first_write = True
+
+    #TODO Optionally split generation into smaller chunks to avoid memory issues
+    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset)
+
+    if(flags.generated == ""):
+        fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}.h5"
+    else:
+        fout = flags.generated
+    print(fout)
+
+    write_out(fout, flags, config, generated, energies, first_write=first_write)
+    return
 
 
 def inference(flags, config):
@@ -160,23 +173,73 @@ def inference(flags, config):
         restart_training=True,
     )
     sample_steps = flags.sample_steps if flags.sample_steps is not None else config.get("SAMPLE_STEPS", 400)
+    generated, energies = model_forward(flags, config, data_loader, model=model, sample_steps=sample_steps)
+    if dataset_num > 1:
+        # mask for voxels that are always empty
+        mask_file = os.path.join(
+            flags.data_folder, config["EVAL"][0].replace(".hdf5", "_mask.hdf5")
+        )
+        if not os.path.exists(mask_file):
+            print("Creating mask based on data batch")
+            mask = np.sum(generated, 0) == 0
 
-    first_write = True
+        else:
+            with h5py.File(mask_file, "r") as h5f:
+                mask = h5f["mask"][:]
 
-    #TODO Optionally split generation into smaller chunks to avoid memory issues
-    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset)
+        generated = generated * (np.reshape(mask, (1, -1)) == 0)
 
-    if(flags.generated == ""):
-        fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}.h5"
-    else:
-        fout = flags.generated
-    print(fout)
+    fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}.h5"
 
-    write_out(fout, flags, config, generated, energies, first_write=first_write)
-    return
+    print("Creating " + fout)
+    with h5py.File(fout, "w") as h5f:
+        h5f.create_dataset(
+            "showers",
+            data=1000 * np.reshape(generated, (generated.shape[0], -1)),
+            compression="gzip",
+        )
+        h5f.create_dataset(
+            "incident_energies", data=1000 * energies, compression="gzip"
+        )
+    return generated, energies
+
 
 
 if __name__ == "__main__":
     flags, config = inference_parser()
 
-    inference(flags, config)
+    evt_start = flags.job_idx * flags.nevts
+    dataset_num = config.get("DATASET_NUM", 2)
+
+    bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
+    geom_conv = utils.GeomConverter(bins)
+
+    if flags.sample: 
+        generated, energies = inference(flags, config)
+
+    else: 
+        generated, energies = LoadSamples(flags, config, geom_conv)
+
+    if flags.plot or (flags.generated is not None): 
+        total_evts = energies.shape[0]
+
+        data = []
+        for dataset in config["EVAL"]:
+            with h5py.File(os.path.join(flags.data_folder, dataset), "r") as h5f:
+                if flags.from_end:
+                    start = -int(total_evts)
+                    end = None
+                else:
+                    start = evt_start
+                    end = start + total_evts
+                show = h5f["showers"][start:end] / 1000.0
+                if dataset_num <= 1:
+                    show = geom_conv.convert(geom_conv.reshape(show)).detach().numpy()
+                data.append(show)
+
+        data_dict = {
+            "Geant4": np.reshape(data, config["SHAPE"]),
+            utils.name_translate.get(flags.model, flags.model): generated,
+        }
+
+        plot(flags, config, data_dict, energies)

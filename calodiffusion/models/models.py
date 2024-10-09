@@ -11,7 +11,6 @@ import numpy as np
 from inspect import isfunction
 from functools import partial
 
-
 def exists(x):
     return x is not None
 
@@ -116,7 +115,6 @@ class Residual(nn.Module):
     def forward(self, x, *args, **kwargs):
         return self.fn(x, *args, **kwargs) + x
 
-
 class ScalarAddLayer(nn.Module):
     def __init__(self):
         super().__init__()
@@ -168,7 +166,6 @@ class Block(nn.Module):
 
 class ResnetBlock(nn.Module):
     """https://arxiv.org/abs/1512.03385"""
-
     def __init__(self, dim, dim_out, *, cond_emb_dim=None, groups=8, cylindrical=False):
         super().__init__()
         self.mlp = (

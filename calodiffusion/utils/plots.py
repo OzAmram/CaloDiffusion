@@ -395,7 +395,6 @@ class Plot(ABC):
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         raise NotImplementedError
 
-
 class HistERatio(Plot):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
@@ -881,7 +880,6 @@ class HistEtot(Plot):
 class HistNhits(Plot):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
-
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         def _preprocess(data):
             min_voxel = 1e-3  # 1 Mev

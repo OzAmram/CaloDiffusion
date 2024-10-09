@@ -36,6 +36,12 @@ def training_settings():
         "-n", "--nevts", type=int, default=-1, help="Number of events to load"
     )
     parser.add_argument(
+        "--frac",
+        type=float,
+        default=0.85,
+        help="Fraction of total events used for training",
+    )
+    parser.add_argument(
         "--load",
         action="store_true",
         default=False,

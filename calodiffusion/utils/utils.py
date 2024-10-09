@@ -20,6 +20,31 @@ def import_tqdm():
     return tqdm
 
 
+import os
+import h5py as h5
+import numpy as np
+import torch
+import torch.nn as nn
+import sys
+import joblib
+
+import os
+
+import numpy as np
+import torch
+from calodiffusion.utils.XMLHandler import XMLHandler
+import calodiffusion.utils.consts as constants
+
+import sys
+
+def import_tqdm(): 
+    if sys.stderr.isatty():
+        from tqdm import tqdm
+    else:
+        def tqdm(iterable, **kwargs):
+            return iterable
+    return tqdm
+        
 def split_data_np(data, frac=0.8):
     np.random.shuffle(data)
     split = int(frac * data.shape[0])
@@ -223,7 +248,6 @@ def make_histogram(
         print("saving fig %s" % fname)
     # else: plt.show(block=False)
     return fig
-
 
 def reverse_logit(x, alpha=1e-6):
     exp = np.exp(x)
@@ -604,9 +628,6 @@ class NNConverter(nn.Module):
 
             self.decs.append(inv_lay)
 
-    def init(self):
-        return
-
     def enc(self, x):
         n_shower = x.shape[0]
         x = self.gc.reshape(x)
@@ -811,7 +832,6 @@ class EarlyStopper:
                 if self.counter >= self.patience:
                     return True
             return False
-
 
 def draw_shower(shower, dataset_num, fout, title=None):
     from CaloChallenge.code.HighLevelFeatures import HighLevelFeatures

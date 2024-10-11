@@ -38,7 +38,7 @@
     'logE':False,
     'MAXDEP':1.0,
     'CYLINDRICAL': True,
-    'TRAINABLE_EMBED': False,
+    'TRAINABLE_EMBED': True,
     'SHOWERMAP': 'layer-logit-norm',
     'R_Z_INPUT': True,
     'PHI_INPUT': True,

@@ -8,6 +8,7 @@ import torch.utils.data as torchdata
 
 from utils import *
 from HGCal_utils import *
+from Dataset import Dataset
 from CaloDiffu import *
 from models import *
 
@@ -27,6 +28,8 @@ if __name__ == '__main__':
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     parser.add_argument('--seed', type=int, default=1234,help='Pytorch seed')
+    parser.add_argument('--num_workers', type=int, default=0,help='Num pytorch workers')
+    parser.add_argument('--reclean', action='store_true', default=False,help='Reclean data')
     parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
 
@@ -56,35 +59,47 @@ if __name__ == '__main__':
     layer_norm = 'layer' in dataset_config['SHOWERMAP']
     max_cells = dataset_config.get('MAX_CELLS', None)
 
-
-    #TODO proper datareader...
-    for i, dataset in enumerate(dataset_config['FILES']):
-        data_,e_,layers_ = DataLoader(
-            os.path.join(flags.data_folder,dataset),
-            dataset_config['SHAPE_PAD'],
-            emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
-            hgcal = hgcal,
-            nevts = flags.nevts,
-            max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
-            logE=dataset_config['logE'],
-            showerMap = dataset_config['SHOWERMAP'],
-            max_cells = max_cells,
-
-            nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
-            dataset_num  = dataset_num,
-            orig_shape = orig_shape,
-        )
+    train_files = []
+    val_files = []
 
 
-        if(i ==0): 
-            data = data_
-            energies = e_
-            if(layer_norm): layers = layers_
-        else:
-            data = np.concatenate((data, data_))
-            energies = np.concatenate((energies, e_))
-            if(layer_norm): layers = np.concatenate((layers, layers_))
+    for i, dataset in enumerate(dataset_config['FILES'] + dataset_config['VAL_FILES']):
+        tag = ".npz"
+        if(flags.nevts > 0): tag = ".n%i.npz" % flags.nevts
+        path_clean = os.path.join(flags.data_folder,dataset + tag)
 
+        if(not os.path.exists(path_clean) or flags.reclean):
+            showers,E,layers = DataLoader(
+                os.path.join(flags.data_folder,dataset),
+                dataset_config['SHAPE_PAD'],
+                emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
+                hgcal = hgcal,
+                nevts = flags.nevts,
+                max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
+                logE=dataset_config['logE'],
+                showerMap = dataset_config['SHOWERMAP'],
+                max_cells = max_cells,
+
+                nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
+                dataset_num  = dataset_num,
+                orig_shape = orig_shape,
+            )
+
+            layers = np.reshape(layers, (layers.shape[0], -1))
+            if(orig_shape): showers = np.reshape(showers, dataset_config['SHAPE_ORIG'])
+            else : showers = np.reshape(showers, dataset_config['SHAPE_PAD'])
+
+            print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(showers), np.std(showers)))
+
+            np.savez_compressed(path_clean, E=E, layers=layers, showers=showers, )
+            del E, layers, showers
+
+        if dataset in dataset_config['FILES']: train_files.append(path_clean)
+        else: val_files.append(path_clean) 
+
+
+    dataset_train = Dataset(train_files)
+    dataset_val = Dataset(val_files)
         
     avg_showers = std_showers = E_bins = None
     if(cold_diffu):
@@ -105,38 +120,14 @@ if __name__ == '__main__':
     elif(hgcal):
         trainable = dataset_config.get('TRAINABLE_EMBED', False)
         NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
+        NN_embed.init()
 
 
-    print('shower mem', sys.getsizeof(data)*byteToMb)
-    #print('embed size', sys.getsizeof(NN_embed) * byteToMb)
-
-        
-
-    print('og shape', data.shape)
     dshape = dataset_config['SHAPE_PAD']
-    if(layer_norm): layers = np.reshape(layers, (layers.shape[0], -1))
-    if(orig_shape): data = np.reshape(data, dataset_config['SHAPE_ORIG'])
-    else : data = np.reshape(data, dataset_config['SHAPE_PAD'])
 
-    num_data = data.shape[0]
-    print("Data Shape " + str(data.shape))
-    data_size = data.shape[0]
-    print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(data), np.std(data)))
-    torch_data_tensor = torch.from_numpy(data.astype(np.float32))
-    torch_E_tensor = torch.from_numpy(energies.astype(np.float32))
-    torch_layer_tensor =  torch.from_numpy(layers.astype(np.float32)) if layer_norm else torch.zeros_like(torch_E_tensor)
-    del data
-    #train_data, val_data = utils.split_data_np(data,flags.frac)
+    loader_train  = torchdata.DataLoader(dataset_train, batch_size = batch_size, num_workers=flags.num_workers, pin_memory = True)
+    loader_val  = torchdata.DataLoader(dataset_val, batch_size = batch_size, num_workers=flags.num_workers, pin_memory = True)
 
-    torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_layer_tensor, torch_data_tensor)
-    nTrain = int(round(flags.frac * num_data))
-    nVal = num_data - nTrain
-    train_dataset, val_dataset = torch.utils.data.random_split(torch_dataset, [nTrain, nVal])
-
-    loader_train = torchdata.DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
-    loader_val = torchdata.DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
-
-    del torch_data_tensor, torch_E_tensor, train_dataset, val_dataset
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     if not os.path.exists(checkpoint_folder):
         os.makedirs(checkpoint_folder)
@@ -159,8 +150,8 @@ if __name__ == '__main__':
 
 
         #sometimes save only weights, sometimes save other info
-        if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'])
-        elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint)
+        if('model_state_dict' in checkpoint.keys()): model.load_state_dict(checkpoint['model_state_dict'], strict = False)
+        elif(len(checkpoint.keys()) > 1): model.load_state_dict(checkpoint, strict = False)
 
     else:
         print("Model %s not supported!" % flags.model)
@@ -193,6 +184,9 @@ if __name__ == '__main__':
             training_losses = np.concatenate((training_losses, [0]*(num_epochs - len(training_losses))))
             val_losses = np.concatenate((val_losses, [0]*(num_epochs - len(val_losses))))
 
+    #Freeze validation noise levels so stable performance
+    val_rnd = torch.randn( (len(loader_val),batch_size,), device=device)
+
     #training loop
     for epoch in range(start_epoch, num_epochs):
         print("Beginning epoch %i" % epoch, flush=True)
@@ -203,18 +197,18 @@ if __name__ == '__main__':
             model.zero_grad()
             optimizer.zero_grad()
 
+
             data = data.to(device = device)
             E = E.to(device = device)
             layers = layers.to(device = device)
 
-            t = torch.randint(0, model.nsteps, (data.size()[0],), device=device).long()
             noise = torch.randn_like(data)
 
             if(cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
                 noise = model.gen_cold_image(E, cold_noise_scale, noise)
                 
 
-            batch_loss = model.compute_loss(data, E, noise = noise, layers = layers, t = t, loss_type = loss_type )
+            batch_loss = model.compute_loss(data, E, noise = noise, layers = layers,  loss_type = loss_type )
             batch_loss.backward()
 
             optimizer.step()
@@ -228,40 +222,45 @@ if __name__ == '__main__':
         print("loss: "+ str(train_loss))
 
         val_loss = 0
-        model.eval()
-        for i, (vE, vlayers, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
-            vdata = vdata.to(device=device)
-            vE = vE.to(device = device)
-            vlayers = vlayers.to(device = device)
+        if(loader_val is not None):
+            model.eval()
+            for i, (vE, vlayers, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
 
-            t = torch.randint(0, model.nsteps, (vdata.size()[0],), device=device).long()
-            noise = torch.randn_like(vdata)
-            if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)
+                #skip last batch to avoid shape issues
+                if(vE.shape[0] != batch_size): continue
 
-            batch_loss = model.compute_loss(vdata, vE, noise = noise, layers = vlayers, t = t, loss_type = loss_type  )
+                vdata = vdata.to(device=device)
+                vE = vE.to(device = device)
+                vlayers = vlayers.to(device = device)
 
-            val_loss+=batch_loss.item()
-            del vdata,vE, vlayers, noise, batch_loss
+                rnd_normal = val_rnd[i].to(device = device)
 
-        val_loss = val_loss/len(loader_val)
-        #scheduler.step(torch.tensor([val_loss]))
-        val_losses[epoch] = val_loss
-        print("val_loss: "+ str(val_loss), flush = True)
+                noise = torch.randn_like(vdata)
+                if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)
 
-        scheduler.step(torch.tensor([train_loss]))
+                batch_loss = model.compute_loss(vdata, vE, noise = noise, layers = vlayers, rnd_normal = rnd_normal, loss_type = loss_type  )
 
-        if(val_loss < min_validation_loss):
-            torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
-            min_validation_loss = val_loss
+                val_loss+=batch_loss.item()
+                del vdata,vE, vlayers, noise, batch_loss
 
-        if(early_stopper.early_stop(val_loss - train_loss)):
-            print("Early stopping!")
-            break
+            val_loss = val_loss/len(loader_val)
+            #scheduler.step(torch.tensor([val_loss]))
+            val_losses[epoch] = val_loss
+            print("val_loss: "+ str(val_loss), flush = True)
+
+            scheduler.step(torch.tensor([train_loss]))
+
+            if(val_loss < min_validation_loss):
+                torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'best_val.pth'))
+                min_validation_loss = val_loss
+
+            #if(early_stopper.early_stop(val_loss)):
+                #print("Early stopping!")
+                #break
 
         # save the model
         model.eval()
         print("SAVING")
-        #torch.save(model.state_dict(), checkpoint_path)
         
         #save full training state so can be resumed
         torch.save({

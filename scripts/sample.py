@@ -49,6 +49,7 @@ parser.add_argument('--geant_only', action='store_true', default=False,help='Plo
 parser.add_argument('--job_idx', default = -1, type = int, help = 'Split generation among different jobs')
 parser.add_argument('--debug', action='store_true', default=False,help='Debugging options')
 parser.add_argument('--from_end', action='store_true', default = False, help='Use events from end of file (usually holdout set)')
+parser.add_argument('--trainset', action='store_true', default = False, help='Generate from training set energies')
 
 flags = parser.parse_args()
 
@@ -92,7 +93,11 @@ if(flags.job_idx >= 0):
 checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
 energies = None
 data = None
-for i, dataset in enumerate(dataset_config['EVAL']):
+
+dset = dataset_config['EVAL'] if not flags.trainset else dataset_config['FILES']
+
+
+for i, dataset in enumerate(dset):
     n_dataset = h5py.File(os.path.join(flags.data_folder,dataset))['showers'].shape[0]
     if(evt_start >= n_dataset):
         evt_start -= n_dataset
@@ -118,22 +123,17 @@ for i, dataset in enumerate(dataset_config['EVAL']):
         energies = e_
         layers = layers_
     else:
-        data = np.concatenate((data, data_))
         energies = np.concatenate((energies, e_))
         if(layer_norm): layers = np.concatenate((layers, layers_))
-    if(flags.nevts > 0 and data_.shape[0] == flags.nevts): break
+    if(flags.nevts > 0 and energies.shape[0] >= flags.nevts): break
 
 if(layer_norm): layers = np.reshape(layers, (layers.shape[0], -1))
-if(not orig_shape): data = np.reshape(data,dataset_config['SHAPE_PAD'])
 else: data = np.reshape(data, (len(data), -1))
 
-torch_data_tensor = torch.from_numpy(data.astype(np.float32))
 torch_E_tensor = torch.from_numpy(energies.astype(np.float32))
 torch_layer_tensor =  torch.from_numpy(layers.astype(np.float32)) if layer_norm else torch.zeros_like(torch_E_tensor)
 
-print("DATA mean, std", torch.mean(torch_data_tensor), torch.std(torch_data_tensor))
-
-torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_layer_tensor, torch_data_tensor)
+torch_dataset  = torchdata.TensorDataset(torch_E_tensor, torch_layer_tensor)
 data_loader = torchdata.DataLoader(torch_dataset, batch_size = batch_size, shuffle = False)
 
 avg_showers = std_showers = E_bins = None
@@ -163,6 +163,7 @@ elif(hgcal):
 
 if(flags.model == "AE"):
     print("Loading AE from " + flags.model_loc)
+    """
     model = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device=device)
 
     saved_model = torch.load(flags.model_loc, map_location = device)
@@ -179,6 +180,7 @@ if(flags.model == "AE"):
         if(i == 0): generated = gen
         else: generated = np.concatenate((generated, gen))
         del E, d_batch
+        """
 
 elif(flags.model == "Diffu"):
     print("Loading Diffu model from " + flags.model_loc)
@@ -228,11 +230,10 @@ elif(flags.model == "Diffu"):
     if(layer_model is not None):
         print("Layer Sample Algo : %s, %i steps" % (flags.layer_sample_algo, flags.layer_sample_steps))
 
-    for i,(E,layers_, d_batch) in enumerate(data_loader):
+    for i,(E,layers_) in enumerate(data_loader):
         batch_start = time.time()
         if(E.shape[0] == 0): continue
         E = E.to(device=device)
-        d_batch = d_batch.to(device=device)
 
         layer_shape = (E.shape[0], dataset_config['SHAPE_PAD'][2]+1)
         if(layer_model is not None):
@@ -273,7 +274,7 @@ elif(flags.model == "Diffu"):
 
         batch_end = time.time()
         print("Time to sample %i events is %.3f seconds" % (E.shape[0], batch_end - batch_start))
-        del E, d_batch
+        del E, layers_
     end_time = time.time()
     print("Total sampling time %.3f seconds" % (end_time - start_time))
 elif(flags.model == "Avg"):
@@ -337,4 +338,4 @@ else:
         dset = h5f.create_dataset("showers", data=(1./100.)* np.reshape(generated, dataset_config["SHAPE_ORIG"]), compression = 'gzip')
         dset = h5f.create_dataset("gen_info", data=energies, compression = 'gzip')
 
-if(flags.job_idx < 0): make_plots(flags)
+#if(flags.job_idx < 0): make_plots(flags)

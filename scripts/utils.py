@@ -12,6 +12,8 @@ import torch.nn as nn
 import sys
 import joblib
 from sklearn.preprocessing import QuantileTransformer
+import mplhep as hep
+
 sys.path.append("..")
 from CaloChallenge.code.XMLHandler import *
 from HGCal_utils import *
@@ -162,14 +164,42 @@ def SetGrid(ratio=True):
     return fig,gs
 
 
+def WeightedMean(coord, energies, power=1, axis=-1):
+    ec = np.sum(energies*np.power(coord,power),axis=axis)
+    sum_energies = np.sum(energies,axis=axis)
+    ec = np.ma.divide(ec,sum_energies).filled(0)
+    return ec
 
-def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_label = "", no_mean = False):
+def ang_center_spread(matrix, energies, axis=-1):
+    #weighted average over periodic variabel (angle)
+    #https://github.com/scipy/scipy/blob/v1.11.1/scipy/stats/_morestats.py#L4614
+    #https://en.wikipedia.org/wiki/Directional_statistics#The_fundamental_difference_between_linear_and_circular_statistics
+    cos_matrix = np.cos(matrix)
+    sin_matrix = np.sin(matrix)
+    cos_ec = WeightedMean(cos_matrix, energies, axis=axis)
+    sin_ec = WeightedMean(sin_matrix, energies, axis=axis)
+    ang_mean  = np.arctan2(sin_ec, cos_ec)
+    R = sin_ec**2 + cos_ec**2
+    eps = 1e-8
+    R = np.clip(R, eps, 1.)
+
+    ang_std = np.sqrt(-np.log(R))
+    return ang_mean, ang_std
+
+
+def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4', plot_label = "", no_mean = False, cms_style=False):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
     fig,gs = SetGrid() 
     ax0 = plt.subplot(gs[0])
     plt.xticks(fontsize=0)
     ax1 = plt.subplot(gs[1],sharex=ax0)
+
+    if(cms_style):
+        hep.style.use(hep.style.CMS)
+        hep.cms.text(ax=ax0, text="Simulation Preliminary")
+
+
 
     for ip,plot in enumerate(feed_dict.keys()):
         if(no_mean): 
@@ -189,12 +219,10 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
             ax0.set_ymargin(0)
 
             eps = 1e-8
-            ratio = 100*np.divide(ref-d, d + eps)
+            ratio = np.divide(ref, d + eps)
             #ax1.plot(ratio,color=colors[plot],marker='o',ms=10,lw=0,markerfacecolor='none',markeredgewidth=3)
 
-            plt.axhline(y=0.0, color='black', linestyle='-',linewidth=2)
-            plt.axhline(y=10, color='gray', linestyle='--',linewidth=2)
-            plt.axhline(y=-10, color='gray', linestyle='--',linewidth=2)
+            plt.axhline(y=1.0, color='black', linestyle='--',linewidth=2)
 
             
             if 'steps' in plot or 'r=' in plot:
@@ -206,14 +234,15 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
     FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0)
     ax0.legend(loc='best',fontsize=24,ncol=1)
 
+    if(logy): ax0.set_yscale('log')
 
-    plt.ylabel('Diff. (%)')
+    plt.ylabel('Ratio')
     plt.xlabel(xlabel)
     loc = mtick.MultipleLocator(base=10.0) 
     ax1.yaxis.set_minor_locator(loc)
-    plt.ylim([-50,50])
+    plt.ylim([0.5, 1.5])
 
-    plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
+    plt.subplots_adjust(left = 0.2, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
     #plt.tight_layout()
 
     return fig,ax0
@@ -290,15 +319,20 @@ def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins 
     return fig
 
 
-def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, plot_label = "", leg_font = 24):
+def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, 
+        plot_label = "", leg_font = 24, cms_style=False):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
     fig,gs = SetGrid(ratio) 
     ax0 = plt.subplot(gs[0])
+
     if(ratio):
         plt.xticks(fontsize=0)
         ax1 = plt.subplot(gs[1],sharex=ax0)
 
+    if(cms_style):
+        hep.style.use(hep.style.CMS)
+        hep.cms.text(ax=ax0, text="Simulation Preliminary")
     
     if binning is None:
         binning = np.linspace(np.quantile(feed_dict[reference_name],0.0),np.quantile(feed_dict[reference_name],1),10)
@@ -319,7 +353,7 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
 
         if reference_name!=plot and ratio:
             eps = 1e-8
-            h_ratio = 100*np.divide(dist - reference_hist,reference_hist + eps)
+            h_ratio = np.divide(dist,reference_hist + eps)
             if 'steps' in plot or 'r=' in plot:
                 ax1.plot(xaxis,h_ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=4)
             else:
@@ -337,18 +371,16 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
     
     if(ratio):
         FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0) 
-        plt.ylabel('Diff. (%)')
+        plt.ylabel('Ratio')
         plt.xlabel(xlabel)
-        plt.axhline(y=0.0, color='black', linestyle='-',linewidth=1)
-        plt.axhline(y=10, color='gray', linestyle='--',linewidth=1)
-        plt.axhline(y=-10, color='gray', linestyle='--',linewidth=1)
+        plt.axhline(y=1.0, color='black', linestyle='--',linewidth=1)
         loc = mtick.MultipleLocator(base=10.0) 
         ax1.yaxis.set_minor_locator(loc)
-        plt.ylim([-50,50])
+        plt.ylim([0.5, 1.5])
     else:
         FormatFig(xlabel = xlabel, ylabel = ylabel,ax0=ax0) 
 
-    ax0.legend(loc=label_loc,fontsize=leg_font,ncol=1)        
+    ax0.legend(loc=label_loc,fontsize=leg_font,ncol=1, facecolor = 'white')        
     #plt.tight_layout()
     if(ratio):
         plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)

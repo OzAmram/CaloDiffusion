@@ -133,7 +133,7 @@ class CaloDiffu(nn.Module):
         summary(self.model, summary_shape)
 
     #wrapper for backwards compatability
-    def load_state_dict(self, d):
+    def load_state_dict(self, d, strict = True):
         if('noise_predictor' in list(d.keys())[0]):
             d_new = dict()
             for key in d.keys():
@@ -141,7 +141,7 @@ class CaloDiffu(nn.Module):
                 d_new[key_new] = d[key]
         else: d_new = d
 
-        return super().load_state_dict(d_new)
+        return super().load_state_dict(d_new, strict = strict)
 
 
     def set_sampling_steps(self, nsteps):

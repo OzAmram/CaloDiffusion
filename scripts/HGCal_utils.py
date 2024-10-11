@@ -12,12 +12,12 @@ from HGCalShowers.HGCalGeo import *
 from consts import *
 
 
-def logit(x, alpha = 1e-6):
+def logit(x, alpha = 1e-8):
     o = alpha + (1 - 2*alpha)*x
     o = np.ma.log(o/(1-o)).filled(0)    
     return o
 
-def reverse_logit(x, alpha = 1e-6):
+def reverse_logit(x, alpha = 1e-8):
     exp = np.exp(x)    
     o = exp/(1+exp)
     o = (o-alpha)/(1 - 2*alpha)
@@ -30,14 +30,8 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
 
     c = dataset_params[dataset_num]
 
-    if('quantile' in showerMap and ecut > 0):
-        np.random.seed(123)
-        noise = (ecut/3) * np.random.rand(*shower.shape)
-        shower +=  noise
 
-
-    alpha = 1e-6
-    per_layer_norm = False
+    alpha = 1e-8
 
     layerE = None
     prefix = ""
@@ -49,12 +43,10 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
 
         layers = np.sum(shower,(2),keepdims=True)
         totalE = np.sum(shower, (1,2), keepdims = True)
-        if(per_layer_norm): shower = np.ma.divide(shower,layers)
 
         #only logit transform for layers
-        layer_alpha = 1e-6
         layers = np.ma.divide(layers,totalE)
-        layers = logit(layers)
+        layers = logit(layers, alpha=alpha)
 
 
         layers = (layers - c['layers_mean']) / c['layers_std']
@@ -64,8 +56,6 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
         layers = np.squeeze(layers)
         layerE = np.concatenate((totalE,layers), axis = 1)
 
-        if(per_layer_norm): prefix = "layerN_"
-    else:
         eshape = (-1, *(1,)*(len(shower.shape) -1))
         shower = shower/(max_deposit*e.reshape(eshape))
 
@@ -99,21 +89,22 @@ def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2,
         if(end == -1): end = None 
         print("Event start, stop: ", evt_start, end)
         gen_info = h5f['gen_info'][evt_start:end].astype(np.float32)
-        shower = h5f['showers'][evt_start:end][:,:,:max_cells].astype(np.float32) *100 # shower is units of charge, multiply by 100 to get rough match to energy scale
+        shower = h5f['showers'][evt_start:end][:,:,:max_cells].astype(np.float32) *100 # sampling fraction is roughly 1/100, multiply by 100 to get rough match to energy scale
 
     e = gen_info[:,0]
     gen_min = np.array(gen_min)
     gen_max = np.array(gen_max)
 
-    print("Data loaded", shower.shape)
 
 
-        
     shower_preprocessed, layerE_preprocessed = preprocess_hgcal_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
     print("preprocessed")
 
     gen_preprocessed = (gen_info-gen_min)/(gen_max-gen_min)
-    print('gen' , gen_preprocessed.shape)
+
+    shower_preprocessed = shower_preprocessed.astype(np.float32)
+    gen_preprocessed = gen_preprocessed.astype(np.float32)
+    layerE_preprocessed = layerE_preprocessed.astype(np.float32)
 
     return shower_preprocessed, gen_preprocessed , layerE_preprocessed
 
@@ -126,7 +117,7 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
 
     c = dataset_params[dataset_num]
 
-    alpha = 1e-6
+    alpha = 1e-8
 
     gen_min = np.array(gen_min)
     gen_max = np.array(gen_max)
@@ -143,7 +134,7 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
         shape = voxels.shape
         voxels = qt.inverse_transform(voxels.reshape(-1,1)).reshape(shape)
 
-        
+
     if('logit' in showerMap):
         if('norm' in showerMap): voxels = (voxels * c[prefix+'logit_std']) + c[prefix+'logit_mean']
         elif('scaled' in showerMap): voxels = (voxels + 1.0) * 0.5 * (c[prefix+'logit_max'] - c[prefix+'logit_min']) + c[prefix+'logit_min']
@@ -151,7 +142,7 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
         #avoid overflows
         #voxels = np.minimum(voxels, np.log(max_deposit/(1-max_deposit)))
 
-        data = reverse_logit(voxels)
+        data = reverse_logit(voxels, alpha = alpha)
 
     elif('log' in showerMap):
         if('norm' in showerMap): voxels = (voxels * c[prefix+'log_std']) + c[prefix+'log_mean']
@@ -161,6 +152,7 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
 
 
         data = np.exp(voxels)
+
 
     #Per layer energy normalization
     if('layer' in showerMap):
@@ -179,11 +171,8 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
         data = np.squeeze(data)
 
         #remove voxels with negative energies so they don't mess up sums
-        eps = 1e-6
+        eps = 1e-8
         data[data < 0] = 0 
-        #layers[layers < 0] = eps
-        print('data', data.shape)
-
 
         #Renormalize layer energies
         prev_layers = np.sum(data,(2),keepdims=True)
@@ -193,12 +182,29 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
         rescale_facs[layers < eps] = 1.0
         rescale_facs[prev_layers < eps] = 1.0
         data *= rescale_facs
-                    
-                
-        data = data*max_deposit*energy.reshape(-1,1,1)
 
-    if(ecut > 0): data[data < ecut ] = 0 #min from samples
-    
+
+    data = data*max_deposit*energy.reshape(-1,1,1)
+
+
+    if(ecut > 0 and False): 
+        print("Applying ECut " + str(ecut))
+        print('before', np.mean(data))
+        #Preserve layer energies after applying threshold
+        data[data < 0] = 0 
+        mask = data < ecut
+        d_masked = np.where(mask, data, 0.)
+        lostE = np.sum(d_masked, axis = -1, keepdims=True)
+        ELayer = np.sum(data, axis = -1, keepdims=True)
+        eps = 1e-10
+        rescale = (ELayer + eps)/(ELayer - lostE +eps)
+        data[mask] = 0.
+        data *= rescale
+        print('after', np.mean(data))
+
+
+
+
     return data,gen_out
 
 
@@ -213,6 +219,7 @@ class Embeder(nn.Module):
             self.mat = torch.nn.Parameter(mat, requires_grad = True)
             print("Embed trainable")
         else: self.mat = mat
+        self.trainable = trainable
         self.mask = mask
 
         #Masked tensor doesn't suppoert einsum so can't use for now ... (unless hacky way to get properly indexed matmul to work?)
@@ -223,7 +230,8 @@ class Embeder(nn.Module):
 
     #reshape?
     def forward(self, x):
-        masked_mat = self.mat * self.mask
+        #masked_mat = self.mat * self.mask if self.trainable else self.mat
+        masked_mat = self.mat
         out = torch.einsum("l e n, b c l n -> b c l e", masked_mat, x)
         out = rearrange(out, " b c l (a r) -> b c l a r",a = self.dim1, r = self.dim2)
         return out
@@ -237,6 +245,7 @@ class Decoder(nn.Module):
         super().__init__()
         self.dim1 = dim1
         self.dim2 = dim2
+        self.trainable = trainable
 
         if(trainable): self.mat = torch.nn.Parameter(mat, requires_grad = True)
         else: self.mat = mat
@@ -244,7 +253,8 @@ class Decoder(nn.Module):
 
 
     def forward(self, x):
-        masked_mat = self.mat * self.mask
+        #masked_mat = self.mat * self.mask if self.trainable else self.mat
+        masked_mat = self.mat
         out = rearrange(x, " b c l a r -> b c l (a r)", a = self.dim1, r = self.dim2)
         out = torch.einsum("l n e, b c l e -> b c l n", masked_mat, out)
         return out
@@ -265,17 +275,21 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay, trainable = False):
 
     step_size = 2.*np.pi/num_alpha_bins
     ang_bins = torch.arange(0, 2.*np.pi + step_size, step_size)
-    ang_bins += np.pi / num_alpha_bins # shift by half a bin width
+    ang_bins += np.pi / num_alpha_bins # shift by half a bin width so bin center at zero
 
 
-    eps = 1e-2
+    eps = 1e-4
+    eps2 = 1e-2
     cell_alphas = torch.tensor(geom.theta_map[ilay][:dim_in])
     cell_ang_bins = torch.bucketize(cell_alphas + eps, ang_bins, right = True)
+    #print(ang_bins)
+    #print(cell_alphas[1:7])
+    #print(cell_ang_bins)
     #last bin = first bin b/c phi periodic
     cell_ang_bins[cell_ang_bins == num_alpha_bins] = 0 
     diffs = torch.abs(cell_alphas - ang_bins[cell_ang_bins-1])
 
-    close_boundaries = (diffs < eps) | (torch.abs(diffs - 2. * np.pi) < eps)
+    close_boundaries = (diffs < eps2) | (torch.abs(diffs - 2. * np.pi) < eps2)
 
     #special init for first bin
     #split among all ang bins in the central radial bin
@@ -284,8 +298,8 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay, trainable = False):
 
     #dumb slow for loop to initialize for now
     for i in range(1, ncells): 
-    #matrix is size of largest layer, but only process up to size of this layer
-        a_bin = cell_ang_bins[i]
+        #matrix is size of largest layer, but only process up to size of this layer
+        a_bin = cell_ang_bins[i] % num_alpha_bins
         r_bin = int(round(geom.ring_map[ilay, i]))
         if(close_boundaries[i]):
             weight_mat[a_bin, r_bin, i] = 0.5
@@ -298,6 +312,7 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay, trainable = False):
             mask[a_bin-1, r_bin, i] = 1.0
             if(r_bin > 0): mask[a_bin-1, r_bin-1, i] = 1.0
             if(r_bin < num_r_bins-1): mask[a_bin-1, r_bin-1, i] = 1.0
+
         else:
             weight_mat[a_bin, r_bin, i] = 1.0
 
@@ -371,11 +386,20 @@ class HGCalConverter(nn.Module):
             lay_size = self.geom.ncells[i]
 
             conv_map, mask = init_map(self.num_alpha_bins, self.num_r_bins, self.geom, i)
+            #print(conv_map[:10])
+            #print(mask[:10])
 
+            #print("emb size", torch.sum(conv_map))
+            #print("mask size", torch.sum(mask))
 
             #How to define sparse mask of inverse ? 
             inv_init = torch.linalg.pinv(conv_map)
-            inv_mask_init = torch.linalg.pinv(mask)
+            #inv_mask = torch.linalg.pinv(mask)
+            inv_mask = inv_init
+            #print(inv_init[:10])
+            #print(inv_mask[:10])
+            #print("Inv size", torch.sum(inv_init > 0.))
+            #print("Inv mask size", torch.sum(inv_mask))
             #inv_init = torch.zeros((conv_map.shape[1], conv_map.shape[0]))
 
             if(noise_scale > 0.):
@@ -384,14 +408,15 @@ class HGCalConverter(nn.Module):
                 noise2 = torch.randn_like(inv_init)
                 inv_init += eps*noise2
 
+            eps = 1e-6
             self.enc_mat[i] = conv_map
-            self.enc_mask[i] = mask > 0.
+            self.enc_mask[i] = mask > eps
             self.dec_mat[i] = inv_init
-            self.dec_mask[i] = inv_mask_init > 0.
+            self.dec_mask[i] = torch.abs(inv_mask) > eps
 
             #print(i)
             #print('sum', torch.sum(conv_map))
-            
+
         self.embeder.set(self.enc_mat, self.enc_mask)
         self.decoder.set(self.dec_mat, self.dec_mask)
 

@@ -37,12 +37,32 @@ if(hgcal):
     vmin = 1e-4
     shape_plot = dataset_config['SHAPE_FINAL']
     NN_embed = HGCalConverter(bins = shape_plot, geom_file = dataset_config['BIN_FILE'])
+    trainable = dataset_config.get('TRAINABLE_EMBED', False)
+    if(not trainable): NN_embed.init()
+
+
     showers = showers[:,:, :NN_embed.geom.max_ncell]
     showers =torch.from_numpy(showers.astype(np.float32)).reshape(dataset_config['SHAPE_PAD'])
     norm_before = torch.sum(showers)
-    showers = np.squeeze(NN_embed.enc(showers).detach().numpy())
+    showers = torch.squeeze(NN_embed.enc(showers)).detach().numpy()
     norm_after = np.sum(showers)
     print("norm before %f, after %f" % (norm_before, norm_after))
+
+    enc_mat = NN_embed.enc_mat.detach().numpy()
+    print('enc map', NN_embed.enc_mat.shape)
+    num_alpha_bins = shape_plot[-2]
+    num_r_bins = shape_plot[-1]
+    enc_mat_reshape = np.reshape(enc_mat, (enc_mat.shape[0], num_alpha_bins, num_r_bins, -1))
+    print(' in r-alpha space', enc_mat_reshape.shape)
+    print(enc_mat_reshape[0,:,0,0])
+    print(enc_mat_reshape[0,:,1,1])
+
+    eps = 1e-4
+    for i in range(enc_mat.shape[2]):
+        if( abs(np.sum(enc_mat[0,:,i]) - 1.0) > eps):
+            print(i)
+
+
 
     plt.figure(figsize=(5,5))
     plt.matshow(NN_embed.enc_mat[0])

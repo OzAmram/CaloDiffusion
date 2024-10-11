@@ -1,0 +1,167 @@
+
+import numpy as np
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+import argparse
+import h5py as h5
+import torch.optim as optim
+import torch.utils.data as torchdata
+
+from utils import *
+from HGCal_utils import *
+from Dataset import Dataset
+from CaloDiffu import *
+from models import *
+
+
+if __name__ == '__main__':
+    print("TRAIN DIFFU")
+
+    if(torch.cuda.is_available()): device = torch.device('cuda')
+    else: device = torch.device('cpu')
+        
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument('--data_folder', default='../data/', help='Folder containing data and MC files')
+    parser.add_argument('--model', default='Diffu', help='Diffusion model to train. Options are: VPSDE, VESDE and subVPSDE')
+    parser.add_argument('-c', '--config', default='configs/test.json', help='Config file with training parameters')
+    parser.add_argument('-n', '--nevts', type=int,default=-1, help='Number of events to load')
+    parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
+    parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
+    parser.add_argument('--seed', type=int, default=1234,help='Pytorch seed')
+    parser.add_argument('--num_workers', type=int, default=0,help='Num pytorch workers')
+    parser.add_argument('--reclean', action='store_true', default=False,help='Reclean data')
+    parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
+    flags = parser.parse_args()
+
+    dataset_config = LoadJson(flags.config)
+
+    print("TRAINING OPTIONS")
+    print(dataset_config, flush = True)
+
+    torch.manual_seed(flags.seed)
+
+    cold_diffu = dataset_config.get('COLD_DIFFU', False)
+    cold_noise_scale = dataset_config.get('COLD_NOISE', 1.0)
+
+    nholdout  = dataset_config.get('HOLDOUT', 0)
+
+    batch_size = dataset_config['BATCH']
+    num_epochs = dataset_config['MAXEPOCH']
+    early_stop = dataset_config['EARLYSTOP']
+    training_obj = dataset_config.get('TRAINING_OBJ', 'noise_pred')
+    loss_type = dataset_config.get("LOSS_TYPE", "l2")
+    dataset_num = dataset_config.get('DATASET_NUM', 2)
+    shower_embed = dataset_config.get('SHOWER_EMBED', '')
+
+    hgcal = dataset_config.get('HGCAL', False)
+    geom_file = dataset_config.get('BIN_FILE', '')
+    orig_shape = ('orig' in shower_embed)
+    layer_norm = 'layer' in dataset_config['SHOWERMAP']
+    max_cells = dataset_config.get('MAX_CELLS', None)
+    shape_plot = dataset_config['SHAPE_FINAL']
+
+    train_files = []
+    val_files = []
+
+
+    dataset = dataset_config['FILES'][0]
+
+    showers,E,layers = DataLoader(
+        os.path.join(flags.data_folder,dataset),
+        dataset_config['SHAPE_PAD'],
+        emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
+        hgcal = hgcal,
+        nevts = 10,
+        max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
+        logE=dataset_config['logE'],
+        showerMap = dataset_config['SHOWERMAP'],
+        max_cells = max_cells,
+
+        dataset_num  = dataset_num,
+        orig_shape = orig_shape,
+    )
+
+    layers = np.reshape(layers, (layers.shape[0], -1))
+    if(orig_shape): showers = np.reshape(showers, dataset_config['SHAPE_ORIG'])
+    else : showers = np.reshape(showers, dataset_config['SHAPE_PAD'])
+
+    print("Pre-processed shower mean %.2f std dev %.2f" % (np.mean(showers), np.std(showers)))
+
+
+
+    """
+    print("Simple Geo")
+    geom_f = open(geom_file, 'rb')
+    geom = pickle_load(geom_f)
+    geom.theta_map = np.arctan2(geom.xmap, geom.ymap) % (2. *np.pi)
+    print(geom.ring_map[0,:23])
+    print(geom.theta_map[0,:23])
+    #first two layers
+    geom.ncells = [23]
+    geom.max_ncell = 23
+
+    map_test, mask_test = init_map(12, 3, geom, 0)
+    for i in range(geom.max_ncell):
+        print(torch.sum(map_test[:,:,i]))
+
+    print(map_test)
+    print(mask_test)
+    """
+
+
+
+
+    if(hgcal):
+        trainable = dataset_config.get('TRAINABLE_EMBED', False)
+        print("Trainable", trainable)
+        NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
+        NN_embed.init()
+
+    else:
+        if(dataset_num == 1):
+            bins = XMLHandler("photon", geom_file)
+        else: 
+            bins = XMLHandler("pion", geom_file)
+            NN_embed = NNConverter(bins = bins).to(device = device)
+
+
+
+    showers = torch.Tensor(showers).to(device)
+    print("OG")
+    print(showers[0].shape)
+    print(showers[0][0,10])
+    enc0 = NN_embed.enc(showers)
+    print("ENC")
+    print(enc0[0].shape)
+    print(enc0[0][0,10])
+
+    shower_dec = NN_embed.dec(enc0)
+    print("DEC")
+    print(shower_dec[0][0,10])
+
+    diff = torch.mean(showers[:,:,:,:1000] - shower_dec[:,:,:,:1000])
+    print("Avg. Diff " + str(diff))
+
+    enc_mat = NN_embed.enc_mat.detach().cpu().numpy()
+    print('enc map', NN_embed.enc_mat.shape)
+    num_alpha_bins = shape_plot[-2]
+    num_r_bins = shape_plot[-1]
+    enc_mat_reshape = np.reshape(enc_mat, (enc_mat.shape[0], num_alpha_bins, num_r_bins, -1))
+    print(enc_mat_reshape.shape)
+    print(np.sum(enc_mat_reshape[10,:,19,:]))
+
+    dec_mat = NN_embed.dec_mat.detach().cpu().numpy()
+    print('dec map', NN_embed.dec_mat.shape)
+    enc_mat_reshape = np.reshape(enc_mat, (enc_mat.shape[0], -1, num_alpha_bins, num_r_bins))
+    print(enc_mat_reshape.shape)
+    print(np.sum(enc_mat_reshape[10,0,:2,: ]))
+    print(np.sum(enc_mat_reshape[10,0]))
+    print(np.sum(enc_mat_reshape[10,200]))
+    plt.figure(figsize=(10,10))
+    plt.matshow(dec_mat[10])
+    plt.savefig("dec_mat.png")
+
+
+
+

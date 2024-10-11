@@ -169,16 +169,16 @@ hgcal_william_v1_params = {
 
 
 hgcal_william_v2_params = {
-'logit_mean' : -13.7570,
-'logit_std' : 0.58055,
+'logit_mean' : -18.3606,
+'logit_std' : 0.60818,
 'logit_min': -13.81551,
 'logit_max' :  0.2909,
 
 
-'totalE_mean' : 0.5539,
-'totalE_std' : 0.01810, 
-'layers_mean' : -4.4399,
-'layers_std' : 2.36815,
+'totalE_mean' : 0.5538,
+'totalE_std' : 0.01767, 
+'layers_mean' : -4.5836,
+'layers_std' : 2.98382,
 
 }
 

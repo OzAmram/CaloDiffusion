@@ -24,6 +24,16 @@ showers *= 200.
 
 if(flags.EMin > 0.):
     mask = showers < flags.EMin
+    print("Applying ECut " + str(flags.EMin))
+    #Preserve layer energies after applying threshold
+    showers[showers < 0] = 0 
+    d_masked = np.where(mask, showers, 0.)
+    lostE = np.sum(d_masked, axis = -1, keepdims=True)
+    ELayer = np.sum(showers, axis = -1, keepdims=True)
+    eps = 1e-10
+    rescale = (ELayer + eps)/(ELayer - lostE +eps)
+    showers[mask] = 0.
+    showers *= rescale
     showers[mask] = 0.
 
 print(geo.xmap.shape)

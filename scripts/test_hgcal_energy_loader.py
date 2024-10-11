@@ -20,7 +20,7 @@ emin = [50, 1.99, 1.57],
 norm_fac = 100.
 
 showerMap = 'layer-logit-norm'
-nevts = 16000
+nevts = 10000
 
 
 

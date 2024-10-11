@@ -228,7 +228,7 @@ def compute_feats(showers, incident_E, embed):
     E_x2_center = utils.WeightedMean(x_vals, showers, power=2, axis=(2))
     E_x_width = GetWidth(E_x_center, E_x2_center)
 
-    y_vals = embed.geom.xmap[:, :embed.geom.max_ncell]
+    y_vals = embed.geom.ymap[:, :embed.geom.max_ncell]
     E_y_center = utils.WeightedMean(y_vals, showers, axis=(2))
     E_y2_center = utils.WeightedMean(y_vals, showers, power=2, axis=(2))
     E_y_width = GetWidth(E_y_center, E_y2_center)
@@ -246,8 +246,6 @@ def compute_feats(showers, incident_E, embed):
     #layer_voxels = np.reshape(data,(data.shape[0],data.shape[1],-1))
     #layer_sparsity = np.sum(layer_voxels > eps, axis = -1) / layer_voxels.shape[2]
 
-    #feats = np.concatenate([incident_E, E_ratio, E_per_layer, E_R_center, E_R_width, E_phi_center, E_phi_width], axis = -1).astype(np.float32)
-    #feats = np.concatenate([incident_E, E_ratio, E_per_layer, E_x_center, E_x_width, E_y_center, E_y_width], axis = -1).astype(np.float32)
     feats = np.concatenate([incident_E, E_ratio, E_per_layer, E_x_center, E_x_width, E_y_center, E_y_width], axis = -1).astype(np.float32)
     #feats = np.concatenate([incident_E, E_ratio, E_per_layer], axis = -1).astype(np.float32)
 

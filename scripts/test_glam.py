@@ -126,22 +126,33 @@ if __name__ == '__main__':
             NN_embed = NNConverter(bins = bins).to(device = device)
 
 
-
+    plot_dir = "../plots/test_glam/"
     showers = torch.Tensor(showers).to(device)
+
     print("OG")
     print(showers[0].shape)
-    print(showers[0][0,10])
     enc0 = NN_embed.enc(showers)
     print("ENC")
     print(enc0[0].shape)
-    print(enc0[0][0,10])
 
     shower_dec = NN_embed.dec(enc0)
-    print("DEC")
-    print(shower_dec[0][0,10])
-
     diff = torch.mean(showers[:,:,:,:1000] - shower_dec[:,:,:,:1000])
     print("Avg. Diff " + str(diff))
+
+
+    dummy_showers = torch.zeros_like(showers)
+    dummy_showers[:, :, :, 1660] = 1.0
+    enc_dummy = NN_embed.enc(dummy_showers)
+    dec_dummy = NN_embed.dec(enc_dummy)
+
+    eps = 1e-6
+    print("test with dummy")
+    print(dummy_showers.shape)
+    print(dec_dummy[0,0,10,1660])
+    print(torch.sum(dec_dummy[0,0,10,:]))
+    print(torch.sum(dec_dummy[0,0,10,:] > eps ))
+
+
 
     enc_mat = NN_embed.enc_mat.detach().cpu().numpy()
     print('enc map', NN_embed.enc_mat.shape)
@@ -150,18 +161,47 @@ if __name__ == '__main__':
     enc_mat_reshape = np.reshape(enc_mat, (enc_mat.shape[0], num_alpha_bins, num_r_bins, -1))
     print(enc_mat_reshape.shape)
     print(np.sum(enc_mat_reshape[10,:,19,:]))
+    print(np.sum(enc_mat_reshape[10,0,20] > 0))
+    non_zeros = np.argwhere(enc_mat_reshape[10,0,20] > 0)
+    print(non_zeros)
+    print(np.sum(enc_mat_reshape[10,:,:, non_zeros[0]] > 0))
+    print(np.sum(enc_mat_reshape[10,:,:, non_zeros[5]] > 0))
 
     dec_mat = NN_embed.dec_mat.detach().cpu().numpy()
     print('dec map', NN_embed.dec_mat.shape)
-    enc_mat_reshape = np.reshape(enc_mat, (enc_mat.shape[0], -1, num_alpha_bins, num_r_bins))
-    print(enc_mat_reshape.shape)
-    print(np.sum(enc_mat_reshape[10,0,:2,: ]))
-    print(np.sum(enc_mat_reshape[10,0]))
-    print(np.sum(enc_mat_reshape[10,200]))
+    dec_mat_reshape = np.reshape(dec_mat, (enc_mat.shape[0], -1, num_alpha_bins, num_r_bins))
+    print(dec_mat_reshape.shape)
+    print(np.sum(dec_mat_reshape[10,0,:2,: ]))
+    print(np.sum(dec_mat_reshape[10,0]))
+    print(np.sum(dec_mat_reshape[10,200]))
+    print(np.sum(dec_mat_reshape[10,:,0,20]))
+    print(np.sum(dec_mat_reshape[10,:,0,20] > eps))
+    print(np.sum(dec_mat_reshape[10,non_zeros[0]] > eps))
+    print(np.sum(dec_mat_reshape[10,non_zeros[5]] > eps))
+    #dec_nonzeros = np.argwhere(dec_mat_reshape[10,non_zeros[0]] > 0)
+    dec_nonzeros = np.argwhere(dec_mat[10,non_zeros[0]] > eps)
+    print(dec_nonzeros[:10])
+
+    plt.figure(figsize=(10,10))
+    vals = dec_mat_reshape[10,non_zeros[0]].reshape(-1)
+    plt.hist(vals, bins = 100)
+    plt.yscale("log")
+    plt.savefig(plot_dir + "cell_hist.png")
+
+
     plt.figure(figsize=(10,10))
     plt.matshow(dec_mat[10])
-    plt.savefig("dec_mat.png")
+    plt.savefig(plot_dir + "dec_mat.png")
 
 
+    plt.figure(figsize=(10,10))
+    plt.yscale("log")
+    plt.hist(dec_mat.reshape(-1), bins=100)
+    plt.savefig(plot_dir + "dec_mat_hist.png")
+
+    plt.figure(figsize=(10,10))
+    plt.yscale("log")
+    plt.hist(enc_mat.reshape(-1), bins=100)
+    plt.savefig(plot_dir + "enc_mat_hist.png")
 
 

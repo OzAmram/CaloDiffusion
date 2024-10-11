@@ -179,7 +179,7 @@ def ang_center_spread(matrix, energies, axis=-1):
     cos_ec = WeightedMean(cos_matrix, energies, axis=axis)
     sin_ec = WeightedMean(sin_matrix, energies, axis=axis)
     ang_mean  = np.arctan2(sin_ec, cos_ec)
-    R = sin_ec**2 + cos_ec**2
+    R = np.sqrt(sin_ec**2 + cos_ec**2)
     eps = 1e-8
     R = np.clip(R, eps, 1.)
 

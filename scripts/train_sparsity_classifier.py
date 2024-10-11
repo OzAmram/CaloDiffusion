@@ -268,17 +268,17 @@ if __name__ == '__main__':
             'early_stop_dict': early_stopper.__dict__,
             }, checkpoint_path)
 
-        with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
+        with open(checkpoint_folder + "/spars_training_losses.txt","w") as tfileout:
             tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")
-        with open(checkpoint_folder + "/validation_losses.txt","w") as vfileout:
+        with open(checkpoint_folder + "/spars_validation_losses.txt","w") as vfileout:
             vfileout.write("\n".join("{}".format(vl) for vl in val_losses)+"\n")
 
 
     print("Saving to %s" % checkpoint_folder, flush=True)
     torch.save(model.state_dict(), os.path.join(checkpoint_folder, 'final_spars_class.pth'))
 
-    with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
+    with open(checkpoint_folder + "/spars_training_losses.txt","w") as tfileout:
         tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")
-    with open(checkpoint_folder + "/validation_losses.txt","w") as vfileout:
+    with open(checkpoint_folder + "/spars_validation_losses.txt","w") as vfileout:
         vfileout.write("\n".join("{}".format(vl) for vl in val_losses)+"\n")
 

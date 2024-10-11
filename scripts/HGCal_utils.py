@@ -56,6 +56,7 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
         layers = np.squeeze(layers)
         layerE = np.concatenate((totalE,layers), axis = 1)
 
+    else:
         eshape = (-1, *(1,)*(len(shower.shape) -1))
         shower = shower/(max_deposit*e.reshape(eshape))
 
@@ -230,8 +231,8 @@ class Embeder(nn.Module):
 
     #reshape?
     def forward(self, x):
-        #masked_mat = self.mat * self.mask if self.trainable else self.mat
-        masked_mat = self.mat
+        masked_mat = self.mat * self.mask if self.trainable else self.mat
+        #masked_mat = self.mat
         out = torch.einsum("l e n, b c l n -> b c l e", masked_mat, x)
         out = rearrange(out, " b c l (a r) -> b c l a r",a = self.dim1, r = self.dim2)
         return out
@@ -253,8 +254,8 @@ class Decoder(nn.Module):
 
 
     def forward(self, x):
-        #masked_mat = self.mat * self.mask if self.trainable else self.mat
-        masked_mat = self.mat
+        masked_mat = self.mat * self.mask if self.trainable else self.mat
+        #masked_mat = self.mat
         out = rearrange(x, " b c l a r -> b c l (a r)", a = self.dim1, r = self.dim2)
         out = torch.einsum("l n e, b c l e -> b c l n", masked_mat, out)
         return out
@@ -394,10 +395,13 @@ class HGCalConverter(nn.Module):
 
             #How to define sparse mask of inverse ? 
             inv_init = torch.linalg.pinv(conv_map)
-            #inv_mask = torch.linalg.pinv(mask)
-            inv_mask = inv_init
-            #print(inv_init[:10])
-            #print(inv_mask[:10])
+
+            eps = 1e-6
+            #cleanup some noise from inverse
+            inv_init[inv_init < eps] = 0.
+            inv_mask = torch.linalg.pinv(mask)
+            #inv_mask = inv_init
+
             #print("Inv size", torch.sum(inv_init > 0.))
             #print("Inv mask size", torch.sum(inv_mask))
             #inv_init = torch.zeros((conv_map.shape[1], conv_map.shape[0]))
@@ -408,7 +412,6 @@ class HGCalConverter(nn.Module):
                 noise2 = torch.randn_like(inv_init)
                 inv_init += eps*noise2
 
-            eps = 1e-6
             self.enc_mat[i] = conv_map
             self.enc_mask[i] = mask > eps
             self.dec_mat[i] = inv_init

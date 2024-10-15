@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import sys
 import joblib
+import torch.utils.data as torchdata
 from sklearn.preprocessing import QuantileTransformer
 import mplhep as hep
 
@@ -88,9 +89,9 @@ def split_data(data,nevts,frac=0.8):
     return train_data,test_data
 
 line_style = {
-    'Geant4':'dotted',
+    'Geant4 (CMSSW)':'dotted',
 
-    'CaloDiffusion' : '-',
+    'HGCaloDiffusion' : '-',
     'Avg Shower' : '-',
     'CaloDiffusion 400 Steps' : '-',
     'CaloDiffusion 200 Steps' : '-',
@@ -100,9 +101,9 @@ line_style = {
 }
 
 colors = {
-    'Geant4':'black',
+    'Geant4 (CMSSW)':'black',
     'Avg Shower': 'blue',
-    'CaloDiffusion': 'blue',
+    'HGCaloDiffusion': 'blue',
     'CaloDiffusion 400 Steps': 'blue',
     'CaloDiffusion 200 Steps': 'green',
     'CaloDiffusion 100 Steps': 'purple',
@@ -112,7 +113,8 @@ colors = {
 
 name_translate={
 
-    'Diffu' : "CaloDiffusion",
+    'Geant4' : "Geant4 (CMSSW)",
+    'Diffu' : "HGCaloDiffusion",
     'Avg' : "Avg Shower",
 
 
@@ -146,7 +148,7 @@ def SetStyle():
     mpl.rcParams.update({'xtick.labelsize': 18}) 
     mpl.rcParams.update({'ytick.labelsize': 18}) 
     mpl.rcParams.update({'axes.labelsize': 26}) 
-    mpl.rcParams.update({'legend.frameon': False}) 
+    #mpl.rcParams.update({'legend.frameon': False}) 
     mpl.rcParams.update({'lines.linewidth': 4})
     
     import matplotlib.pyplot as plt
@@ -187,7 +189,7 @@ def ang_center_spread(matrix, energies, axis=-1):
     return ang_mean, ang_std
 
 
-def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4', plot_label = "", no_mean = False, cms_style=False):
+def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4 (CMSSW)', plot_label = "", no_mean = False, cms_style=False):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
     fig,gs = SetGrid() 
@@ -232,7 +234,8 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4'
                 
         
     FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0)
-    ax0.legend(loc='best',fontsize=24,ncol=1)
+    ax0.legend(loc='best',fontsize=24,ncol=1, facecolor='white', framealpha = 0.5, frameon=True)
+
 
     if(logy): ax0.set_yscale('log')
 
@@ -319,7 +322,7 @@ def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins 
     return fig
 
 
-def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, 
+def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4 (CMSSW)',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, 
         plot_label = "", leg_font = 24, cms_style=False):
     assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
     
@@ -380,7 +383,7 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
     else:
         FormatFig(xlabel = xlabel, ylabel = ylabel,ax0=ax0) 
 
-    ax0.legend(loc=label_loc,fontsize=leg_font,ncol=1, facecolor = 'white')        
+    ax0.legend(loc=label_loc, fontsize=leg_font,ncol=1, facecolor = 'white', framealpha = 0.5, frameon=True)        
     #plt.tight_layout()
     if(ratio):
         plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
@@ -963,6 +966,17 @@ def draw_shower(shower, dataset_num, fout, title = None):
     binning_file = "../CaloChallenge/code/binning_dataset_2.xml"
     hf = HighLevelFeatures("electron", binning_file)
     hf.DrawSingleShower(shower, fout, title = title)
+
+
+def apply_in_batches(model, data, batch_size = 128, device = 'cpu'):
+    data_loader = torchdata.DataLoader(torch.Tensor(data), batch_size = batch_size, shuffle = False)
+    out = None
+    for i,batch in enumerate(data_loader):
+        batch = batch.to(device)
+        out_ = model(batch)
+        if(i==0): out = out_.detach().cpu()
+        else: out = torch.cat([out, out_.detach().cpu()], axis = 0)
+    return out
 
 
 if __name__ == "__main__":

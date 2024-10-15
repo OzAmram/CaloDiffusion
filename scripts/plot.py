@@ -179,6 +179,7 @@ def make_plots(flags):
         return generated,energies
 
 
+    geant_key= 'Geant4 (CMSSW)'
     model = flags.model
 
     energies = []
@@ -196,7 +197,6 @@ def make_plots(flags):
             exit(1)
         f_sample = flags.generated
 
-
         showers,energies = LoadSamples( f_sample, flags.EMin, flags.nevts, diffu_sample = True )
         data_dict[utils.name_translate[model]]=showers
         total_evts = energies.shape[0]
@@ -208,16 +208,16 @@ def make_plots(flags):
         true_energies.append(energies)
         if(data[-1].shape[0] == total_evts): break
 
-    data_dict['Geant4']=np.reshape(data,shape_plot)
+    data_dict[geant_key]=np.reshape(data,shape_plot)
 
     if(not flags.geant_only):
-        print("Geant Avg", np.mean(data_dict['Geant4']))
+        print("Geant Avg", np.mean(data_dict[geant_key]))
         print("Generated Avg", np.mean(data_dict[utils.name_translate[model]]))
-        print("Geant Range: ", np.min(data_dict['Geant4'] [data_dict['Geant4'] > 0.]), np.max(data_dict['Geant4']))
+        print("Geant Range: ", np.min(data_dict[geant_key] [data_dict[geant_key] > 0.]), np.max(data_dict[geant_key]))
         print("Generated Range: ", np.min(data_dict[utils.name_translate[model]]), np.max(data_dict[utils.name_translate[model]]))
     else: 
         energies = copy.copy(true_energies)
-        total_evts = data_dict['Geant4'].shape[0]
+        total_evts = data_dict[geant_key].shape[0]
 
 
 
@@ -256,7 +256,7 @@ def make_plots(flags):
 
         #Energy scale is arbitrary, scale so dist centered at 1 for geant
 
-        norm = np.mean(feed_dict['Geant4'])
+        norm = np.mean(feed_dict[geant_key])
         for key in data_dict:
             if('Geant' in key): feed_dict[key] /= norm
             else: feed_dict[key] /= norm
@@ -587,8 +587,8 @@ def make_plots(flags):
             feed_dict[key] = _preprocess(data_dict[key])
 
             
-        #binning = np.geomspace(np.quantile(feed_dict['Geant4'],0.01),np.quantile(feed_dict['Geant4'],1.0),20)
-        binning = np.geomspace(40.0, np.amax(feed_dict['Geant4']),20)
+        #binning = np.geomspace(np.quantile(feed_dict[geant_key],0.01),np.quantile(feed_dict[geant_key],1.0),20)
+        binning = np.geomspace(40.0, np.amax(feed_dict[geant_key]),20)
         fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Deposited energy [GeV]', logy=True,binning=binning, plot_label = flags.plot_label, cms_style = flags.cms)
         save_fig('{}/TotalE_{}_{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model), fig, ax0)
         return feed_dict
@@ -606,7 +606,7 @@ def make_plots(flags):
             feed_dict[key] = _preprocess(data_dict[key])
             vMax = max(np.max(feed_dict[key]), vMax)
             
-        binning = np.linspace(np.min(feed_dict['Geant4']), vMax, 20)
+        binning = np.linspace(np.min(feed_dict[geant_key]), vMax, 20)
         fig,ax0 = utils.HistRoutine(feed_dict,xlabel='Number of hits (> 1 MeV)', label_loc='upper right', binning = binning, ratio = True, plot_label = flags.plot_label, cms_style = flags.cms )
         yScalarFormatter = utils.ScalarFormatterClass(useMathText=True)
         yScalarFormatter.set_powerlimits((0,0))
@@ -715,7 +715,7 @@ def make_plots(flags):
 
             vmin=vmax=0
             nShowers = 5
-            for ik,key in enumerate(['Geant4',utils.name_translate[flags.model]]):
+            for ik,key in enumerate([geant_key,utils.name_translate[flags.model]]):
                 average = _preprocess(data_dict[key])
 
                 fout_avg = '{}/{}2D_{}_{}_{}.{}'.format(flags.plot_folder,key,layer,dataset_config['CHECKPOINT_NAME'],flags.model, plt_exts[0])

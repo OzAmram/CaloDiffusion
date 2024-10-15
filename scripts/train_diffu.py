@@ -56,11 +56,27 @@ if __name__ == '__main__':
     hgcal = dataset_config.get('HGCAL', False)
     geom_file = dataset_config.get('BIN_FILE', '')
     orig_shape = ('orig' in shower_embed)
+    pre_embed = ('pre-embed' in shower_embed)
+    print('pre_embed', pre_embed)
     layer_norm = 'layer' in dataset_config['SHOWERMAP']
     max_cells = dataset_config.get('MAX_CELLS', None)
 
     train_files = []
     val_files = []
+
+
+    NN_embed = None
+    if('NN' in shower_embed and not hgcal):
+        if(dataset_num == 1):
+            bins = XMLHandler("photon", geom_file)
+        else: 
+            bins = XMLHandler("pion", geom_file)
+
+        NN_embed = NNConverter(bins = bins).to(device = device)
+    elif(hgcal):
+        trainable = dataset_config.get('TRAINABLE_EMBED', False)
+        NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
+        NN_embed.init(norm = pre_embed, dataset_num = dataset_num)
 
 
     for i, dataset in enumerate(dataset_config['FILES'] + dataset_config['VAL_FILES']):
@@ -86,6 +102,8 @@ if __name__ == '__main__':
             )
 
             layers = np.reshape(layers, (layers.shape[0], -1))
+
+
             if(orig_shape): showers = np.reshape(showers, dataset_config['SHAPE_ORIG'])
             else : showers = np.reshape(showers, dataset_config['SHAPE_PAD'])
 
@@ -109,18 +127,6 @@ if __name__ == '__main__':
         std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
         E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
 
-    NN_embed = None
-    if('NN' in shower_embed and not hgcal):
-        if(dataset_num == 1):
-            bins = XMLHandler("photon", geom_file)
-        else: 
-            bins = XMLHandler("pion", geom_file)
-
-        NN_embed = NNConverter(bins = bins).to(device = device)
-    elif(hgcal):
-        trainable = dataset_config.get('TRAINABLE_EMBED', False)
-        NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
-        NN_embed.init()
 
 
     dshape = dataset_config['SHAPE_PAD']
@@ -202,6 +208,10 @@ if __name__ == '__main__':
             E = E.to(device = device)
             layers = layers.to(device = device)
 
+
+            if(pre_embed):
+                data = NN_embed.enc(data)
+
             noise = torch.randn_like(data)
 
             if(cold_diffu): #cold diffusion interpolates from avg showers instead of pure noise
@@ -234,6 +244,9 @@ if __name__ == '__main__':
                 vlayers = vlayers.to(device = device)
 
                 rnd_normal = val_rnd[i].to(device = device)
+
+                if(pre_embed):
+                    vdata = NN_embed.enc(vdata)
 
                 noise = torch.randn_like(vdata)
                 if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)

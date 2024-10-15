@@ -154,6 +154,8 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
 
         data = np.exp(voxels)
 
+    print("Here")
+
 
     #Per layer energy normalization
     if('layer' in showerMap):
@@ -185,6 +187,7 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
         data *= rescale_facs
 
 
+    print("layer")
     data = data*max_deposit*energy.reshape(-1,1,1)
 
 
@@ -204,6 +207,7 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
         print('after', np.mean(data))
 
 
+    print("ecut")
 
 
     return data,gen_out
@@ -231,8 +235,8 @@ class Embeder(nn.Module):
 
     #reshape?
     def forward(self, x):
-        masked_mat = self.mat * self.mask if self.trainable else self.mat
-        #masked_mat = self.mat
+        #masked_mat = self.mat * self.mask if self.trainable else self.mat
+        masked_mat = self.mat
         out = torch.einsum("l e n, b c l n -> b c l e", masked_mat, x)
         out = rearrange(out, " b c l (a r) -> b c l a r",a = self.dim1, r = self.dim2)
         return out
@@ -254,8 +258,8 @@ class Decoder(nn.Module):
 
 
     def forward(self, x):
-        masked_mat = self.mat * self.mask if self.trainable else self.mat
-        #masked_mat = self.mat
+        #masked_mat = self.mat * self.mask if self.trainable else self.mat
+        masked_mat = self.mat
         out = rearrange(x, " b c l a r -> b c l (a r)", a = self.dim1, r = self.dim2)
         out = torch.einsum("l n e, b c l e -> b c l n", masked_mat, out)
         return out
@@ -366,6 +370,10 @@ class HGCalConverter(nn.Module):
         self.num_alpha_bins = bins[-2]
         self.num_layers = bins[-3]
 
+        self.norm = False
+        self.embed_mean = 0.0
+        self.embed_std = 1.0
+
 
         self.enc_mat = torch.zeros((self.num_layers, self.num_alpha_bins * self.num_r_bins, self.geom.max_ncell), device = device)
         self.dec_mat = torch.zeros((self.num_layers, self.geom.max_ncell, self.num_alpha_bins * self.num_r_bins), device = device)
@@ -381,7 +389,7 @@ class HGCalConverter(nn.Module):
 
 
     #proper initialization of embedding
-    def init(self, noise_scale = 0.):
+    def init(self, noise_scale = 0., norm = False, dataset_num = 101):
 
         for i in range(self.geom.nlayers):
             lay_size = self.geom.ncells[i]
@@ -398,7 +406,7 @@ class HGCalConverter(nn.Module):
 
             eps = 1e-6
             #cleanup some noise from inverse
-            inv_init[inv_init < eps] = 0.
+            #inv_init[inv_init < eps] = 0.
             inv_mask = torch.linalg.pinv(mask)
             #inv_mask = inv_init
 
@@ -413,6 +421,7 @@ class HGCalConverter(nn.Module):
                 inv_init += eps*noise2
 
             self.enc_mat[i] = conv_map
+            #self.enc_mask[i] = torch.abs(mask) > eps
             self.enc_mask[i] = mask > eps
             self.dec_mat[i] = inv_init
             self.dec_mask[i] = torch.abs(inv_mask) > eps
@@ -423,20 +432,30 @@ class HGCalConverter(nn.Module):
         self.embeder.set(self.enc_mat, self.enc_mask)
         self.decoder.set(self.dec_mat, self.dec_mask)
 
+        if(norm):
+            self.norm = True
+            c = dataset_params[dataset_num]
+            self.embed_mean = c['embed_mean']
+            self.embed_std = c['embed_std']
+            
+
 
 
     def enc(self, x):
-        n_shower = x.shape[0]
         out = self.embeder(x)
+        if(self.norm): out = (out - self.embed_mean)/self.embed_std
         return out
 
     def dec(self, x):
+        if(self.norm): x = (x * self.embed_std) + self.embed_mean
         out = self.decoder(x)
         return out
 
 
     def forward(x):
+        if(self.norm): x = (x - self.embed_mean)/self.embed_std
         x = self.embeder(x)
         x = self.decoder(x)
+        if(self.norm): x = (x * self.embed_std) + self.embed_mean
         return x
 

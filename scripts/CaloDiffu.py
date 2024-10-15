@@ -30,6 +30,7 @@ class CaloDiffu(nn.Module):
         self.consis_nsteps = self.config.get('CONSIS_NSTEPS', 100)
         self.fully_connected = ('FCN' in self.shower_embed)
         self.NN_embed = NN_embed
+        self.do_embed = NN_embed is not None and 'pre-embed' not in self.shower_embed
         self.layer_model = layer_model
 
         supported = ['noise_pred', 'mean_pred', 'hybrid', 'minsnr']
@@ -288,11 +289,10 @@ class CaloDiffu(nn.Module):
     def pred(self, x, E, t_emb, model = None, layers = None, layer_sample = False, controls = None):
         if(model is None): model = self.model
 
-
-        if(self.NN_embed is not None and not layer_sample): x = self.NN_embed.enc(x).to(x.device)
+        if(self.do_embed and not layer_sample): x = self.NN_embed.enc(x).to(x.device)
         if(self.layer_cond and layers is not None): E = torch.cat([E, layers], dim = 1)
         out = model(self.add_RZPhi(x), cond=E, time=t_emb, controls = controls)
-        if(self.NN_embed is not None and not layer_sample): out = self.NN_embed.dec(out).to(x.device)
+        if(self.do_embed and not layer_sample): out = self.NN_embed.dec(out).to(x.device)
         return out
 
     def denoise(self, x, E =None, sigma=None, model = None, layers = None, layer_sample = False, controls = None):
@@ -447,9 +447,9 @@ class CaloDiffu(nn.Module):
             exit(1)
 
         if(debug):
-            return x.detach().cpu().numpy(), xs, x0s
+            return x, xs, x0s
         else:   
-            return x.detach().cpu().numpy()
+            return x
 
 
     

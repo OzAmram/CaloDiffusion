@@ -19,7 +19,7 @@
     'SHAPE_FINAL':[-1,1,28,12,21],
     'MAX_CELLS': 1988,
     'BATCH':256,
-    'LR':1e-3,
+    'LR':5e-4,
     'MAXEPOCH':1000,
     'NLAYERS':3,
     'EARLYSTOP':20,
@@ -38,7 +38,7 @@
     'logE':False,
     'MAXDEP':1.0,
     'CYLINDRICAL': True,
-    'TRAINABLE_EMBED': True,
+    'TRAINABLE_EMBED': False,
     'SHOWERMAP': 'layer-logit-norm',
     'R_Z_INPUT': True,
     'PHI_INPUT': True,
@@ -52,7 +52,7 @@
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
-    'SHOWER_EMBED' : 'NN',
-    'CHECKPOINT_NAME':'HGCal_sep25',
-
+    'SHOWER_EMBED' : 'NN-pre-embed',
+    'CHECKPOINT_NAME':'HGCal_oct14',
 }
+

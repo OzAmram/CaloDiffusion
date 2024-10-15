@@ -305,7 +305,8 @@ def compute_metrics(flags):
     def LoadSamples(fname, EMin = -1.0, nevts = -1):
         print("Load %s" % fname)
         end = None if nevts < 0 else nevts
-        scale_fac = 200. if hgcal else (1/1000.)
+        #scale_fac = 200. if hgcal else (1/1000.)
+        scale_fac = 100. if hgcal else (1/1000.)
         with h5.File(fname,"r") as h5f:
             if(hgcal): 
                 generated = h5f['showers'][:end,:,:dataset_config['MAX_CELLS']] * scale_fac

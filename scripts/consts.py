@@ -174,6 +174,8 @@ hgcal_william_v2_params = {
 'logit_min': -13.81551,
 'logit_max' :  0.2909,
 
+'embed_mean': 0.0835,
+'embed_std': 3.1083,
 
 'totalE_mean' : 0.5538,
 'totalE_std' : 0.01767, 
@@ -181,6 +183,7 @@ hgcal_william_v2_params = {
 'layers_std' : 2.98382,
 
 }
+
 
 
 dataset_params = {

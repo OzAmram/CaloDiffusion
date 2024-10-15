@@ -73,6 +73,8 @@ batch_size = flags.batch_size
 shower_embed = dataset_config.get('SHOWER_EMBED', '')
 orig_shape = ('orig' in shower_embed)
 do_NN_embed = ('NN' in shower_embed)
+pre_embed = ('pre-embed' in shower_embed)
+print('pre_embed', pre_embed)
 
 if(not os.path.exists(flags.plot_folder)): 
     print("Creating plot directory " + flags.plot_folder)
@@ -157,7 +159,7 @@ elif(hgcal):
     trainable = dataset_config.get('TRAINABLE_EMBED', False)
     NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
     if(not trainable):
-        NN_embed.init()
+        NN_embed.init(norm = pre_embed, dataset_num = dataset_num)
     
 
 
@@ -185,7 +187,11 @@ if(flags.model == "AE"):
 elif(flags.model == "Diffu"):
     print("Loading Diffu model from " + flags.model_loc)
 
-    shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
+    if(not pre_embed):
+        shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
+    else:
+        shape = dataset_config['SHAPE_FINAL'][1:]
+    print(shape)
 
 
     model = CaloDiffu(shape, config=dataset_config , training_obj = training_obj,NN_embed = NN_embed, nsteps = model_nsteps,
@@ -239,7 +245,7 @@ elif(flags.model == "Diffu"):
         if(layer_model is not None):
             gen_layers_ = model.Sample(E, num_steps = flags.layer_sample_steps, sample_algo = flags.layer_sample_algo,
                                        model = layer_model, gen_shape = layer_shape, layer_sample = True)
-            cond_layers = torch.Tensor(gen_layers_).to(device = device)
+            cond_layers = gen_layers_
         else:
             cond_layers = layers_.to(device = device)
 
@@ -252,19 +258,31 @@ elif(flags.model == "Diffu"):
                 debug = flags.debug, sample_offset = flags.sample_offset)
 
 
-        if(flags.debug):
-            gen, all_gen, x0s = out
-            for j in [0,len(all_gen)//4, len(all_gen)//2, 3*len(all_gen)//4, 9*len(all_gen)//10, len(all_gen)-10, len(all_gen)-5,len(all_gen)-1]:
-                fout_ex = '{}/{}_{}_norm_voxels_gen_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
-                make_histogram([all_gen[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
-                                num_bins = 40, normalize = True, fname = fout_ex)
+        if(flags.debug): out, all_gen, x0s = out
+        
+        if(pre_embed):
+            if(flags.debug):
+                data_dict = {'Geant4' : out.detach().cpu().numpy()}
+                from test_glam import AverageER
+                AverageER(data_dict, flags)
 
-                fout_ex = '{}/{}_{}_norm_voxels_x0_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
-                make_histogram([x0s[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
-                                num_bins = 40, normalize = True, fname = fout_ex)
-        else: gen = out
+            out = NN_embed.dec(out)
 
-    
+        gen = out.detach().cpu().numpy()
+
+        #if(flags.debug):
+
+            #gen = out.detach().cpu().numpy()
+            #for j in [0,len(all_gen)//4, len(all_gen)//2, 3*len(all_gen)//4, 9*len(all_gen)//10, len(all_gen)-10, len(all_gen)-5,len(all_gen)-1]:
+                #fout_ex = '{}/{}_{}_norm_voxels_gen_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
+                #make_histogram([all_gen[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                                #num_bins = 40, normalize = True, fname = fout_ex)
+
+                #fout_ex = '{}/{}_{}_norm_voxels_x0_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
+                #make_histogram([x0s[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                                #num_bins = 40, normalize = True, fname = fout_ex)
+
+        gen_layers_ = gen_layers_.detach().cpu().numpy()
         if(i == 0): 
             generated = gen
             gen_layers = gen_layers_
@@ -289,7 +307,7 @@ if(not orig_shape): generated = generated.reshape(dataset_config["SHAPE_ORIG"])
 if(flags.debug):
     fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_exts[0])
     make_histogram([generated.reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
-                    num_bins = 40, normalize = True, fname = fout_ex)
+                    num_bins = 40, normalize = True, fname = fout_ex, logy=True)
 
 out_layers = layers if (gen_layers is None) else gen_layers
 generated,energies = utils.ReverseNorm(generated,energies, layerE = out_layers,

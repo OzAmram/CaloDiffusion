@@ -19,7 +19,8 @@ class CaloDiffusion(Diffusion):
         )
         self.phi_image = utils.create_phi_image(self.device, shape=self.config["SHAPE_FINAL"][1:])
         self.training_objective = self.config.get("TRAINING_OBJ", "noise_pred")
-        self.layer_cond = "layer" in config.get("SHOWERMAP", "") 
+        self.layer_cond = "layer" in config.get("SHOWERMAP", "")
+        self.NN_embed = self.init_embedding_model()
 
     def init_model(self):
 
@@ -31,6 +32,8 @@ class CaloDiffusion(Diffusion):
         self.NN_embed = self.init_embedding_model()
         self.do_embed = self.NN_embed is not None and (not self.pre_embed)
 
+
+        self.fully_connected = "FCN" in self.config.get("SHOWER_EMBED", "")
 
         if self.fully_connected: 
             model = ResNet(
@@ -70,8 +73,6 @@ class CaloDiffusion(Diffusion):
                 time_embed=(self.config.get("TIME_EMBED", "sin") == "sin"),
             ).to(device=self.device)
 
-
-
         return model
 
     def noise_generation(self, shape):
@@ -93,8 +94,6 @@ class CaloDiffusion(Diffusion):
         return out
     
     def init_embedding_model(self):
-
-
         dataset_num = self.config.get("DATASET_NUM", 2)
         shower_embed = self.config.get("SHOWER_EMBED", "")
         

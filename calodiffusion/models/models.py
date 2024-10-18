@@ -11,6 +11,7 @@ import numpy as np
 from inspect import isfunction
 from functools import partial
 
+
 def exists(x):
     return x is not None
 
@@ -114,6 +115,7 @@ class Residual(nn.Module):
 
     def forward(self, x, *args, **kwargs):
         return self.fn(x, *args, **kwargs) + x
+
 
 class ScalarAddLayer(nn.Module):
     def __init__(self):

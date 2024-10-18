@@ -319,9 +319,6 @@ class CaloDiffu(nn.Module):
     def __call__(self, x, **kwargs):
         return self.denoise(x, **kwargs)
 
-
-
-
     def gen_cold_image(self, E, cold_noise_scale, noise = None):
 
         avg_shower, std_shower = self.lookup_avg_std_shower(E)

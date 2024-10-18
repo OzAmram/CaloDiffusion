@@ -134,18 +134,19 @@ class Loss(ABC):
             if(rnd_normal is None): rnd_normal = torch.randn((data.size()[0],), device=data.device)
             sigma = (rnd_normal * self.P_std + self.P_mean).exp().reshape(const_shape)
 
-
         return self.loss_function(model, data, E, sigma=sigma, noise=noise, layers=layers)
 
 class minsnr(Loss): 
     def __init__(self, config, n_steps) -> None:
+        # From https://arxiv.org/pdf/2303.09556 
         super().__init__(config, n_steps)
 
     def apply_scaling_skips(self, prediction, x,  c_in, c_skip, c_out): 
         return c_skip * x + c_out * prediction
 
     def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
-        #TO CHECK...
+        # TODO TO CHECK...
+        # Sigma0 or sigma?
         x_noisy = data + sigma * noise
         sigma0 = (noise * self.P_std + self.P_mean).exp()
         c_skip, c_out, c_in = self.get_scaling(sigma)
@@ -160,7 +161,6 @@ class hybrid_weight(Loss):
     def __init__(self, config, n_steps, loss_type='l1') -> None:
         super().__init__(config, n_steps, loss_type)
 
-    
     def apply_scaling_skips(self, prediction, x,  c_in, c_skip, c_out): 
         return c_skip * x + c_out * prediction
     

@@ -121,7 +121,7 @@ class Diffusion(torch.nn.Module, ABC):
         """
         Compute loss for a single model step
         """
-        return self.loss_function(self, data, energy, noise=noise, layers=layers, rnd_normal=None)
+        return self.loss_function(self, data, energy, noise=noise, layers=layers, rnd_normal=rnd_normal)
 
     def load_state_dict(
         self, state_dict: OrderedDict[str, torch.Tensor], strict: bool = True
@@ -158,7 +158,6 @@ class Diffusion(torch.nn.Module, ABC):
                 debug=debug,
                 sample_offset=sample_offset,
             )
-
 
             if debug:
                 data.append(d_batch.detach().cpu().numpy())

@@ -9,17 +9,6 @@ import calodiffusion.utils.consts as constants
 import sys
 
 
-def import_tqdm():
-    if sys.stderr.isatty():
-        from tqdm import tqdm
-    else:
-
-        def tqdm(iterable, **kwargs):
-            return iterable
-
-    return tqdm
-
-
 import os
 import h5py as h5
 import numpy as np
@@ -1005,3 +994,15 @@ def apply_mask_conserveE(generated, mask):
     generated *= rescale
 
     return generated
+
+def get_device():
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    return device
+
+def subsample_alphas(alpha, time, x_shape):
+    batch_size = time.shape[0]
+    out = alpha.gather(-1, time.cpu())
+    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(time.device)

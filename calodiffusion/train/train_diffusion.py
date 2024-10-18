@@ -10,7 +10,7 @@ import h5py
 from calodiffusion.utils import utils
 from calodiffusion.utils.XMLHandler import XMLHandler
 from calodiffusion.train.train import Train
-from calodiffusion.models.CaloDiffu import CaloDiffu
+from calodiffusion.models.calodiffusion import CaloDiffusion
 
 
 class Diffusion(Train): 
@@ -18,56 +18,16 @@ class Diffusion(Train):
         super().__init__(flags, config, load_data=load_data)
 
     def init_model(self):
-        cold_diffu = self.config.get("COLD_DIFFU", False)
-
-        training_obj = self.config.get("TRAINING_OBJ", "noise_pred")
-        dataset_num = self.config.get("DATASET_NUM", 2)
-        shower_embed = self.config.get("SHOWER_EMBED", "")
-        orig_shape = "orig" in shower_embed
-
-        avg_showers = std_showers = E_bins = None
-        if cold_diffu:
-            f_avg_shower = h5py.File(self.config["AVG_SHOWER_LOC"])
-            # Already pre-processed
-            avg_showers = torch.from_numpy(
-                f_avg_shower["avg_showers"][()].astype(np.float32)
-            ).to(device=self.device)
-            std_showers = torch.from_numpy(
-                f_avg_shower["std_showers"][()].astype(np.float32)
-            ).to(device=self.device)
-            E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(
-                device=self.device
-            )
-
-        NN_embed = None
-        if "NN" in shower_embed:
-            if dataset_num == 1:
-                bins = XMLHandler("photon", self.config["BIN_FILE"])
-            else:
-                bins = XMLHandler("pion", self.config["BIN_FILE"])
-
-            NN_embed = utils.NNConverter(bins=bins).to(device=self.device)
-
-        shape = self.config["SHAPE_PAD"][1:] if (not orig_shape) else self.config["SHAPE_ORIG"][1:]
-        self.model = CaloDiffu(
-            shape,
-            config=self.config,
-            training_obj=training_obj,
-            NN_embed=NN_embed,
-            nsteps=self.config["NSTEPS"],
-            cold_diffu=cold_diffu,
-            avg_showers=avg_showers,
-            std_showers=std_showers,
-            E_bins=E_bins,
-            layer_model=None
-        ).to(device=self.device)
+        self.model = CaloDiffusion(
+            self.config, n_steps=self.config["NSTEPS"], loss_type=self.config['LOSS_TYPE']
+        )
     
     def training_loop(self, optimizer, scheduler, early_stopper, start_epoch, num_epochs, training_losses, val_losses):
     
         tqdm = utils.import_tqdm()
         cold_diffu = self.config.get("COLD_DIFFU", False)
         cold_noise_scale = self.config.get("COLD_NOISE", 1.0)
-        loss_type = self.config.get("LOSS_TYPE", "l2")
+
         # training loop
         min_validation_loss = 99999.0
         for epoch in range(start_epoch, num_epochs):
@@ -92,7 +52,7 @@ class Diffusion(Train):
                     noise = self.model.gen_cold_image(E, cold_noise_scale, noise)
 
                 batch_loss = self.model.compute_loss(
-                    data, E, noise=noise, layers=layers, t=t, loss_type=loss_type
+                    data, E, noise=noise, layers=layers, time=t
                 )
                 batch_loss.backward()
 
@@ -121,7 +81,7 @@ class Diffusion(Train):
                     noise = self.model.gen_cold_image(vE, cold_noise_scale, noise)
 
                 batch_loss = self.model.compute_loss(
-                    vdata, vE, noise=noise, layers=vlayers, t=t, loss_type=loss_type
+                    vdata, vE, noise=noise, layers=vlayers, time=t
                 )
 
                 val_loss += batch_loss.item()

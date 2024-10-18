@@ -901,3 +901,8 @@ def get_device():
     else:
         device = torch.device("cpu")
     return device
+
+def subsample_alphas(alpha, time, x_shape):
+    batch_size = time.shape[0]
+    out = alpha.gather(-1, time.cpu())
+    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(time.device)

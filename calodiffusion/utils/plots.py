@@ -626,7 +626,6 @@ class HistEtot(Plot):
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
 
-        # binning = np.geomspace(np.quantile(feed_dict['Geant4'],0.01),np.quantile(feed_dict['Geant4'],1.0),20)
         binning = np.geomspace(1.0, np.amax(feed_dict["Geant4"]), 20)
         fig, ax0 = self._hist(
             feed_dict,

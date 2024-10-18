@@ -258,7 +258,8 @@ def inference(flags, config):
     )
     sample_steps = flags.sample_steps if flags.sample_steps is not None else config.get("SAMPLE_STEPS", 400)
 
-    generated, energies = model_forward(flags, config, data_loader, model=model, sample_steps=sample_steps)
+    # generated, energies = model_forward(flags, config, data_loader, model=model, sample_steps=sample_steps)
+    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset)
     if dataset_num > 1:
         # mask for voxels that are always empty
         mask_file = os.path.join(

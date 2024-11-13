@@ -151,7 +151,10 @@ class Block(nn.Module):
             self.proj = nn.Conv3d(dim, dim_out, kernel_size=3, padding=1)
         else:
             self.proj = CylindricalConv(dim, dim_out, kernel_size=3, padding=1)
-        self.norm = nn.GroupNorm(groups, dim_out)
+        try: 
+            self.norm = nn.GroupNorm(groups, dim_out)
+        except ValueError: 
+            raise ValueError(f"Failed it init groupnorm with {groups} groups and {dim_out} out dims")
         self.act = nn.SiLU()
 
     def forward(self, x, scale_shift=None):

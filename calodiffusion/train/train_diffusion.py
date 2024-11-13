@@ -3,19 +3,16 @@ import os
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-import numpy as np
 import torch
-import h5py
 
 from calodiffusion.utils import utils
-from calodiffusion.utils.XMLHandler import XMLHandler
 from calodiffusion.train.train import Train
 from calodiffusion.models.calodiffusion import CaloDiffusion
 
 
 class Diffusion(Train): 
-    def __init__(self, flags, config, load_data=True) -> None:
-        super().__init__(flags, config, load_data=load_data)
+    def __init__(self, flags, config, load_data=True, save_model:bool=True) -> None:
+        super().__init__(flags, config, load_data=load_data, save_model=save_model)
 
     def init_model(self):
         self.model = CaloDiffusion(
@@ -57,7 +54,7 @@ class Diffusion(Train):
                     noise = self.model.gen_cold_image(E, cold_noise_scale, noise)
 
                 batch_loss = self.model.compute_loss(
-                    data, E, noise=noise, layers=layers, time=t
+                    data=data, energy=E, noise=noise, layers=layers, time=t
                 )
                 batch_loss.backward()
 
@@ -103,9 +100,10 @@ class Diffusion(Train):
             scheduler.step(torch.tensor([train_loss]))
 
             if val_loss < min_validation_loss:
-                torch.save(
-                    self.model.state_dict(), os.path.join(self.checkpoint_folder, "best_val.pth")
-                )
+                if self.save_model: 
+                    torch.save(
+                        self.model.state_dict(), os.path.join(self.checkpoint_folder, "best_val.pth")
+                    )
                 min_validation_loss = val_loss
 
             if early_stopper.early_stop(val_loss):

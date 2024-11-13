@@ -382,7 +382,6 @@ def preprocess_shower(
             )
 
             totalE = np.sum(shower, 1, keepdims=True)
-            print(totalE)
             for idx in range(boundaries.shape[0] - 1):
                 layers[:, idx] = np.sum(
                     shower[:, boundaries[idx] : boundaries[idx + 1]], 1
@@ -393,7 +392,6 @@ def preprocess_shower(
                         layers[:, idx : idx + 1],
                     )
 
-        print(layerE)
         # only logit transform for layers
         layer_alpha = 1e-6
         layers = np.ma.divide(layers, totalE)
@@ -823,7 +821,7 @@ class EarlyStopper:
             return False
 
 def draw_shower(shower, dataset_num, fout, title=None):
-    from CaloChallenge.code.HighLevelFeatures import HighLevelFeatures
+    from calodiffusion.utils.HighLevelFeatures import HighLevelFeatures
 
     binning_file = "../CaloChallenge/code/binning_dataset_2.xml"
     hf = HighLevelFeatures("electron", binning_file)

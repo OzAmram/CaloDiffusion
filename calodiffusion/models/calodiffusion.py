@@ -44,7 +44,6 @@ class CaloDiffusion(Diffusion):
             ).to(device=self.device)
 
         else: 
-
             in_channels = 1
             if self.config.get("R_Z_INPUT", False):
                 in_channels = 3
@@ -67,6 +66,7 @@ class CaloDiffusion(Diffusion):
                 mid_attn= self.config.get("MID_ATTN", False),
                 cylindrical=self.config.get("CYLINDRICAL", False),
                 compress_Z=self.config.get("COMPRESS_Z", False),
+                resnet_block_groups=self.config.get("BLOCK_GROUPS", 8), 
                 data_shape=calo_summary_shape,
                 cond_embed=(self.config.get("COND_EMBED", "sin") == "sin"),
                 cond_size=cond_size,
@@ -141,10 +141,10 @@ class CaloDiffusion(Diffusion):
         sigma=None,
     ):
         embed: dict[str, callable] = {
-            "sigma": lambda: sigma / (1 + sigma**2).sqrt(), 
-            "log": lambda:  0.5 * torch.log(sigma)
+            "sigma": lambda sigma: sigma / (1 + sigma**2).sqrt(), 
+            "log": lambda sigma:  0.5 * torch.log(sigma)
         }
-        return embed[self.time_embed]()
+        return embed[self.time_embed](sigma)
     
     def denoise(self, x, E=None, sigma=None, layers = None, layer_sample=False, controls=None):
         t_emb = self.do_time_embed(sigma = sigma.reshape(-1))

@@ -62,11 +62,11 @@ def inference_parser():
         type=int,
         help="Skip some iterations in the sampling (noisiest iters most unstable)",
     )
-    parser.add_argument(
-        "--sample_algo",
-        default="ddpm",
-        help="What sampling algorithm (ddpm, ddim, cold, cold2)",
-    )
+    # parser.add_argument(
+    #     "--sample_algo",
+    #     default="ddpm",
+    #     help="What sampling algorithm (ddpm, ddim, cold, cold2)",
+    # )
 
     parser.add_argument(
         "--layer-only",

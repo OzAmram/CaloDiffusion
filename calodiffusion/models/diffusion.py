@@ -42,7 +42,7 @@ class Diffusion(torch.nn.Module, ABC):
         try: 
             self.sampler_algorithm = getattr(
                 sample, sampler_algo
-            )(self.config, sampler_algo.lower())
+            )(self.config)
             
         except AttributeError: 
             raise ValueError("Sampler '%s' is not supported" % sampler_algo)
@@ -94,7 +94,7 @@ class Diffusion(torch.nn.Module, ABC):
         layers: list,
         num_steps: int = 400,
         debug: bool = False,
-        sample_offset: Optional[int] = None,
+        sample_offset: Optional[int] = 0,
     ) -> torch.Tensor:
         
         generated_shape = list(copy.copy(self._data_shape))
@@ -133,7 +133,7 @@ class Diffusion(torch.nn.Module, ABC):
         data_loader: utils.DataLoader,
         sample_steps: int,
         debug: bool = False,
-        sample_offset: Optional[int] = None,
+        sample_offset: Optional[int] = 0,
     ):
         """
         Generate samples for a whole dataloader

@@ -13,6 +13,9 @@ class Loss(ABC):
 
         self.update_step(n_steps)
         self.discrete_time = True
+        self.P_mean = -1
+        self.P_std = 1
+        self.sigma_data = 0.5
         if "log" in config.get("NOISE_SCHED", "linear"):
             self.discrete_time = False
 
@@ -54,7 +57,7 @@ class Loss(ABC):
         """
         raise NotImplementedError
 
-    def apply_scaling_skips(self, prediction, x, c_in, c_skip, c_out): 
+    def apply_scaling_skips(self, prediction, x, c_in, c_skip, c_out, sigma=None): 
         """
         Scaling applied to prediction after the model forward, requires skip connection calculation. 
 
@@ -99,10 +102,10 @@ class Loss(ABC):
             return  (weight * ((prediction - target) ** 2)).sum() / (torch.mean(weight) * np.prod(target.shape))
 
         losses = {
-            "l1": lambda y_hat, y: torch.nn.functional.l1_loss(y_hat, y),
+            "l1": lambda y_hat, y, weight=1: torch.nn.functional.l1_loss(y_hat, y),
             "l2": l2_loss,
-            "mse": lambda y_hat, y: torch.nn.functional.mse_loss(y_hat, y),
-            "huber": lambda y_hat, y: torch.nn.functional.smooth_l1_loss(y_hat, y),
+            "mse": lambda y_hat, y, weight=1: torch.nn.functional.mse_loss(y_hat, y),
+            "huber": lambda y_hat, y, weight=1: torch.nn.functional.smooth_l1_loss(y_hat, y),
         }
 
         if loss_type not in losses.keys(): 
@@ -155,7 +158,8 @@ class minsnr(Loss):
 
         target = (data - c_skip * x_noisy) / c_out
 
-        return self.loss(pred, target, 1.0)
+        weight = torch.ones_like(pred)
+        return self.loss(pred, target, weight)
 
 class hybrid_weight(Loss): 
     def __init__(self, config, n_steps, loss_type='l1') -> None:
@@ -190,7 +194,8 @@ class noise_pred(Loss):
         pred = (data - x0_pred) / sigma
         target = noise
 
-        return self.loss(pred, target, 1.0)
+        weight = torch.ones_like(pred)
+        return self.loss(pred, target, weight)
     
 class mean_pred(Loss): 
     def __init__(self, config, n_steps, loss_type='l1') -> None:

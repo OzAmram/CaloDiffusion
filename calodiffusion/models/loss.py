@@ -109,7 +109,7 @@ class Loss(ABC):
         }
 
         if loss_type not in losses.keys(): 
-            raise NotImplementedError()
+            raise NotImplementedError("Loss type %s not implemented, pick from (%s)", loss_type, losses.keys())
         
         return losses[loss_type]
 

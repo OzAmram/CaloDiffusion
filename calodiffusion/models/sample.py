@@ -25,10 +25,11 @@ class Sample:
 class DDim(Sample):
     def __init__(self, config):
         """
-        _summary_
+        https://arxiv.org/abs/2006.11239
+        Stochastic modeler - no added noised
 
-        Args:
-            config: _description_
+        Config: 
+            None
         """
         super().__init__(config)
         self.ddim_eta = 0.0
@@ -107,11 +108,10 @@ class DDim(Sample):
 class DDPM(DDim):
     def __init__(self, config):
         """
-        _summary_
+        Noisy version of https://arxiv.org/abs/2006.11239
 
-        Args:
-            config: _description_
-            sample_algorithm: _description_. Defaults to "None".
+        Config: 
+            None
         """
         super().__init__(config)
         self.ddim_eta = 1.0
@@ -121,11 +121,6 @@ class DPM(Sample):
     def __init__(self, config):
         """
         DPM-Solver-Fast (fixed step size). See https://arxiv.org/abs/2206.00927.
-
-
-        Args:
-            config: _description_
-            sample_algorithm: _description_. Defaults to "None".
 
         Config:
             "ETA"
@@ -155,11 +150,9 @@ class DPM(Sample):
 
     def sample(self, model, x, num_steps, energy, layers):
         sigma_min, sigma_max = self.sigmas[-1], self.sigmas[0]
-
-        """DPM-Solver-Fast (fixed step size). See https://arxiv.org/abs/2206.00927."""
         if sigma_min <= 0 or sigma_max <= 0:
             raise ValueError("sigma_min and sigma_max must not be 0")
-        dpm_solver = sampling.DPMSolver(model, E=energy, layers=layers)
+        dpm_solver = sampling.DPMSolver(model, extra_args={"E":energy, "layers":layers})
         return dpm_solver.dpm_solver_fast(
             x,
             dpm_solver.t(torch.tensor(sigma_max)),
@@ -179,42 +172,55 @@ class DPM(Sample):
         return x, None, None
 
 
-class DPMAdaptive(DPM):
-    def __init__(self, config):
-        super().__init__(config)
-        self.order = self.sample_config.get("ORDER", 3)
-        self.r_tol = self.sample_config.get("R_TOL", 0.05)
-        self.a_tol = self.sample_config.get("A_TOL", 0.0078)
-        self.h_init = self.sample_config.get("H_INIT", 0.05)
-        self.p_coeff = self.sample_config.get("P_COEFF", 0)
-        self.i_coeff = self.sample_config.get("I_COEFF", 1.)
-        self.d_coeff = self.sample_config.get("d_COEFF", 0)
-        self.accept_safety = self.sample_config.get("ACCEPT_SAFETY", 0.81)
+# TODO Replace PIDStepSizeController - it's missing atm
+# class DPMAdaptive(DPM):
+#     def __init__(self, config):
+#         """
+#         DPM-Solver-12 and 23 (adaptive step size). See https://arxiv.org/abs/2206.00927.
+        
+#         Config: 
+#             ORDER (int)
+#             R_TOL 
+#             A_TOL
+#             H_INIT
+#             P_COEFF
+#             I_COEFF
+#             D_COEFF
+#             ACCEPT_SAFETY
+#         """
+#         super().__init__(config)
+#         self.order = self.sample_config.get("ORDER", 3)
+#         self.r_tol = self.sample_config.get("R_TOL", 0.05)
+#         self.a_tol = self.sample_config.get("A_TOL", 0.0078)
+#         self.h_init = self.sample_config.get("H_INIT", 0.05)
+#         self.p_coeff = self.sample_config.get("P_COEFF", 0)
+#         self.i_coeff = self.sample_config.get("I_COEFF", 1.)
+#         self.d_coeff = self.sample_config.get("D_COEFF", 0)
+#         self.accept_safety = self.sample_config.get("ACCEPT_SAFETY", 0.81)
 
-    def sample(self, model, x, num_steps, energy, layers):
-        """DPM-Solver-12 and 23 (adaptive step size). See https://arxiv.org/abs/2206.00927."""
-        sigma_min, sigma_max = self.sigmas[-1], self.sigmas[0]
+#     def sample(self, model, x, num_steps, energy, layers):
+#         sigma_min, sigma_max = self.sigmas[-1], self.sigmas[0]
 
-        if sigma_min <= 0 or sigma_max <= 0:
-            raise ValueError("sigma_min and sigma_max must not be 0")
-        dpm_solver = sampling.DPMSolver(model, E=energy, layers=layers)
-        x, _ = dpm_solver.dpm_solver_adaptive(
-            x,
-            dpm_solver.t(torch.tensor(sigma_max)),
-            dpm_solver.t(torch.tensor(sigma_min)),
-            self.order,
-            self.r_tol,
-            self.a_tol,
-            self.h_init,
-            self.p_coeff,
-            self.i_coeff,
-            self.d_coeff,
-            self.accept_safety,
-            self.eta,
-            self.s_noise,
-            None,
-        )
-        return x
+#         if sigma_min <= 0 or sigma_max <= 0:
+#             raise ValueError("sigma_min and sigma_max must not be 0")
+#         dpm_solver = sampling.DPMSolver(model, extra_args={"E":energy, "layers":layers})
+#         x, _ = dpm_solver.dpm_solver_adaptive(
+#             x,
+#             dpm_solver.t(torch.tensor(sigma_max)),
+#             dpm_solver.t(torch.tensor(sigma_min)),
+#             self.order,
+#             self.r_tol,
+#             self.a_tol,
+#             self.h_init,
+#             self.p_coeff,
+#             self.i_coeff,
+#             self.d_coeff,
+#             self.accept_safety,
+#             self.eta,
+#             self.s_noise,
+#             None,
+#         )
+#         return x
 
 
 class DPMPP2S(DPM):
@@ -262,6 +268,16 @@ class DPMPP2S(DPM):
 
 
 class DPMPPSDE(DPM):
+    """
+    DPM-Solver++ (stochastic).
+    https://arxiv.org/abs/2211.01095
+
+    Config: 
+        R
+        ETA
+        S_NOISE
+    
+    """
     def __init__(self, config):
         super().__init__(config)
         self.r = self.sample_config.get("R", 0.5)
@@ -328,6 +344,13 @@ class DPMPPSDE(DPM):
 
 
 class DPMPP2M(DPM):
+    """
+    DPM-Solver++(2M).
+    https://arxiv.org/abs/2211.01095
+
+    Config: 
+        None
+    """
     @staticmethod
     def sigma_fn(t):
         return t.neg().exp()
@@ -365,14 +388,22 @@ class DPMPP2M(DPM):
 
 
 class DPMPP2MSDE(DPM):
+    """
+    DPM-Solver++(2M) SDE
+    https://arxiv.org/abs/2211.01095
+
+    Config: 
+        SOLVER (heun or midpoint)
+        ETA 
+        S_NOISE
+    """
     def __init__(self, config):
         super().__init__(config)
         self.solver_type = self.sample_config.get("SOLVER", "heun")
         if self.solver_type not in {"heun", "midpoint"}:
-            raise ValueError("solver_type must be 'heun' or 'midpoint'")
+            raise ValueError("'SOLVER' must be 'heun' or 'midpoint'")
 
     def sample(self, model, x, num_steps, energy, layers):
-        """DPM-Solver++(2M) SDE."""
         s_in = x.new_ones([x.shape[0]])
 
         sigma_min, sigma_max = self.sigmas[self.sigmas > 0].min(), self.sigmas.max()
@@ -424,9 +455,15 @@ class DPMPP2MSDE(DPM):
 
 
 class DPMPP3MSDE(DPM):
-    def sample(self, model, x, num_steps, energy, layers):
-        """DPM-Solver++(3M) SDE."""
+    """
+    DPM-Solver++(3M) SDE.
+    https://arxiv.org/abs/2211.01095
 
+    Config: 
+        ETA 
+        S_NOISE
+    """
+    def sample(self, model, x, num_steps, energy, layers):
         sigma_min, sigma_max = self.sigmas[self.sigmas > 0].min(), self.sigmas.max()
         noise_sampler = sampling.BrownianTreeNoiseSampler(x, sigma_min, sigma_max)
         s_in = x.new_ones([x.shape[0]])
@@ -510,7 +547,6 @@ class EDMAbstract(ABC, Sample):
         self.t_next = None 
         self.denoised = None
 
-
     def generator_size(self):
         return (self.x.shape[0], *((1,) * (len(self.x.shape) - 1)))
 
@@ -537,14 +573,6 @@ class EDMAbstract(ABC, Sample):
         self.x_next = self.x.to(torch.float32) * t_steps[0]
         xs = []
         x0s = []
-
-        # define the vars as class vars: 
-            # x_hat
-            # t_hat 
-            # x_next
-            # t_next 
-            # denoised
-
 
         for t_cur, t_next in zip(t_steps[:-1], t_steps[1:]):
             x_cur = self.x_next
@@ -637,6 +665,17 @@ class EDMAbstract(ABC, Sample):
 
 
 class LMS(EDMAbstract):
+    """
+    https://arxiv.org/abs/2206.00364
+
+    Config: 
+        ORDER 
+        NOISY_SAMPLE 
+        ORIG_SCHEUDLE 
+        C1 
+        RHO 
+        SIGMA_MIN/MAX
+    """
     def sampler(self, x, model, t_steps, energy, layers):
         xs = []
         x0s = []
@@ -668,6 +707,18 @@ class LMS(EDMAbstract):
 
 
 class Euler(EDMAbstract):
+    """
+    EDM Smapler with Euler 1st order method
+    https://arxiv.org/abs/2206.00364
+
+    Config: 
+        RHO 
+        SIGMA_MIN/MAX
+        NOISY_SAMPLE 
+        ORIG_SCHEDULE 
+        C1
+        S_CHURN
+    """
     def in_loop_sampler(
         self,
     ):
@@ -677,6 +728,18 @@ class Euler(EDMAbstract):
 
 
 class Heun(EDMAbstract):
+    """
+    EDM Smapler with Heun 2nd order method
+    https://arxiv.org/abs/2206.00364
+
+    Config: 
+        RHO 
+        SIGMA_MIN/MAX
+        NOISY_SAMPLE 
+        ORIG_SCHEDULE 
+        C1
+        S_CHURN
+    """
     def in_loop_sampler(
         self,
     ):
@@ -697,6 +760,17 @@ class Heun(EDMAbstract):
 
 
 class DPM2(EDMAbstract):
+    """
+    https://arxiv.org/abs/2206.00364
+
+    Config: 
+        RHO 
+        SIGMA_MIN/MAX
+        NOISY_SAMPLE 
+        ORIG_SCHEDULE 
+        C1
+        S_CHURN
+    """
     def in_loop_sampler(
         self,
     ):
@@ -715,6 +789,18 @@ class DPM2(EDMAbstract):
 
 
 class Restart(EDMAbstract):
+    """
+    Restart Sampler: https://arxiv.org/abs/2306.14878
+
+    Settings: 
+        RESTART_LIST (dict - form of {str(i): [N_restart, K_i, T_min_i, T_max_i]})
+        RESTART_GAMMA 
+        RHO 
+        S_MIN, S_MAX
+        S_NOISE
+        S_CHURN
+    """
+
     def __init__(self, config):
         super().__init__(config)
         default_restart = {"0": [4, 1, 19.35, 40.79], "1": [4, 1, 1.09, 1.92], "2": [4, 4, 0.59, 1.09], "3": [4, 1, 0.30, 0.59], "4": [4, 4, 0.06, 0.30]}
@@ -807,6 +893,12 @@ class Restart(EDMAbstract):
 
 
 class Consistency(Sample):
+    """
+    I have no idea where this comes from. Enjoy. 
+
+    Config: 
+        CONSIS_NSTEPS
+    """
     def __init__(self, config) -> None:
         super().__init__(config)
         self.consis_nsteps = self.config.get("CONSIS_NSTEPS", 100)

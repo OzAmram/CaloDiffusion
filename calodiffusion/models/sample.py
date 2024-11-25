@@ -130,6 +130,15 @@ class DPM(Sample):
         self.eta = self.sample_config.get("ETA", 0)
         self.s_noise =self.sample_config.get("S_NOISE", 1.0)
 
+    @staticmethod
+    def sigma_fn(t):
+        return t.neg().exp()
+
+    @staticmethod
+    def time_fn(t):
+        return t.log().neg()
+
+
     def create_sigmas(self, model, num_steps):
         return torch.tensor(
             [
@@ -172,66 +181,131 @@ class DPM(Sample):
         return x, None, None
 
 
-# TODO Replace PIDStepSizeController - it's missing atm
-# class DPMAdaptive(DPM):
-#     def __init__(self, config):
-#         """
-#         DPM-Solver-12 and 23 (adaptive step size). See https://arxiv.org/abs/2206.00927.
+class DPMAdaptive(DPM):
+    def __init__(self, config):
+        """
+        DPM-Solver-12 and 23 (adaptive step size). See https://arxiv.org/abs/2206.00927.
         
-#         Config: 
-#             ORDER (int)
-#             R_TOL 
-#             A_TOL
-#             H_INIT
-#             P_COEFF
-#             I_COEFF
-#             D_COEFF
-#             ACCEPT_SAFETY
-#         """
-#         super().__init__(config)
-#         self.order = self.sample_config.get("ORDER", 3)
-#         self.r_tol = self.sample_config.get("R_TOL", 0.05)
-#         self.a_tol = self.sample_config.get("A_TOL", 0.0078)
-#         self.h_init = self.sample_config.get("H_INIT", 0.05)
-#         self.p_coeff = self.sample_config.get("P_COEFF", 0)
-#         self.i_coeff = self.sample_config.get("I_COEFF", 1.)
-#         self.d_coeff = self.sample_config.get("D_COEFF", 0)
-#         self.accept_safety = self.sample_config.get("ACCEPT_SAFETY", 0.81)
+        Config: 
+            ORDER (int)
+            R_TOL 
+            A_TOL
+            H_INIT
+            T_ERROR
+            ACCEPT_SAFETY
+        """
+        super().__init__(config)
+        self.order = self.sample_config.get("ORDER", 3)
+        self.r_tol = self.sample_config.get("R_TOL", 0.05)
+        self.a_tol = self.sample_config.get("A_TOL", 0.0078)
+        self.h_init = self.sample_config.get("H_INIT", 0.05)
+        self.t_err = self.sample_config.get("T_ERROR", 1e-5)
+        self.accept_safety = self.sample_config.get("ACCEPT_SAFETY", 0.81)
 
-#     def sample(self, model, x, num_steps, energy, layers):
-#         sigma_min, sigma_max = self.sigmas[-1], self.sigmas[0]
+        self.model = None 
+        self.energy = None 
+        self.layers = None
 
-#         if sigma_min <= 0 or sigma_max <= 0:
-#             raise ValueError("sigma_min and sigma_max must not be 0")
-#         dpm_solver = sampling.DPMSolver(model, extra_args={"E":energy, "layers":layers})
-#         x, _ = dpm_solver.dpm_solver_adaptive(
-#             x,
-#             dpm_solver.t(torch.tensor(sigma_max)),
-#             dpm_solver.t(torch.tensor(sigma_min)),
-#             self.order,
-#             self.r_tol,
-#             self.a_tol,
-#             self.h_init,
-#             self.p_coeff,
-#             self.i_coeff,
-#             self.d_coeff,
-#             self.accept_safety,
-#             self.eta,
-#             self.s_noise,
-#             None,
-#         )
-#         return x
+    def model_fn(self, x, sigma): 
+        return self.model(x, sigma, E=self.energy, layers=self.layers)
+
+    def eps(self, eps_cache, key, x, t, *args, **kwargs):
+        if key in eps_cache:
+            return eps_cache[key], eps_cache
+        sigma = DPM.sigma_fn(t) * x.new_ones([x.shape[0]])
+        eps = (x - self.model_fn(x, sigma)) / DPM.sigma_fn(t)
+        return eps, {key: eps, **eps_cache}
+
+    def dpm_solver_1_step(self, x, t, t_next, eps_cache=None):
+        eps_cache = {} if eps_cache is None else eps_cache
+        h = t_next - t
+        eps, eps_cache = self.eps(eps_cache, 'eps', x, t)
+        x_1 = x - DPM.sigma_fn(t_next) * h.expm1() * eps
+        return x_1, eps_cache
+
+    def dpm_solver_2_step(self, x, t, t_next, r1=1 / 2, eps_cache=None):
+        eps_cache = {} if eps_cache is None else eps_cache
+        h = t_next - t
+        eps, eps_cache = self.eps(eps_cache, 'eps', x, t)
+        s1 = t + r1 * h
+        u1 = x - DPM.sigma_fn(s1) * (r1 * h).expm1() * eps
+        eps_r1, eps_cache = self.eps(eps_cache, 'eps_r1', u1, s1)
+        x_2 = x - DPM.sigma_fn(t_next) * h.expm1() * eps - DPM.sigma_fn(t_next) / (2 * r1) * h.expm1() * (eps_r1 - eps)
+        return x_2, eps_cache
+
+    def dpm_solver_3_step(self, x, t, t_next, r1=1 / 3, r2=2 / 3, eps_cache=None):
+        eps_cache = {} if eps_cache is None else eps_cache
+        h = t_next - t
+        eps, eps_cache = self.eps(eps_cache, 'eps', x, t)
+        s1 = t + r1 * h
+        s2 = t + r2 * h
+        u1 = x - DPM.sigma_fn(s1) * (r1 * h).expm1() * eps
+        eps_r1, eps_cache = self.eps(eps_cache, 'eps_r1', u1, s1)
+        u2 = x - DPM.sigma_fn(s2) * (r2 * h).expm1() * eps - DPM.sigma_fn(s2) * (r2 / r1) * ((r2 * h).expm1() / (r2 * h) - 1) * (eps_r1 - eps)
+        eps_r2, eps_cache = self.eps(eps_cache, 'eps_r2', u2, s2)
+        x_3 = x - DPM.sigma_fn(t_next) * h.expm1() * eps - DPM.sigma_fn(t_next) / r2 * (h.expm1() / h - 1) * (eps_r2 - eps)
+        return x_3, eps_cache
+
+    def sample(self, model, x, num_steps, energy, layers):
+
+        self.model = model 
+        self.energy = energy
+        self.layers = layers
+
+        sigma_min, sigma_max = self.sigmas[-1], self.sigmas[0]
+        t_start, t_end = DPM.time_fn(sigma_max), DPM.time_fn(sigma_min)
+        noise_sampler = sampling.default_noise_sampler
+        lambda_0, lambda_s = noise_sampler(x)
+
+        if sigma_min <= 0 or sigma_max <= 0:
+            raise ValueError("sigma_min and sigma_max must not be 0")
+
+        if self.order not in {2, 3}:
+            raise ValueError('order should be 2 or 3')
+
+        forward = t_end > t_start
+
+        if not forward and self.eta:
+            raise ValueError('eta must be 0 for reverse sampling')
+        
+        h_init = abs(self.h_init) * (1 if forward else -1)
+        atol = torch.tensor(self.a_tol)
+        rtol = torch.tensor(self.r_tol)
+        s = t_start
+        x_prev = x
+
+        pid = sampling.PIDStepSizeController(h_init, self.order, self.eta, self.accept_safety)
+        while s < t_end - self.t_err if forward else s > self.t_err + self.t_err:
+            eps_cache = {}
+            t = torch.minimum(t_end, s + pid.h) if forward else torch.maximum(t_end, s + pid.h)
+
+            sd, _ = sampling.get_ancestral_step(DPM.sigma_fn(s), DPM.sigma_fn(t), self.eta)
+            t_prime = torch.minimum(t_end, DPM.time_fn(sd))
+            su = (DPM.sigma_fn(t) ** 2 - DPM.sigma_fn(t_prime) ** 2) ** 0.5
+
+            eps, eps_cache = self.eps(eps_cache, 'eps', x, s)
+
+            if self.order == 2:
+                x_low, eps_cache = self.dpm_solver_1_step(x, s, t_prime, eps_cache=eps_cache)
+                x_high, eps_cache = self.dpm_solver_2_step(x, s, t_prime, eps_cache=eps_cache)
+            else:
+                x_low, eps_cache = self.dpm_solver_2_step(x, s, t_prime, r1=1 / 3, eps_cache=eps_cache)
+                x_high, eps_cache = self.dpm_solver_3_step(x, s, t_prime, eps_cache=eps_cache)
+
+            delta = torch.maximum(atol, rtol * torch.maximum(x_low.abs(), x_prev.abs()))
+            error = torch.linalg.norm((x_low - x_high) / delta) / x.numel() ** 0.5
+            accept = pid.propose_step(error, lambda_0, lambda_s)
+
+            if accept:
+                x_prev = x_low
+                x = x_high + su * self.s_noise * noise_sampler(DPM.sigma_fn(s), DPM.sigma_fn(t))
+                s = t
+                _, lambda_s = noise_sampler(x)
+
+        return x
 
 
 class DPMPP2S(DPM):
-    @staticmethod
-    def sigma_fn(t):
-        return t.neg().exp()
-
-    @staticmethod
-    def time_fn(t):
-        return t.log().neg()
-
     def sample(self, model, x, num_steps, energy, layers):
         noise_sampler = sampling.default_noise_sampler(x)
         s_in = x.new_ones([x.shape[0]])
@@ -281,14 +355,6 @@ class DPMPPSDE(DPM):
     def __init__(self, config):
         super().__init__(config)
         self.r = self.sample_config.get("R", 0.5)
-
-    @staticmethod
-    def sigma_fn(t):
-        return t.neg().exp()
-
-    @staticmethod
-    def time_fn(t):
-        return t.log().neg()
 
     def sample(self, model, x, num_steps, energy, layers):
         sigma_min, sigma_max = self.sigmas[self.sigmas > 0].min(), self.sigmas.max()
@@ -351,13 +417,6 @@ class DPMPP2M(DPM):
     Config: 
         None
     """
-    @staticmethod
-    def sigma_fn(t):
-        return t.neg().exp()
-
-    @staticmethod
-    def time_fn(t):
-        return t.log().neg()
 
     def sample(self, model, x, num_steps, energy, layers):
         """DPM-Solver++(2M)."""

@@ -128,10 +128,10 @@ class Optimize:
             sampler_config = self.suggest_hyperparam("ETA", sampler_config, sampler_settings, trial_config)
             sampler_config = self.suggest_hyperparam("S_NOISE", sampler_config, sampler_settings, trial_config)
 
-        # if sampler == "DPMAdaptive": 
-        #     config = self.suggest_hyperparam("ORDER", sampler_config, sampler_settings, trial_config, type_=int)
-        #     for setting in ["R_TOL", "A_TOL", "H_INIT", "P_COEFF", "I_COEFF", "D_COEFF", "ACCEPT_SAFETY"]: 
-        #         sampler_config = self.suggest_hyperparam(setting, sampler_config, sampler_settings, trial_config)
+        if sampler == "DPMAdaptive": 
+            config = self.suggest_hyperparam("ORDER", sampler_config, sampler_settings, trial_config, type_=int)
+            for setting in ["R_TOL", "A_TOL", "H_INIT", "T_ERROR", "ACCEPT_SAFETY"]: 
+                sampler_config = self.suggest_hyperparam(setting, sampler_config, sampler_settings, trial_config)
 
         if sampler == 'DPMPPSDE': 
             sampler_config = self.suggest_hyperparam("R", sampler_config, sampler_settings, trial_config)

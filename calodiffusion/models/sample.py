@@ -207,7 +207,7 @@ class DPMAdaptive(DPM):
         self.layers = None
 
     def model_fn(self, x, sigma): 
-        return self.model(x, sigma, E=self.energy, layers=self.layers)
+        return self.model.denoise(x=x, sigma=sigma, E=self.energy, layers=self.layers)
 
     def eps(self, eps_cache, key, x, t, *args, **kwargs):
         if key in eps_cache:
@@ -247,15 +247,14 @@ class DPMAdaptive(DPM):
         return x_3, eps_cache
 
     def sample(self, model, x, num_steps, energy, layers):
-
         self.model = model 
         self.energy = energy
         self.layers = layers
 
         sigma_min, sigma_max = self.sigmas[-1], self.sigmas[0]
         t_start, t_end = DPM.time_fn(sigma_max), DPM.time_fn(sigma_min)
-        noise_sampler = sampling.default_noise_sampler
-        lambda_0, lambda_s = noise_sampler(x)
+        noise_sampler = sampling.default_noise_sampler(x)
+        lambda_0, lambda_s = noise_sampler(sigma_min, sigma_max)
 
         if sigma_min <= 0 or sigma_max <= 0:
             raise ValueError("sigma_min and sigma_max must not be 0")
@@ -274,7 +273,7 @@ class DPMAdaptive(DPM):
         s = t_start
         x_prev = x
 
-        pid = sampling.PIDStepSizeController(h_init, self.order, self.eta, self.accept_safety)
+        pid = sampling.PIDStepSizeControl(h_init, self.order, self.eta, self.accept_safety)
         while s < t_end - self.t_err if forward else s > self.t_err + self.t_err:
             eps_cache = {}
             t = torch.minimum(t_end, s + pid.h) if forward else torch.maximum(t_end, s + pid.h)
@@ -300,7 +299,7 @@ class DPMAdaptive(DPM):
                 x_prev = x_low
                 x = x_high + su * self.s_noise * noise_sampler(DPM.sigma_fn(s), DPM.sigma_fn(t))
                 s = t
-                _, lambda_s = noise_sampler(x)
+                _, lambda_s = noise_sampler(x, self.sigma_fn(s))
 
         return x
 

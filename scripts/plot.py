@@ -124,21 +124,33 @@ def make_plots(flags):
     hgcal = dataset_config.get('HGCAL', False)
     max_cells = dataset_config.get('MAX_CELLS', None)
 
+    shower_scale = dataset_config.get("SHOWER_SCALE", 200)
+
 
     batch_size = flags.batch_size
     shower_embed = dataset_config.get('SHOWER_EMBED', '')
     orig_shape = ('orig' in shower_embed)
     do_NN_embed = ('NN' in shower_embed)
 
+    pre_embed = ('pre-embed' in shower_embed)
+    print('pre_embed', pre_embed)
 
     if((not hgcal) or flags.plot_reshape): shape_plot = dataset_config['SHAPE_FINAL']
     else: shape_plot = dataset_config['SHAPE_PAD']
+
+    shape_embed = shape_plot
+
+    if(pre_embed): 
+        shape_plot = list(dataset_config['SHAPE_ORIG'])
+        shape_plot.insert(1,1) # padding dim
+        shape_embed = dataset_config['SHAPE_FINAL']
+
     print("Data shape", shape_plot)
 
     if(not os.path.exists(flags.plot_folder)): os.system("mkdir %s" % flags.plot_folder)
 
     if(hgcal):
-        NN_embed = HGCalConverter(bins = shape_plot, geom_file = dataset_config['BIN_FILE'])
+        NN_embed = HGCalConverter(bins = shape_embed, geom_file = dataset_config['BIN_FILE'])
         if(flags.plot_reshape): NN_embed.init()
         else: print("HGCal in original shape")
 
@@ -146,11 +158,10 @@ def make_plots(flags):
     def LoadSamples(fname, EMin = -1.0, nevts = -1, diffu_sample = False):
         print("Load %s" % fname)
         end = None if nevts < 0 else nevts
-        #scale_fac = 200. if hgcal else (1/1000.)
-        scale_fac = 100. if hgcal else (1/1000.)
+        scale_fac = 200. if hgcal else (1/1000.)
         with h5.File(fname,"r") as h5f:
             if(hgcal): 
-                generated = h5f['showers'][:end,:,:dataset_config['MAX_CELLS']] * scale_fac
+                generated = h5f['showers'][:end,:,:dataset_config['MAX_CELLS']] * shower_scale
                 energies = h5f['gen_info'][:end,0] 
                 gen_info = np.array(h5f['gen_info'][:end,:])
             else: 

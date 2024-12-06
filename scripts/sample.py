@@ -6,7 +6,7 @@ import argparse
 import h5py as h5
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
-import time, sys, copy
+import time, sys, copy, math
 import utils
 import torch
 import torch.utils.data as torchdata
@@ -20,6 +20,75 @@ if(torch.cuda.is_available()): device = torch.device('cuda')
 else: device = torch.device('cpu')
 
 
+def write_out(flags, dataset_config, generated, energies, gen_layers, hgcal, pre_embed, NN_embed, shower_scale, first_write = False):
+    if(flags.debug):
+        fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_exts[0])
+        make_histogram([generated.reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                        num_bins = 40, normalize = True, fname = fout_ex, logy=True)
+
+    out_layers = layers if (gen_layers is None) else gen_layers
+    generated,energies = utils.ReverseNorm(generated,energies, layerE = out_layers,
+                                           shape=dataset_config['SHAPE_FINAL'],
+                                           logE=dataset_config['logE'],
+                                           max_deposit=dataset_config['MAXDEP'],
+                                           emax = dataset_config['EMAX'],
+                                           emin = dataset_config['EMIN'],
+                                           showerMap = dataset_config['SHOWERMAP'],
+                                           dataset_num  = dataset_num,
+                                           orig_shape = orig_shape,
+                                           ecut = dataset_config['ECUT'],
+                                           hgcal = hgcal,
+                                           embed = pre_embed,
+                                           NN_embed = NN_embed,
+                                           )
+
+    if(not orig_shape): generated = generated.reshape(dataset_config["SHAPE_ORIG"])
+    energies = np.reshape(energies,(energies.shape[0],-1))
+    do_mask = False
+
+    if(do_mask  and dataset_num > 1):
+        #mask for voxels that are always empty
+        mask_file = os.path.join(flags.data_folder,dataset_config['EVAL'][0].replace('.hdf5','_mask.hdf5'))
+        if(not os.path.exists(mask_file)):
+            print("Creating mask based on data batch")
+            mask = np.sum(data,0)==0
+
+        else:
+            with h5.File(mask_file,"r") as h5f:
+                mask = h5f['mask'][:]
+        generated = generated*(np.reshape(mask,(1,-1))==0)
+
+    if(flags.generated == ""):
+        fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.sample_algo + str(flags.sample_steps), job_label))
+    else:
+        fout = flags.generated
+
+    genenerated = np.reshape(generated, dataset_config['SHAPE_ORIG'])
+    if(first_write):
+        print("Creating " + fout)
+        shape = list(dataset_config['SHAPE_ORIG'])
+        shape[0] = None
+        if(not hgcal):
+            with h5.File(fout,"w") as h5f:
+                dset = h5f.create_dataset("showers", data= (1./shower_scale) * generaed,  compression = 'gzip', maxshape = shape, chunks = True)
+                dset = h5f.create_dataset("incident_energies", data=(1./shower_scale) *energies, compression = 'gzip', maxshape = (None, 1), chunks = True)
+        else:
+
+            with h5.File(fout,"w") as h5f:
+                dset = h5f.create_dataset("showers", data=(1./shower_scale)* generated, compression = 'gzip',maxshape=shape, chunks = True)
+                dset = h5f.create_dataset("gen_info", data=energies, compression = 'gzip', maxshape = (None, energies.shape[1]), chunks = True)
+    else:
+        print("Appending to " + fout)
+        with h5.File(fout,"a") as h5f:
+            if(not hgcal):
+                append_h5(h5f, 'showers', (1./shower_scale) * generated)
+                append_h5(h5f, 'incident_energies', (1./shower_scale) * energies)
+            else:
+                append_h5(h5f, 'showers', (1./shower_scale) * generated)
+                append_h5(h5f, 'gen_info', energies)
+
+
+
 
 parser = argparse.ArgumentParser()
 
@@ -30,6 +99,7 @@ parser.add_argument('--generated', '-g', default='', help='Generated showers')
 parser.add_argument('--model_loc', default='test', help='Location of model')
 parser.add_argument('--config', '-c', default='config_dataset2.json', help='Training parameters')
 parser.add_argument('--nevts', type=int,default=-1, help='Number of events to load')
+parser.add_argument('--chunk_size', type=int, default=5000, help='Save out in chunks of this size')
 parser.add_argument('--batch_size', type=int, default=100, help='Batch size for generation')
 parser.add_argument('--model', default='Diffu', help='Diffusion model to load. Options are: Diffu, AE, all')
 parser.add_argument('--plot_label', default='', help='Add to plot')
@@ -65,6 +135,7 @@ dataset_num = dataset_config.get('DATASET_NUM', 2)
 layer_norm = 'layer' in dataset_config['SHOWERMAP']
 hgcal = dataset_config.get('HGCAL', False)
 max_cells = dataset_config.get('MAX_CELLS', None)
+shower_scale = dataset_config.get('SHOWERSCALE', 200.)
 
 model_nsteps = dataset_config["NSTEPS"] if flags.sample_steps < 0 else flags.sample_steps
 if('consis' in flags.sample_algo): model_nsteps = dataset_config['CONSIS_NSTEPS']
@@ -98,6 +169,21 @@ data = None
 
 dset = dataset_config['EVAL'] if not flags.trainset else dataset_config['FILES']
 
+NN_embed = None
+if('NN' in shower_embed and not hgcal):
+    if(dataset_num == 1):
+        bins = XMLHandler("photon", geom_file)
+    else: 
+        bins = XMLHandler("pion", geom_file)
+
+    NN_embed = NNConverter(bins = bins).to(device = device)
+elif(hgcal):
+    trainable = dataset_config.get('TRAINABLE_EMBED', False)
+    NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
+    if(not trainable):
+        NN_embed.init(norm = pre_embed, dataset_num = dataset_num)
+    
+
 
 for i, dataset in enumerate(dset):
     n_dataset = h5py.File(os.path.join(flags.data_folder,dataset))['showers'].shape[0]
@@ -118,15 +204,18 @@ for i, dataset in enumerate(dset):
 
         dataset_num  = dataset_num,
         orig_shape = orig_shape,
+        embed = pre_embed,
+        NN_embed = NN_embed,
     )
     
     if(data is None): 
-        data = data_
         energies = e_
         layers = layers_
     else:
         energies = np.concatenate((energies, e_))
         if(layer_norm): layers = np.concatenate((layers, layers_))
+
+    del data_
     if(flags.nevts > 0 and energies.shape[0] >= flags.nevts): break
 
 if(layer_norm): layers = np.reshape(layers, (layers.shape[0], -1))
@@ -147,213 +236,128 @@ if(cold_diffu or flags.model == 'Avg' or flags.controlnet):
     E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
     print("AVG showers", avg_showers.shape)
 
-NN_embed = None
-if('NN' in shower_embed and not hgcal):
-    if(dataset_num == 1):
-        bins = XMLHandler("photon", geom_file)
-    else: 
-        bins = XMLHandler("pion", geom_file)
 
-    NN_embed = NNConverter(bins = bins).to(device = device)
-elif(hgcal):
-    trainable = dataset_config.get('TRAINABLE_EMBED', False)
-    NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
-    if(not trainable):
-        NN_embed.init(norm = pre_embed, dataset_num = dataset_num)
-    
+print("Loading Diffu model from " + flags.model_loc)
+
+if(not pre_embed):
+    shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
+else:
+    shape = dataset_config['SHAPE_FINAL'][1:]
+print(shape)
 
 
-if(flags.model == "AE"):
-    print("Loading AE from " + flags.model_loc)
-    """
-    model = CaloAE(dataset_config['SHAPE_PAD'][1:], batch_size, config=dataset_config).to(device=device)
+model = CaloDiffu(shape, config=dataset_config , training_obj = training_obj,NN_embed = NN_embed, nsteps = model_nsteps,
+        cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins).to(device = device)
 
-    saved_model = torch.load(flags.model_loc, map_location = device)
-    if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
-    elif(len(saved_model.keys()) > 1): model.load_state_dict(saved_model)
-    #model.load_state_dict(torch.load(flags.model_loc, map_location=device))
+saved_model = torch.load(flags.model_loc, map_location = device)
 
-    generated = []
-    for i,(E,d_batch) in enumerate(data_loader):
-        E = E.to(device=device)
-        d_batch = d_batch.to(device=device)
-    
-        gen = model(d_batch).detach().cpu().numpy()
-        if(i == 0): generated = gen
-        else: generated = np.concatenate((generated, gen))
-        del E, d_batch
-        """
-
-elif(flags.model == "Diffu"):
-    print("Loading Diffu model from " + flags.model_loc)
-
-    if(not pre_embed):
-        shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
-    else:
-        shape = dataset_config['SHAPE_FINAL'][1:]
-    print(shape)
+if(flags.controlnet):
+    #init controlnet model 
+    controlnet_model = copy.deepcopy(model)
+    #Upsampling layers not used
+    controlnet_model.model.ups = None
 
 
-    model = CaloDiffu(shape, config=dataset_config , training_obj = training_obj,NN_embed = NN_embed, nsteps = model_nsteps,
-            cold_diffu = cold_diffu, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins).to(device = device)
+    model = ControlledUNet(model, controlnet_model)
+    #Freeze UNet part
 
-    saved_model = torch.load(flags.model_loc, map_location = device)
+print(list(saved_model.keys()))
 
-    if(flags.controlnet):
-        #init controlnet model 
-        controlnet_model = copy.deepcopy(model)
-        #Upsampling layers not used
-        controlnet_model.model.ups = None
+if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
+else: model.load_state_dict(saved_model)
 
 
-        model = ControlledUNet(model, controlnet_model)
-        #Freeze UNet part
+layer_model = None
+if(flags.layer_model != "" and "dummy" not in flags.layer_model):
+    print("Loading Diffu model from " + flags.layer_model)
 
-    print(list(saved_model.keys()))
+    cond_size =1
+    if(hgcal): cond_size += 2
 
-    if('model_state_dict' in saved_model.keys()): model.load_state_dict(saved_model['model_state_dict'])
-    else: model.load_state_dict(saved_model)
+    layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5, cond_size = cond_size).to(device = device)
+    saved_layer = torch.load(flags.layer_model, map_location = device)
+    if('model_state_dict' in saved_layer.keys()): layer_model.load_state_dict(saved_layer['model_state_dict'])
+    else: layer_model.load_state_dict(saved_layer)
 
 
-    layer_model = None
-    if(flags.layer_model != "" and "dummy" not in flags.layer_model):
-        print("Loading Diffu model from " + flags.layer_model)
+first_write = True
+generated = []
+energies = []
+gen_layers_ = None
+energies_start = 0
+start_time = time.time()
 
-        cond_size =1
-        if(hgcal): cond_size += 2
+print("Sample Algo : %s, %i steps" % (flags.sample_algo, flags.sample_steps))
+if(layer_model is not None):
+    print("Layer Sample Algo : %s, %i steps" % (flags.layer_sample_algo, flags.layer_sample_steps))
 
-        layer_model = ResNet(dim_in = dataset_config['SHAPE_PAD'][2] + 1, num_layers = 5, cond_size = cond_size).to(device = device)
-        saved_layer = torch.load(flags.layer_model, map_location = device)
-        if('model_state_dict' in saved_layer.keys()): layer_model.load_state_dict(saved_layer['model_state_dict'])
-        else: layer_model.load_state_dict(saved_layer)
+for i,(E,layers_) in enumerate(data_loader):
+    batch_start = time.time()
+    if(E.shape[0] == 0): continue
+    E = E.to(device=device)
 
-    gen_layers = []
-    generated = []
-    gen_layers_ = None
-    start_time = time.time()
-
-    print("Sample Algo : %s, %i steps" % (flags.sample_algo, flags.sample_steps))
+    layer_shape = (E.shape[0], dataset_config['SHAPE_PAD'][2]+1)
     if(layer_model is not None):
-        print("Layer Sample Algo : %s, %i steps" % (flags.layer_sample_algo, flags.layer_sample_steps))
-
-    for i,(E,layers_) in enumerate(data_loader):
-        batch_start = time.time()
-        if(E.shape[0] == 0): continue
-        E = E.to(device=device)
-
-        layer_shape = (E.shape[0], dataset_config['SHAPE_PAD'][2]+1)
-        if(layer_model is not None):
-            gen_layers_ = model.Sample(E, num_steps = flags.layer_sample_steps, sample_algo = flags.layer_sample_algo,
-                                       model = layer_model, gen_shape = layer_shape, layer_sample = True)
-            cond_layers = gen_layers_
-        else:
-            cond_layers = layers_.to(device = device)
-
-        if(flags.layer_only):#one shot generation
-            shower_steps, shower_algo = 1, 'consis'
-        else:
-            shower_steps, shower_algo = flags.sample_steps, flags.sample_algo
-
-        out = model.Sample(E, layers = cond_layers, num_steps = shower_steps, cold_noise_scale = cold_noise_scale, sample_algo = shower_algo,
-                debug = flags.debug, sample_offset = flags.sample_offset)
-
-
-        if(flags.debug): out, all_gen, x0s = out
-        
-        if(pre_embed):
-            if(flags.debug):
-                data_dict = {'Geant4' : out.detach().cpu().numpy()}
-                from test_glam import AverageER
-                AverageER(data_dict, flags)
-
-            out = NN_embed.dec(out)
-
-        gen = out.detach().cpu().numpy()
-
-        #if(flags.debug):
-
-            #gen = out.detach().cpu().numpy()
-            #for j in [0,len(all_gen)//4, len(all_gen)//2, 3*len(all_gen)//4, 9*len(all_gen)//10, len(all_gen)-10, len(all_gen)-5,len(all_gen)-1]:
-                #fout_ex = '{}/{}_{}_norm_voxels_gen_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
-                #make_histogram([all_gen[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
-                                #num_bins = 40, normalize = True, fname = fout_ex)
-
-                #fout_ex = '{}/{}_{}_norm_voxels_x0_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
-                #make_histogram([x0s[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
-                                #num_bins = 40, normalize = True, fname = fout_ex)
-
-        gen_layers_ = gen_layers_.detach().cpu().numpy()
-        if(i == 0): 
-            generated = gen
-            gen_layers = gen_layers_
-        else: 
-            generated = np.concatenate((generated, gen))
-            if(gen_layers_ is not None): gen_layers = np.concatenate((gen_layers, gen_layers_))
-
-        batch_end = time.time()
-        print("Time to sample %i events is %.3f seconds" % (E.shape[0], batch_end - batch_start))
-        del E, layers_
-    end_time = time.time()
-    print("Total sampling time %.3f seconds" % (end_time - start_time))
-elif(flags.model == "Avg"):
-    #define model just for useful fns
-    model = CaloDiffu(dataset_config['SHAPE_PAD'][1:], nevts,config=dataset_config, avg_showers = avg_showers, std_showers = std_showers, E_bins = E_bins ).to(device = device)
-
-    generated = model.gen_cold_image(torch_E_tensor, cold_noise_scale).numpy()
-
-
-if(not orig_shape): generated = generated.reshape(dataset_config["SHAPE_ORIG"])
-
-if(flags.debug):
-    fout_ex = '{}/{}_{}_norm_voxels.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, plt_exts[0])
-    make_histogram([generated.reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
-                    num_bins = 40, normalize = True, fname = fout_ex, logy=True)
-
-out_layers = layers if (gen_layers is None) else gen_layers
-generated,energies = utils.ReverseNorm(generated,energies, layerE = out_layers,
-                                       shape=dataset_config['SHAPE_FINAL'],
-                                       logE=dataset_config['logE'],
-                                       max_deposit=dataset_config['MAXDEP'],
-                                       emax = dataset_config['EMAX'],
-                                       emin = dataset_config['EMIN'],
-                                       showerMap = dataset_config['SHOWERMAP'],
-                                       dataset_num  = dataset_num,
-                                       orig_shape = orig_shape,
-                                       ecut = dataset_config['ECUT'],
-                                       hgcal = hgcal,
-                                       )
-
-energies = np.reshape(energies,(energies.shape[0],-1))
-do_mask = False
-
-if(do_mask  and dataset_num > 1):
-    #mask for voxels that are always empty
-    mask_file = os.path.join(flags.data_folder,dataset_config['EVAL'][0].replace('.hdf5','_mask.hdf5'))
-    if(not os.path.exists(mask_file)):
-        print("Creating mask based on data batch")
-        mask = np.sum(data,0)==0
-
+        gen_layers_ = model.Sample(E, num_steps = flags.layer_sample_steps, sample_algo = flags.layer_sample_algo,
+                                   model = layer_model, gen_shape = layer_shape, layer_sample = True)
+        cond_layers = gen_layers_
     else:
-        with h5.File(mask_file,"r") as h5f:
-            mask = h5f['mask'][:]
-    generated = generated*(np.reshape(mask,(1,-1))==0)
+        cond_layers = layers_.to(device = device)
 
-if(flags.generated == ""):
-    fout = os.path.join(checkpoint_folder,'generated_{}_{}{}.h5'.format(dataset_config['CHECKPOINT_NAME'],flags.sample_algo + str(flags.sample_steps), job_label))
-else:
-    fout = flags.generated
+    if(flags.layer_only):#one shot generation
+        shower_steps, shower_algo = 1, 'consis'
+    else:
+        shower_steps, shower_algo = flags.sample_steps, flags.sample_algo
 
-flags.generated = fout
+    out = model.Sample(E, layers = cond_layers, num_steps = shower_steps, cold_noise_scale = cold_noise_scale, sample_algo = shower_algo,
+            debug = flags.debug, sample_offset = flags.sample_offset)
 
-print("Creating " + fout)
-if(not hgcal):
-    with h5.File(fout,"w") as h5f:
-        dset = h5f.create_dataset("showers", data=1000*np.reshape(generated, dataset_config["SHAPE_ORIG"]), compression = 'gzip')
-        dset = h5f.create_dataset("incident_energies", data=1000*energies, compression = 'gzip')
-else:
-    with h5.File(fout,"w") as h5f:
-        print(generated.shape)
-        dset = h5f.create_dataset("showers", data=(1./100.)* np.reshape(generated, dataset_config["SHAPE_ORIG"]), compression = 'gzip')
-        dset = h5f.create_dataset("gen_info", data=energies, compression = 'gzip')
+    if(flags.debug): out, all_gen, x0s = out
+    
+    gen = out.detach().cpu().numpy()
+
+    batch_end = time.time()
+    print("Time to sample %i events is %.3f seconds" % (E.shape[0], batch_end - batch_start))
+
+    #if(flags.debug):
+
+        #gen = out.detach().cpu().numpy()
+        #for j in [0,len(all_gen)//4, len(all_gen)//2, 3*len(all_gen)//4, 9*len(all_gen)//10, len(all_gen)-10, len(all_gen)-5,len(all_gen)-1]:
+            #fout_ex = '{}/{}_{}_norm_voxels_gen_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
+            #make_histogram([all_gen[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                            #num_bins = 40, normalize = True, fname = fout_ex)
+
+            #fout_ex = '{}/{}_{}_norm_voxels_x0_step{}.{}'.format(flags.plot_folder,dataset_config['CHECKPOINT_NAME'],flags.model, j, plt_exts[0])
+            #make_histogram([x0s[j].cpu().reshape(-1), data.reshape(-1)], ['Diffu', 'Geant4'], ['blue', 'black'], xaxis_label = 'Normalized Voxel Energy', 
+                            #num_bins = 40, normalize = True, fname = fout_ex)
+
+    if(gen_layers_ is not None): gen_layers_ = gen_layers_.detach().cpu().numpy()
+    if(len(generated) == 0): 
+        generated = gen
+        energies = E.detach().cpu().numpy()
+        gen_layers = gen_layers_
+    else: 
+        generated = np.concatenate((generated, gen))
+        energies = np.concatenate((energies, E.detach().cpu().numpy()))
+        if(gen_layers_ is not None): gen_layers = np.concatenate((gen_layers, gen_layers_))
+
+    if(generated.shape[0] >= flags.chunk_size):
+        write_out(flags, dataset_config, generated, energies, gen_layers, hgcal,  pre_embed, NN_embed, shower_scale, first_write = first_write)
+        first_write = False
+
+        generated = []
+        energies = []
+        gen_layers_ = None
+
+#final write out
+if(len(generated) > 0):
+    write_out(flags, dataset_config, generated, energies, gen_layers, hgcal,  pre_embed, NN_embed, shower_scale, first_write = first_write)
+
+end_time = time.time()
+print("All done")
+print("Total sampling time %.3f seconds" % (end_time - start_time))
+
+
+
 
 #if(flags.job_idx < 0): make_plots(flags)

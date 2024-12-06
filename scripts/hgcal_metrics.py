@@ -242,12 +242,12 @@ def compute_feats(showers, incident_E, embed):
     #E_phi_center, E_phi_width = utils.ang_center_spread(phi_vals, showers, axis=(2))
 
 
-    #eps = 1e-6
-    #layer_voxels = np.reshape(data,(data.shape[0],data.shape[1],-1))
-    #layer_sparsity = np.sum(layer_voxels > eps, axis = -1) / layer_voxels.shape[2]
+    eps = 1e-6
+    layer_voxels = np.reshape(showers,(showers.shape[0],showers.shape[1],-1))
+    layer_sparsity = np.sum(layer_voxels > eps, axis = -1) / layer_voxels.shape[2]
 
     feats = np.concatenate([incident_E, E_ratio, E_per_layer, E_x_center, E_x_width, E_y_center, E_y_width], axis = -1).astype(np.float32)
-    #feats = np.concatenate([incident_E, E_ratio, E_per_layer], axis = -1).astype(np.float32)
+    #feats = np.concatenate([incident_E, E_ratio, E_per_layer, E_x_center, E_x_width, E_y_center, E_y_width, layer_sparsity], axis = -1).astype(np.float32)
 
     return feats
 
@@ -287,12 +287,18 @@ def compute_metrics(flags):
     shower_embed = dataset_config.get('SHOWER_EMBED', '')
     orig_shape = ('orig' in shower_embed)
     do_NN_embed = ('NN' in shower_embed)
+    pre_embed = ('pre-embed' in shower_embed)
 
     if(torch.cuda.is_available()): device = torch.device('cuda')
     else: device = torch.device('cpu')
 
 
     shape_plot = dataset_config['SHAPE_PAD']
+
+    if(pre_embed): 
+        shape_plot = list(dataset_config['SHAPE_ORIG'])
+        shape_plot.insert(1,1) # padding dim
+        shape_embed = dataset_config['SHAPE_FINAL']
     print("Data shape", shape_plot)
 
     if(not os.path.exists(flags.plot_folder)): os.system("mkdir %s" % flags.plot_folder)
@@ -390,6 +396,7 @@ def compute_metrics(flags):
     for i in range(diffu_showers.shape[1]): feat_names.append("X Width Layer %i" % i)
     for i in range(diffu_showers.shape[1]): feat_names.append("Y Center Layer %i" % i)
     for i in range(diffu_showers.shape[1]): feat_names.append("Y Width Layer %i" % i)
+    for i in range(diffu_showers.shape[1]): feat_names.append("Sparsity Layer %i" % i)
 
     #Separation power
 

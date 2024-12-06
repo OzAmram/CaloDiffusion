@@ -41,8 +41,9 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
         shower = np.ma.divide(shower, (max_deposit*e.reshape(eshape)))
         #regress total deposited energy and fraction in each layer
 
-        layers = np.sum(shower,(2),keepdims=True)
-        totalE = np.sum(shower, (1,2), keepdims = True)
+        axes_indices = list(range(len(shower.shape)))
+        layers = np.sum(shower, tuple(axes_indices[2:]),keepdims=True)
+        totalE = np.sum(shower, tuple(axes_indices[1:]), keepdims = True)
 
         #only logit transform for layers
         layers = np.ma.divide(layers,totalE)
@@ -78,7 +79,7 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
 
 
 def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
-        evt_start = 0, max_cells = None):
+        evt_start = 0, max_cells = None, embed = False, NN_embed = None, shower_scale = 200.):
 
     with h5.File(file_name,"r") as h5f:
         #holdout events for testing
@@ -90,13 +91,15 @@ def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2,
         if(end == -1): end = None 
         print("Event start, stop: ", evt_start, end)
         gen_info = h5f['gen_info'][evt_start:end].astype(np.float32)
-        shower = h5f['showers'][evt_start:end][:,:,:max_cells].astype(np.float32) *100 # sampling fraction is roughly 1/100, multiply by 100 to get rough match to energy scale
+        shower = h5f['showers'][evt_start:end][:,:,:max_cells].astype(np.float32) *200 # sampling fraction is roughly 1/200, multiply by 200 to get rough match to energy scale
 
     e = gen_info[:,0]
     gen_min = np.array(gen_min)
     gen_max = np.array(gen_max)
 
-
+    print(shower.shape)
+    if(embed): shower = NN_embed.enc_batches(torch.Tensor(shower))
+    print(shower.shape)
 
     shower_preprocessed, layerE_preprocessed = preprocess_hgcal_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
     print("preprocessed")
@@ -110,7 +113,7 @@ def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2,
     return shower_preprocessed, gen_preprocessed , layerE_preprocessed
 
 
-def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
+def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0., embed = False, NN_embed = None):
     '''Revert the transformations applied to the training set'''
 
     print('vox', voxels.shape)
@@ -154,8 +157,7 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
 
         data = np.exp(voxels)
 
-    print("Here")
-
+    if(embed): data = NN_embed.dec_batches(data)
 
     #Per layer energy normalization
     if('layer' in showerMap):
@@ -187,7 +189,6 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
         data *= rescale_facs
 
 
-    print("layer")
     data = data*max_deposit*energy.reshape(-1,1,1)
 
 
@@ -206,8 +207,6 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
         data *= rescale
         print('after', np.mean(data))
 
-
-    print("ecut")
 
 
     return data,gen_out
@@ -235,10 +234,10 @@ class Embeder(nn.Module):
 
     #reshape?
     def forward(self, x):
-        #masked_mat = self.mat * self.mask if self.trainable else self.mat
-        masked_mat = self.mat
-        out = torch.einsum("l e n, b c l n -> b c l e", masked_mat, x)
-        out = rearrange(out, " b c l (a r) -> b c l a r",a = self.dim1, r = self.dim2)
+        masked_mat = self.mat * self.mask if self.trainable else self.mat
+        #masked_mat = self.mat
+        out = torch.einsum("l e n, ... l n -> ... l e", masked_mat, x)
+        out = rearrange(out, " ... l (a r) -> ... l a r",a = self.dim1, r = self.dim2)
         return out
 
     def set(self, mat, mask):
@@ -258,10 +257,10 @@ class Decoder(nn.Module):
 
 
     def forward(self, x):
-        #masked_mat = self.mat * self.mask if self.trainable else self.mat
-        masked_mat = self.mat
-        out = rearrange(x, " b c l a r -> b c l (a r)", a = self.dim1, r = self.dim2)
-        out = torch.einsum("l n e, b c l e -> b c l n", masked_mat, out)
+        masked_mat = self.mat * self.mask if self.trainable else self.mat
+        #masked_mat = self.mat
+        out = rearrange(x, " ... l a r -> ... l (a r)", a = self.dim1, r = self.dim2)
+        out = torch.einsum("l n e, ... l e -> ... l n", masked_mat, out)
         return out
 
     def set(self, mat, mask):
@@ -446,10 +445,45 @@ class HGCalConverter(nn.Module):
         if(self.norm): out = (out - self.embed_mean)/self.embed_std
         return out
 
+    def enc_batches(self, x, batch_size = 256):
+
+        data_loader = torchdata.DataLoader(x, batch_size = batch_size, shuffle = False)
+
+        out = None
+
+        for i, shower_batch in enumerate(data_loader):
+            shower_batch = shower_batch.to(self.device)
+
+            batch = self.enc(shower_batch).detach().cpu().numpy()
+            if(i ==0): out = batch
+            else: out = np.concatenate((out, batch))
+
+        return out
+
+
+
+
     def dec(self, x):
         if(self.norm): x = (x * self.embed_std) + self.embed_mean
         out = self.decoder(x)
         return out
+
+
+    def dec_batches(self, x, batch_size = 256):
+
+        data_loader = torchdata.DataLoader(x, batch_size = batch_size, shuffle = False)
+
+        out = None
+
+        for i, shower_batch in enumerate(data_loader):
+            shower_batch = shower_batch.to(self.device)
+
+            batch = self.dec(shower_batch).detach().cpu().numpy()
+            if(i ==0): out = batch
+            else: out = np.concatenate((out, batch))
+
+        return out
+
 
 
     def forward(x):

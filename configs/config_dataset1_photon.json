@@ -2,7 +2,7 @@
 {
     'FILES':['dataset_1_photons_1.hdf5'],
     'EVAL':['dataset_1_photons_2.hdf5'],
-    'BIN_FILE': "/work1/cms_mlsim/oamram/CaloDiffusion/CaloChallenge/code/binning_dataset_1_photons.xml",
+    'BIN_FILE': "../CaloChallenge/code/binning_dataset_1_photons.xml",
     'PART_TYPE' : 'photon',
     'AVG_SHOWER_LOC' : "dataset_1_photons_avg_showers.h5",
     'DATASET_NUM' : 1,
@@ -31,6 +31,7 @@
     'ECUT':0.0000001,
     'logE':True,
     'MAXDEP':3.1,
+    'SHOWER_SCALE': 0.001,
     'CYLINDRICAL': True,
     'SHOWERMAP': 'layer-logit-norm',
     'R_Z_INPUT': True,

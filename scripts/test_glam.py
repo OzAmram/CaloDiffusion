@@ -24,7 +24,7 @@ def save_fig(fname, fig, ax0):
         else: ax0.set_yscale("linear")
         fig.savefig(fname + plt_ext)
 
-def AverageER(data_dict, flags):
+def AverageER_Embed(data_dict, flags):
 
     def _preprocess(data):
         preprocessed = np.transpose(data,(0,4,1,2,3))
@@ -43,9 +43,34 @@ def AverageER(data_dict, flags):
     f_str = "R"
 
     fig,ax0 = PlotRoutine(feed_dict,xlabel=xlabel, ylabel= 'Mean Energy [GeV]', plot_label = flags.plot_label)
-    save_fig('{}/Energy{}'.format(flags.plot_folder,f_str), fig, ax0)
+    save_fig('{}/EnergyR_embed'.format(flags.plot_folder,f_str), fig, ax0)
     return feed_dict
 
+def RadialEnergyHGCal(data_dict, flags, label=''):
+
+    def GetWidth(mean,mean2):
+        width = np.ma.sqrt(mean2-mean**2).filled(0)
+        return width
+
+    r_vals = NN_embed.geom.ring_map[:, :NN_embed.geom.max_ncell]
+
+     
+
+    feed_dict = {}
+    for key in data_dict:
+        nrings = NN_embed.geom.nrings
+        r_bins = np.zeros((data_dict[key].shape[0], nrings))
+        for i in range(nrings):
+            mask = (r_vals == i)
+            r_bins[:,i] = np.sum(data_dict[key] * mask,axis = (1,2,3))
+
+        feed_dict[key] = r_bins
+
+
+    fig,ax0 = PlotRoutine(feed_dict, xlabel='R-bin', ylabel= 'Avg. Energy', logy=True, plot_label = flags.plot_label)
+    save_fig('{}/EnergyR{}'.format(flags.plot_folder, label), fig, ax0)
+
+    return feed_dict
 
 
 if __name__ == '__main__':
@@ -71,6 +96,8 @@ if __name__ == '__main__':
     flags = parser.parse_args()
 
     dataset_config = LoadJson(flags.config)
+
+    if(not os.path.exists(flags.plot_folder)): os.system("mkdir %s" % flags.plot_folder)
 
     print("TRAINING OPTIONS")
     print(dataset_config, flush = True)
@@ -108,7 +135,7 @@ if __name__ == '__main__':
         dataset_config['SHAPE_PAD'],
         emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
         hgcal = hgcal,
-        nevts = 250,
+        nevts = 1000,
         max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
         logE=dataset_config['logE'],
         showerMap = dataset_config['SHOWERMAP'],
@@ -152,7 +179,7 @@ if __name__ == '__main__':
         trainable = dataset_config.get('TRAINABLE_EMBED', False)
         print("Trainable", trainable)
         NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
-        NN_embed.init(norm = False, dataset_num = dataset_num)
+        NN_embed.init(norm = True, dataset_num = dataset_num)
 
     else:
         if(dataset_num == 1):
@@ -162,8 +189,8 @@ if __name__ == '__main__':
             NN_embed = NNConverter(bins = bins).to(device = device)
 
 
-    flags.plot_folder = "../plots/test_glam2/"
     flags.plot_label = ""
+    showers = torch.Tensor(showers).to(device)
     showers = torch.Tensor(showers).to(device)
 
     print("OG")
@@ -174,9 +201,11 @@ if __name__ == '__main__':
 
     data_dict = {}
     data_dict['Geant4 (CMSSW)'] = enc0.detach().cpu().numpy()
+    AverageER_Embed(data_dict, flags)
 
 
-    AverageER(data_dict, flags)
+
+
 
     plt.figure(figsize=(10,10))
     plt.hist(data_dict['Geant4 (CMSSW)'].reshape(-1), bins=100)
@@ -191,6 +220,13 @@ if __name__ == '__main__':
     shower_dec = NN_embed.dec(enc0)
     diff = torch.mean(showers[:,:,:,:1000] - shower_dec[:,:,:,:1000])
     print("Avg. Diff " + str(diff))
+
+    data_dict = {}
+    data_dict['Geant4 (CMSSW)'] = showers.detach().cpu().numpy()
+    data_dict['HGCaloDiffusion'] = shower_dec.detach().cpu().numpy()
+    RadialEnergyHGCal(data_dict, flags, '_cmp')
+
+
 
 
     dummy_showers = torch.zeros_like(showers)
@@ -256,5 +292,36 @@ if __name__ == '__main__':
     plt.yscale("log")
     plt.hist(enc_mat.reshape(-1), bins=100)
     plt.savefig(flags.plot_folder + "enc_mat_hist.png")
+
+    avg_shower_before = np.squeeze(np.mean(showers.detach().cpu().numpy(), axis = 0))
+    avg_shower_after = np.squeeze(np.mean(shower_dec.detach().cpu().numpy(), axis = 0))
+
+    avg_shower_ratio = avg_shower_after / avg_shower_before
+
+    #eps = 1e-4
+    #avg_shower_ratio [ (avg_shower_before < eps) | (avg_shower_after < eps)] = 0.
+
+    print(avg_shower_before.shape)
+
+    shower0_before = np.squeeze(showers.detach().cpu().numpy()[0])
+    shower0_after = np.squeeze(shower_dec.detach().cpu().numpy()[0])
+
+    geo = NN_embed.geom
+
+    layers = [3, 10, 24]
+
+    vmin = 1e-8
+
+    for ilay in layers:
+        print(ilay)
+
+
+        ncells = int(round(geo.ncells[ilay]))
+        plot_shower_hex(geo.xmap[ilay][:ncells], geo.ymap[ilay][:ncells], avg_shower_before[ilay][:ncells] , log_scale=False, nrings = geo.nrings, fout = flags.plot_folder + "avg_shower_lay%i_before.png" % (ilay))
+        plot_shower_hex(geo.xmap[ilay][:ncells], geo.ymap[ilay][:ncells], avg_shower_after[ilay][:ncells] , log_scale=False, nrings = geo.nrings, fout = flags.plot_folder + "avg_shower_lay%i_after.png" % (ilay))
+        plot_shower_hex(geo.xmap[ilay][:ncells], geo.ymap[ilay][:ncells], avg_shower_ratio[ilay][:ncells] , log_scale=False, nrings = geo.nrings, fout = flags.plot_folder + "avg_shower_lay%i_ratio.png" % (ilay))
+
+        plot_shower_hex(geo.xmap[ilay][:ncells], geo.ymap[ilay][:ncells], shower0_before[ilay][:ncells] , log_scale=False, nrings = geo.nrings, fout = flags.plot_folder + "shower_lay%i_before.png" % (ilay))
+        plot_shower_hex(geo.xmap[ilay][:ncells], geo.ymap[ilay][:ncells], shower0_after[ilay][:ncells] , log_scale=False, nrings = geo.nrings, fout = flags.plot_folder + "shower_lay%i_after.png" % (ilay))
 
 

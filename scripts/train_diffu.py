@@ -60,6 +60,7 @@ if __name__ == '__main__':
     print('pre_embed', pre_embed)
     layer_norm = 'layer' in dataset_config['SHOWERMAP']
     max_cells = dataset_config.get('MAX_CELLS', None)
+    shower_scale = dataset_config.get('SHOWERSCALE', 200.)
 
     train_files = []
     val_files = []
@@ -78,8 +79,10 @@ if __name__ == '__main__':
         NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
         NN_embed.init(norm = pre_embed, dataset_num = dataset_num)
 
+    files = dataset_config['FILES']
+    val_file_list = dataset_config.get('VAL_FILES', [])
 
-    for i, dataset in enumerate(dataset_config['FILES'] + dataset_config['VAL_FILES']):
+    for i, dataset in enumerate(files + val_file_list):
         tag = ".npz"
         if(flags.nevts > 0): tag = ".n%i.npz" % flags.nevts
         path_clean = os.path.join(flags.data_folder,dataset + tag)
@@ -94,11 +97,14 @@ if __name__ == '__main__':
                 max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
                 logE=dataset_config['logE'],
                 showerMap = dataset_config['SHOWERMAP'],
+                shower_scale = shower_scale,
                 max_cells = max_cells,
 
                 nholdout = nholdout if (i == len(dataset_config['FILES']) -1 ) else 0,
                 dataset_num  = dataset_num,
                 orig_shape = orig_shape,
+                embed = pre_embed,
+                NN_embed = NN_embed,
             )
 
             layers = np.reshape(layers, (layers.shape[0], -1))
@@ -116,9 +122,6 @@ if __name__ == '__main__':
         else: val_files.append(path_clean) 
 
 
-    dataset_train = Dataset(train_files)
-    dataset_val = Dataset(val_files)
-        
     avg_showers = std_showers = E_bins = None
     if(cold_diffu):
         f_avg_shower = h5.File(dataset_config["AVG_SHOWER_LOC"])
@@ -127,12 +130,15 @@ if __name__ == '__main__':
         std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
         E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
 
-
-
     dshape = dataset_config['SHAPE_PAD']
 
+    dataset_train = Dataset(train_files)
     loader_train  = torchdata.DataLoader(dataset_train, batch_size = batch_size, num_workers=flags.num_workers, pin_memory = True)
-    loader_val  = torchdata.DataLoader(dataset_val, batch_size = batch_size, num_workers=flags.num_workers, pin_memory = True)
+
+    loader_val = None
+    if(len(val_files) > 0):
+        dataset_val = Dataset(val_files)
+        loader_val  = torchdata.DataLoader(dataset_val, batch_size = batch_size, num_workers=flags.num_workers, pin_memory = True)
 
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
     if not os.path.exists(checkpoint_folder):
@@ -191,7 +197,8 @@ if __name__ == '__main__':
             val_losses = np.concatenate((val_losses, [0]*(num_epochs - len(val_losses))))
 
     #Freeze validation noise levels so stable performance
-    val_rnd = torch.randn( (len(loader_val),batch_size,), device=device)
+    if(loader_val is not None):
+        val_rnd = torch.randn( (len(loader_val),batch_size,), device=device)
 
     #training loop
     for epoch in range(start_epoch, num_epochs):
@@ -207,10 +214,6 @@ if __name__ == '__main__':
             data = data.to(device = device)
             E = E.to(device = device)
             layers = layers.to(device = device)
-
-
-            if(pre_embed):
-                data = NN_embed.enc(data)
 
             noise = torch.randn_like(data)
 
@@ -244,9 +247,6 @@ if __name__ == '__main__':
                 vlayers = vlayers.to(device = device)
 
                 rnd_normal = val_rnd[i].to(device = device)
-
-                if(pre_embed):
-                    vdata = NN_embed.enc(vdata)
 
                 noise = torch.randn_like(vdata)
                 if(cold_diffu): noise = model.gen_cold_image(vE, cold_noise_scale, noise)

@@ -89,9 +89,11 @@ def split_data(data,nevts,frac=0.8):
     return train_data,test_data
 
 line_style = {
+    'Geant4':'dotted',
     'Geant4 (CMSSW)':'dotted',
 
     'HGCaloDiffusion' : '-',
+    'CaloDiffusion' : '-',
     'Avg Shower' : '-',
     'CaloDiffusion 400 Steps' : '-',
     'CaloDiffusion 200 Steps' : '-',
@@ -101,14 +103,15 @@ line_style = {
 }
 
 colors = {
+    'Geant4':'black',
     'Geant4 (CMSSW)':'black',
     'Avg Shower': 'blue',
     'HGCaloDiffusion': 'blue',
+    'CaloDiffusion': 'blue',
     'CaloDiffusion 400 Steps': 'blue',
     'CaloDiffusion 200 Steps': 'green',
     'CaloDiffusion 100 Steps': 'purple',
     'CaloDiffusion 50 Steps': 'red',
-
 }
 
 name_translate={
@@ -190,7 +193,9 @@ def ang_center_spread(matrix, energies, axis=-1):
 
 
 def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4 (CMSSW)', plot_label = "", no_mean = False, cms_style=False):
-    assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
+    if(reference_name not in feed_dict.keys()):
+        reference_name = list(feed_dict.keys())[0]
+        print("taking %s as ref" % reference_name)
     
     fig,gs = SetGrid() 
     ax0 = plt.subplot(gs[0])
@@ -204,6 +209,10 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4 
 
 
     for ip,plot in enumerate(feed_dict.keys()):
+        color = colors.get(plot, 'blue')
+        linestyle = line_style.get(plot, '-')
+
+
         if(no_mean): 
             d = feed_dict[plot]
             ref = feed_dict[reference_name]
@@ -211,9 +220,9 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4 
             d = np.mean(feed_dict[plot], 0)
             ref = np.mean(feed_dict[reference_name], 0)
         if 'steps' in plot or 'r=' in plot:
-            ax0.plot(d,label=plot,marker=line_style[plot],color=colors[plot],lw=0)
+            ax0.plot(d,label=plot,marker=linestyle,color=color,lw=0)
         else:
-            ax0.plot(d,label=plot,linestyle=line_style[plot],color=colors[plot])
+            ax0.plot(d,label=plot,linestyle=linestyle, color=color)
         if(len(plot_label) > 0): ax0.set_title(plot_label, fontsize = 20, loc = 'right', style = 'italic')
         if reference_name!=plot:
 
@@ -222,15 +231,14 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4 
 
             eps = 1e-8
             ratio = np.divide(ref, d + eps)
-            #ax1.plot(ratio,color=colors[plot],marker='o',ms=10,lw=0,markerfacecolor='none',markeredgewidth=3)
 
             plt.axhline(y=1.0, color='black', linestyle='--',linewidth=2)
 
             
             if 'steps' in plot or 'r=' in plot:
-                ax1.plot(ratio,color=colors[plot],markeredgewidth=4,marker=line_style[plot],lw=0)
+                ax1.plot(ratio,color=color,markeredgewidth=4,marker=linestyle,lw=0)
             else:
-                ax1.plot(ratio,color=colors[plot],linestyle=line_style[plot])
+                ax1.plot(ratio,color=color,linestyle=linestyle)
                 
         
     FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0)
@@ -324,7 +332,9 @@ def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins 
 
 def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4 (CMSSW)',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, 
         plot_label = "", leg_font = 24, cms_style=False):
-    assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
+    if(reference_name not in feed_dict.keys()):
+        reference_name = list(feed_dict.keys())[0]
+        print("taking %s as ref" % reference_name)
     
     fig,gs = SetGrid(ratio) 
     ax0 = plt.subplot(gs[0])
@@ -343,6 +353,9 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
     reference_hist,_ = np.histogram(feed_dict[reference_name],bins=binning,density=True)
     
     for ip,plot in enumerate(reversed(list(feed_dict.keys()))):
+        color = colors.get(plot, 'blue')
+        linestyle = line_style.get(plot, '-')
+
         if 'steps' in plot or 'r=' in plot:
             dist,_ = np.histogram(feed_dict[plot],bins=binning,density=normalize)
             ax0.plot(xaxis,dist, histtype='stepfilled', facecolor = 'silver',lw =2,label=plot, alpha = 1.0)
@@ -350,7 +363,7 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
         elif( 'Geant' in plot):
             dist,_,_ = ax0.hist(feed_dict[plot], bins = binning, label = plot, density = True, histtype='stepfilled', facecolor = 'silver',lw =2, alpha = 1.0)
         else:
-            dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,linestyle=line_style[plot],color=colors[plot],density=True,histtype="step", lw =4 )
+            dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,linestyle=linestyle, color=color, density=True,histtype="step", lw =4 )
             
         if(len(plot_label) > 0): ax0.set_title(plot_label, fontsize = 20, loc = 'right', style = 'italic')
 
@@ -358,12 +371,12 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
             eps = 1e-8
             h_ratio = np.divide(dist,reference_hist + eps)
             if 'steps' in plot or 'r=' in plot:
-                ax1.plot(xaxis,h_ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=4)
+                ax1.plot(xaxis,h_ratio,color=color, marker=linestyle,ms=10,lw=0,markeredgewidth=4)
             else:
                 if(len(binning) > 20): # draw ratio as line
-                    ax1.plot(xaxis, h_ratio,color=colors[plot],linestyle='-', lw = 4)
+                    ax1.plot(xaxis, h_ratio,color=color,linestyle='-', lw = 4)
                 else:  #draw as markers
-                    ax1.plot(xaxis,h_ratio,color=colors[plot],marker='o',ms=10,lw=0)
+                    ax1.plot(xaxis,h_ratio,color=color, marker='o',ms=10,lw=0)
             sep_power = _separation_power(dist, reference_hist, binning)
             print("Separation power for hist '%s' is %.4f" % (xlabel, sep_power))
         
@@ -978,42 +991,8 @@ def apply_in_batches(model, data, batch_size = 128, device = 'cpu'):
         else: out = torch.cat([out, out_.detach().cpu()], axis = 0)
     return out
 
-
-if __name__ == "__main__":
-    #Preprocessing of the input files: conversion to cartesian coordinates + zero-padded mask generation
-    file_path = '/wclustre/cms/denoise/CaloChallenge/dataset_2_2.hdf5'
-    #with h5.File(file_path,"r") as h5f:
-    #    e = h5f['incident_energies'][:]
-    #    showers = h5f['showers'][:]
-    ##shape = [-1,45,50,18,1]
-    ##nx=32
-    ##ny=32
-    #
-    #shape = [-1,45,16,9,1]
-
-    #nx = 12
-    #ny = 12
-
-    #showers = showers.reshape((-1,shape[2],shape[3]))
-    #cart_data = []
-    #for ish,shower in enumerate(showers):
-    #    if ish%(10000)==0:print(ish)
-    #    cart_data.append(polar_to_cart(shower,nr=shape[3],nalpha=shape[2],nx=nx,ny=ny))
-
-    #cart_data = np.reshape(cart_data,(-1,45,nx,ny))
-    #with h5.File('/wclustre/cms/denoise/CaloChallenge/dataset_2_2_cart.hdf5',"w") as h5f:
-    #    dset = h5f.create_dataset("showers", data=cart_data)
-    #    dset = h5f.create_dataset("incident_energies", data=e)
-
-
-    file_path = '/wclustre/cms/denoise/CaloChallenge/dataset_2_1_cart.hdf5'
-    ##file_path='/wclustre/cms/denoise/CaloChallenge/dataset_1_photons_1.hdf5'
-    with h5.File(file_path,"r") as h5f:
-        showers = h5f['showers'][:]
-        energies = h5f['incident_energies'][:]
-    mask = np.sum(showers,0)==0
-    mask_file = file_path.replace('.hdf5','_mask.hdf5')
-    print("Creating mask file %s " % mask_file)
-    with h5.File(mask_file,"w") as h5f:
-        dset = h5f.create_dataset("mask", data=mask)
+def append_h5(f, name, data):
+    prev_size = f[name].shape[0]
+    f[name].resize(( prev_size + data.shape[0]), axis=0)
+    f[name][prev_size:] = data
     

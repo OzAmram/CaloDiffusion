@@ -27,6 +27,7 @@
     'logE':True,
     'MAXDEP':2,
     'CYLINDRICAL': True,
+    'SHOWER_SCALE': 0.001,
     'SHOWERMAP': 'logit-norm',
     'R_Z_INPUT': True,
     'BETA_MAX' : 0.02,

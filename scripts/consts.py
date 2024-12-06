@@ -185,6 +185,23 @@ hgcal_william_v2_params = {
 }
 
 
+hgcal_william_embed_params = {
+'logit_mean' : -17.3442,
+'logit_std' : 3.26085,
+'logit_min': -13.81551,
+'logit_max' :  0.2909,
+
+'embed_mean': 0.0,
+'embed_std':  1.0,
+
+'totalE_mean' : 1.1076,
+'totalE_std' : 0.03535, 
+'layers_mean' : -4.5836,
+'layers_std' :  2.98382,
+
+}
+
+
 
 dataset_params = {
         0: dataset0_params, 
@@ -196,4 +213,5 @@ dataset_params = {
 
         100: hgcal_william_v1_params, #HGCal
         101: hgcal_william_v2_params, #HGCal
+        111: hgcal_william_embed_params, #HGCal, embedding first
         }

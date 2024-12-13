@@ -128,6 +128,7 @@ class Diffusion(torch.nn.Module, ABC):
     ):
         return super().load_state_dict(state_dict, strict)
 
+
     def generate(
         self,
         data_loader: utils.DataLoader,

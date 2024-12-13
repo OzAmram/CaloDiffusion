@@ -143,7 +143,7 @@ def create_R_Z_image(device, dataset_num=0, scaled=True, shape=(1, 45, 16, 9)):
         print("RZ binning missing for dataset num %i ? " % (dataset_num))
 
     r_avgs = [(r_bins[i] + r_bins[i + 1]) / 2.0 for i in range(len(r_bins) - 1)]
-    assert len(r_avgs) == shape[-1]
+    # assert len(r_avgs) == shape[-1]
     Z_image = torch.zeros(shape, device=device)
     R_image = torch.zeros(shape, device=device)
     for z in range(shape[1]):

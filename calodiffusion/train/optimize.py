@@ -1,18 +1,18 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Iterable, Literal, Sequence, Union
 
 import numpy as np
 import torch
 import optuna
-import jetnet
 import json
 import os
 
 from datetime import datetime
 from calodiffusion.train import Train
 from calodiffusion.utils import utils
-import calodiffusion.utils.HighLevelFeatures as HLF
+from calodiffusion.train import evaluate
+
 
 class Optimize: 
     """
@@ -47,15 +47,19 @@ class Optimize:
             "RESTART_T": Range allowed for T_MIN_{i}. T_MAX_{i} is decided by taking t_min_i as the bottom of the range and t_min_i + {top of the restart_t range} as the top
         }
     """
-    def __init__(self, flags, trainer: type[Train], objectives: list[Literal["COUNT", "FPD"]]) -> None:
+    def __init__(self, flags, trainer: type[Train], objectives: Literal["COUNT", "FPD", "CNN"]) -> None:
 
         implemented_objectives: dict[str, type[Objective]] = {
             "COUNT": Count(), 
-            "FPD": FPD()
+            "FPD": FPD(), 
+            "CNN": CNNMetric()
         }
         self.flags = flags
         self.trainer = trainer
+
         self.objectives = []
+        if isinstance(objectives, str):
+            objectives = [objectives]
         for objective in objectives: 
             self.objectives.append(implemented_objectives[objective])
 
@@ -177,6 +181,7 @@ class Optimize:
         return config
 
     def eval(self, model, eval_data, config) -> Sequence: 
+        config['flags'] = self.flags
         return [obj(model, eval_data, config) for obj in self.objectives]
 
     def objective(self, trial) -> tuple: 
@@ -299,64 +304,32 @@ class FPD(Objective):
         return 10e8
 
     @staticmethod
-    def pre_process(energies, hlf_class, label): 
-        """ takes hdf5_file, extracts high-level features, appends label, returns array """
-        E_layer = []
-        for layer_id in hlf_class.GetElayers():
-            E_layer.append(hlf_class.GetElayers()[layer_id].reshape(-1, 1))
-        EC_etas = []
-        EC_phis = []
-        Width_etas = []
-        Width_phis = []
-        for layer_id in hlf_class.layersBinnedInAlpha:
-            EC_etas.append(hlf_class.GetECEtas()[layer_id].reshape(-1, 1))
-            EC_phis.append(hlf_class.GetECPhis()[layer_id].reshape(-1, 1))
-            Width_etas.append(hlf_class.GetWidthEtas()[layer_id].reshape(-1, 1))
-            Width_phis.append(hlf_class.GetWidthPhis()[layer_id].reshape(-1, 1))
-        E_layer = np.concatenate(E_layer, axis=1)
-        EC_etas = np.concatenate(EC_etas, axis=1)
-        EC_phis = np.concatenate(EC_phis, axis=1)
-        Width_etas = np.concatenate(Width_etas, axis=1)
-        Width_phis = np.concatenate(Width_phis, axis=1)
-        ret = np.concatenate([np.log10(energies), np.log10(E_layer+1e-8), EC_etas/1e2, EC_phis/1e2,
-                            Width_etas/1e2, Width_phis/1e2, label*np.ones_like(energies)], axis=1)
-        return ret
-
-    @staticmethod
     def __call__(trained_model, eval_data, kwargs) -> float:
 
         binning_dataset = trained_model.config.get("BIN_FILE", "binning_dataset.xml")
         particle = trained_model.config.get("PART_TYPE", "photon")
 
-        hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
-        reference_hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
-        reference_shower = []
-        reference_energy = []
-        for energy, _, data in eval_data: 
-            reference_shower.append(data)
-            reference_energy.append(energy)
-
-        reference_shower = np.concatenate(reference_shower)
-        reference_energy = np.concatenate(reference_energy)
-
-        generated, energies = trained_model.generate(
-            data_loader=eval_data, 
-            sample_steps=trained_model.config.get("NSTEPS"), 
-            sample_offset=0
-        )
-
-        hlf.CalculateFeatures(generated)
-        reference_hlf.CalculateFeatures(reference_shower)
-        
-        source_array = FPD.pre_process(energies, hlf, 0.)[:, :-1]
-        reference_array = FPD.pre_process(reference_energy, hlf, 1.)[:, :-1]
+        fpd_calc = evaluate.FDP(binning_dataset, particle)
         
         try: 
-            fpd, _ = jetnet.evaluation.fpd(
-                np.nan_to_num(source_array), np.nan_to_num(reference_array)
-            )
-        except ValueError as err:
-            print(err)
+            return fpd_calc(trained_model, eval_data, kwargs)
+        except evaluate.FDPCalculationError:
             return FPD.failure()
-
-        return fpd
+        
+class CNNMetric(Objective):
+    @staticmethod
+    def failure(): 
+        return 1 
+    
+    @staticmethod
+    def direction() -> Literal['minimize', 'maximize']:
+        return "maximize"
+    
+    @staticmethod
+    def __call__(trained_model, eval_data, kwargs):
+        cnn_method = evaluate.CNNCompare(
+            trained_model=trained_model, 
+            config= kwargs, 
+            flags = kwargs['flags']
+        )
+        return cnn_method(eval_data)

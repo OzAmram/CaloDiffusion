@@ -11,7 +11,7 @@ def argparse():
     parser.add_argument("-c", "--config", help="")
     parser.add_argument("-o", "--objectives", default=["COUNT", "FPD"])
     parser.add_argument("--name", dest='study_name', default=f"search_study_{datetime.timestamp(datetime.now())}")
-    parser.add_argument("--n_trials", type=int, default=30, help='Number of Trials to run.')
+    parser.add_argument("--n-trials", type=int, default=30, help='Number of Trials to run.')
     parser.add_argument(
         "--data-folder", default="./data/", help="Folder containing data and MC files"
     )

@@ -39,7 +39,7 @@ class XMLHandler:
                 for layer in particle:
                     self.ReadPolarCoordinates(layer)
         if not found_particle:
-            raise ValueError('Particle {} not found in {}'.format(particle_name, filename))
+            raise ValueError(f'Particle {particle_name} not found in {filename}, looking for {particle.attrib["name"]}')
 
         self.totalBins = 0
         self.bin_number = []

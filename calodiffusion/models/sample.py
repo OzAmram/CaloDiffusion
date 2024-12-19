@@ -1005,3 +1005,75 @@ class Consistency(Sample):
         )
         model.loss_function.update_step(orig_num_steps)
         return x, xs, x0s
+
+
+class BespokeSampler(torch.nn.Module): 
+    def __init__(self, config): 
+        self.config = config
+        self.n_steps = ""
+
+        self.init_sampler = "" # Choose from midpoint or euler
+        # parameterize with Equation 12 
+
+    def forward(self): 
+        pass 
+
+class BespokeNonStationary(Sample): 
+    def __init__(self, config):
+        "Reference https://arxiv.org/abs/2403.01329"
+        super().__init__(config)
+
+        self.sampler = BespokeSampler(self.sample_config)
+
+        self.model = None
+        self.energy = None
+        self.layers = None
+
+    def load_sampler(self): 
+        if self.sample_config.get("train_sampler", False): 
+            self.optimize_sampler()
+        else: 
+            self.load_sampler()
+
+
+    def optimize_sampler(self): 
+
+        def loss_function():
+            "" # Equation 13 
+
+        def training_loop(): 
+            "" # Algorithm 2
+
+        def not_converaged_condition(): 
+            return False # Your defintion
+        
+        max_iter = 0 # Comes from the config
+        
+        for _ in range(max_iter):
+            if not_converaged_condition(): 
+                training_loop()
+
+        pass
+
+    def model_fn(self, x, sigma): 
+        return self.model.denoise(x=x, sigma=sigma, E=self.energy, layers=self.layers)
+    
+    def __call__(self, model, start, energy, layers, num_steps, sample_offset, debug):
+
+        self.model = model
+        self.energy = energy
+        self.layers = layers
+
+        sampler_params = self.sampler.parameters()
+        if sampler_params != num_steps: 
+            raise ValueError("Sampler was not trained for the correct number of steps. Please check your sampler configurations.")
+        parameterization = [][sample_offset:] # Tuple of (a_i, b_i), from trained sampler_params
+        noise_schedule = [][sample_offset:] # Any monotonically increasing noise schedule, from 0 to 1. 
+        U = []
+
+        x = start
+        for i, (a,b), t in enumerate(zip(parameterization, noise_schedule)):
+            U.append(self.model_fn(x, t))
+            x = start*a + U[i]*b
+        
+        return x

@@ -72,6 +72,11 @@ shower_embed = dataset_config.get('SHOWER_EMBED', '')
 orig_shape = ('orig' in shower_embed)
 do_NN_embed = ('NN' in shower_embed)
 
+if 'BIN_FILE' in dataset_config.keys(): binning_file = dataset_config['BIN_FILE']
+else: 
+    if(dataset_num == 1): binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
+    elif(dataset_num == 0):  binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
+    else: binning_file = None
 if(not os.path.exists(flags.plot_folder)): 
     print("Creating plot directory " + flags.plot_folder)
     os.system("mkdir " + flags.plot_folder)
@@ -103,6 +108,7 @@ if flags.sample:
             dataset_config['SHAPE_PAD'],
             emax = dataset_config['EMAX'],emin = dataset_config['EMIN'],
             nevts = flags.nevts,
+            binning_file=binning_file,
             max_deposit=dataset_config['MAXDEP'], #noise can generate more deposited energy than generated
             logE=dataset_config['logE'],
             showerMap = dataset_config['SHOWERMAP'],
@@ -147,10 +153,8 @@ if flags.sample:
     NN_embed = None
     if('NN' in shower_embed):
         if(dataset_num == 1):
-            binning_file = "../CaloChallenge/code/binning_dataset_1_photons.xml"
             bins = XMLHandler("photon", binning_file)
         else: 
-            binning_file = "../CaloChallenge/code/binning_dataset_1_pions.xml"
             bins = XMLHandler("pion", binning_file)
 
         NN_embed = NNConverter(bins = bins).to(device = device)
@@ -290,6 +294,7 @@ if flags.sample:
                                            max_deposit=dataset_config['MAXDEP'],
                                            emax = dataset_config['EMAX'],
                                            emin = dataset_config['EMIN'],
+                                           binning_file=binning_file,
                                            showerMap = dataset_config['SHOWERMAP'],
                                            dataset_num  = dataset_num,
                                            orig_shape = orig_shape,

@@ -1006,25 +1006,41 @@ class Consistency(Sample):
         model.loss_function.update_step(orig_num_steps)
         return x, xs, x0s
 
-
-class BespokeSampler(torch.nn.Module): 
-    def __init__(self, config): 
-        self.config = config
-        self.n_steps = ""
-
-        self.init_sampler = "" # Choose from midpoint or euler
-        # parameterize with Equation 12 
-
-    def forward(self): 
-        pass 
-
 class BespokeNonStationary(Sample): 
     def __init__(self, config):
         "Reference https://arxiv.org/abs/2403.01329"
         super().__init__(config)
 
-        self.sampler = BespokeSampler(self.sample_config)
+        class BespokeSampler(torch.nn.Module): 
+            def __init__(self, config, n_steps):
+                super().__init__()
+                self.config = config
+                self.n_steps = n_steps
+                # parameterize with Equation 12 
+                # initialize theta, a = 1 and b is deterimined by using midpoint or euler
+                self.theta = torch.zeros(2, self.n_steps)
+                self.theta[0, 0] = 1
+                self.theta[0, 1] = self.midpoint_b() if self.config.get("sampler_init") == "midpoint" else self.euler_b()
 
+            def midpoint_b(
+                self
+            ): 
+                return 0.5 * (-h - eta_h).expm1().neg() * (1 / r)
+
+
+            def euler_b(self): 
+                d_cur = (self.x_hat - self.denoised) / self.t_hat
+                h = self.t_next - self.t_hat
+                return h * d_cur
+
+            def forward(self, x): 
+                pass 
+
+            def update_theta(self, step):
+                self.theta -= step
+
+        self.sampler = BespokeSampler(self.sample_config)
+        self.lr = self.config.get("")
         self.model = None
         self.energy = None
         self.layers = None
@@ -1038,22 +1054,29 @@ class BespokeNonStationary(Sample):
 
     def optimize_sampler(self): 
 
-        def loss_function():
-            "" # Equation 13 
+        def loss_function(x, x_prime):
+            mse = np.mean((x - x_prime) ** 2) 
+            if(mse == 0):  
+                return 100
+            max_val = np.max(x, axis=-1)
+            psnr = 20 * np.log10(max_val / np.sqrt(mse)) 
+            return psnr 
 
-        def training_loop(): 
-            "" # Algorithm 2
+        def training_step(): 
+            x = "" # Get the initializer
+            x_prime = self.sampler(x)
+            self.sampler.update_theta(self.lr*loss_function(x, x_prime))
 
         def not_converaged_condition(): 
             return False # Your defintion
         
-        max_iter = 0 # Comes from the config
-        
+        max_iter = self.config.get() # Comes from the config
+        not_converaged = False
         for _ in range(max_iter):
-            if not_converaged_condition(): 
-                training_loop()
+            if not_converaged: 
+                training_step()
+                not_converaged = not_converaged_condition()
 
-        pass
 
     def model_fn(self, x, sigma): 
         return self.model.denoise(x=x, sigma=sigma, E=self.energy, layers=self.layers)
@@ -1064,7 +1087,7 @@ class BespokeNonStationary(Sample):
         self.energy = energy
         self.layers = layers
 
-        sampler_params = self.sampler.parameters()
+        sampler_params = self.sampler.theta()
         if sampler_params != num_steps: 
             raise ValueError("Sampler was not trained for the correct number of steps. Please check your sampler configurations.")
         parameterization = [][sample_offset:] # Tuple of (a_i, b_i), from trained sampler_params
@@ -1074,6 +1097,9 @@ class BespokeNonStationary(Sample):
         x = start
         for i, (a,b), t in enumerate(zip(parameterization, noise_schedule)):
             U.append(self.model_fn(x, t))
-            x = start*a + U[i]*b
+            x = x * a + U[i] * b
+
+        if debug: 
+            return x, U
         
         return x

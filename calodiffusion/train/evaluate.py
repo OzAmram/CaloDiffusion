@@ -1,6 +1,6 @@
 """
 
-    General evaluation metrics for a fully trained model (not losses)
+General evaluation metrics for a fully trained model (not losses)
 
 """
 from typing import Literal

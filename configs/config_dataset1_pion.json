@@ -32,6 +32,7 @@
     'logE':True,
     'MAXDEP':3.1,
     'CYLINDRICAL': True,
+    'SHOWER_SCALE': 0.001,
     'SHOWERMAP': 'layer-logit-norm',
     'R_Z_INPUT': True,
     'PHI_INPUT': True,

@@ -81,6 +81,18 @@ def make_zero_conv(dim, cylindrical=True):
     #Make a 'zero convolution' layer
     return zero_module(CylindricalConv(dim, dim, kernel_size=1, padding=0))
 
+
+class addSigmoid(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+        self.sig = nn.Sigmoid()
+
+    def forward(self, x, *args, **kwargs):
+        out = self.fn(x, *args, **kwargs)
+        return self.sig(out)
+
+
 class Residual(nn.Module):
     def __init__(self, fn):
         super().__init__()
@@ -321,6 +333,7 @@ class ResNet(nn.Module):
             num_layers = 3, 
             hidden_dim = 256,
             cond_emb_dim = 128,
+            cond_size = 1,
             ):
 
         super().__init__()
@@ -337,7 +350,7 @@ class ResNet(nn.Module):
 
         cond_layers = []
         #if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
-        cond_layers = [nn.Linear(1, half_cond_dim//2),nn.GELU()]
+        cond_layers = [nn.Linear(cond_size, half_cond_dim//2),nn.GELU()]
         cond_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
 
 
@@ -449,6 +462,7 @@ class CondUnet(nn.Module):
         time_embed = True,
         cond_embed = True,
         cond_size = 1,
+        no_time = False
     ):
         super().__init__()
 
@@ -456,6 +470,8 @@ class CondUnet(nn.Module):
         self.channels = channels
         self.block_attn = block_attn
         self.mid_attn = mid_attn
+
+        self.no_time = no_time
 
 
 
@@ -475,19 +491,21 @@ class CondUnet(nn.Module):
         half_cond_dim = cond_dim // 2
 
         time_layers = []
-        if(time_embed): time_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
-        else: time_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU() ]
-        time_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
+        if(not self.no_time):
+            if(time_embed): time_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
+            else: time_layers = [nn.Unflatten(-1, (-1, 1)), nn.Linear(1, half_cond_dim//2),nn.GELU() ]
+            time_layers += [ nn.Linear(half_cond_dim//2, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
+
+            self.time_mlp = nn.Sequential(*time_layers)
 
 
+        last_cond_size = half_cond_dim if not self.no_time else cond_dim
         cond_layers = []
         cond_hidden_size = max(cond_size, half_cond_dim//2)
         if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
         else: cond_layers = [nn.Linear(cond_size, cond_hidden_size),nn.GELU()]
-        cond_layers += [ nn.Linear(cond_hidden_size, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, half_cond_dim)]
+        cond_layers += [ nn.Linear(cond_hidden_size, half_cond_dim), nn.GELU(), nn.Linear(half_cond_dim, last_cond_size)]
 
-
-        self.time_mlp = nn.Sequential(*time_layers)
         self.cond_mlp = nn.Sequential(*cond_layers)
 
 
@@ -552,9 +570,11 @@ class CondUnet(nn.Module):
 
         x = self.init_conv(x)
 
-        t = self.time_mlp(time)
         c = self.cond_mlp(cond)
-        conditions = torch.cat([t,c], axis = -1)
+        if(not self.no_time):
+            t = self.time_mlp(time)
+            conditions = torch.cat([t,c], axis = -1)
+        else: conditions = c
         
         h = []
 

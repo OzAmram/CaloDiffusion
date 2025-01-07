@@ -813,7 +813,7 @@ def sample_consis(model, x, sigmas = None, extra_args = None, sigma_min = 0.002)
     return x,xs,x0
 
 @torch.no_grad()
-def sample_dd(model, x, num_steps, time_steps = None, sample_offset = 0, sample_algo = 'ddpm', debug = False, extra_args = None):
+def sample_dd(model, x, num_steps, time_steps = None, sample_offset = 0, sample_algo = 'ddpm', debug = False, extra_args = None, one_step = False):
     #Ddpm or ddim sampler
     #Using formalism / notation of EDM paper
 
@@ -840,8 +840,10 @@ def sample_dd(model, x, num_steps, time_steps = None, sample_offset = 0, sample_
     if(sample_offset >0):
         time_steps = time_steps[sample_offset:]
 
-    sigma_start = sqrt_one_minus_alphas_cumprod[time_steps[0]] / sqrt_alphas_cumprod[time_steps[0]]
-    x = x * sigma_start
+
+    if(not one_step):
+        sigma_start = sqrt_one_minus_alphas_cumprod[time_steps[0]] / sqrt_alphas_cumprod[time_steps[0]]
+        x = x * sigma_start
 
     xs  = []
     x0s = []
@@ -885,5 +887,6 @@ def sample_dd(model, x, num_steps, time_steps = None, sample_offset = 0, sample_
 
         x0s.append(x0_pred)
         xs.append(x)
+
 
     return x,xs,x0s

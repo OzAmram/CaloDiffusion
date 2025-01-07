@@ -60,6 +60,7 @@ if __name__ == '__main__':
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     parser.add_argument('--freeze_baseline_model', action='store_true', default=False,help='Only optimize control net, leaving base diffusion model frozen')
+    parser.add_argument('--control_only', action='store_true', default=False,help='Only optimize control net, leaving base diffusion model frozen')
     parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
     parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
@@ -182,26 +183,28 @@ if __name__ == '__main__':
     controlnet_model.model.ups = None
 
 
-    cond_dist_model = ControlledUNet(diffu_model, controlnet_model)
-    cond_dist_model.train()
+    model = ControlledUNet(diffu_model, controlnet_model)
+    model.train()
     #Freeze UNet part
-    if(flags.freeze_baseline_model): cond_dist_model.UNet.model.eval()
+    if(flags.freeze_baseline_model): model.UNet.model.eval()
 
 
     checkpoint = dict()
-    checkpoint_path = os.path.join(checkpoint_folder, "cond_dist_checkpoint.pth")
+    checkpoint_path = os.path.join(checkpoint_folder, "controlnet_checkpoint.pth")
     if(flags.load and os.path.exists(checkpoint_path)): 
-        print("Loading cond_dist model from %s" % checkpoint_path)
+        print("Loading controlnet model from %s" % checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location = device)
-        cond_dist_model.load_state_dict(checkpoint['model_state_dict'])
+        model.load_state_dict(checkpoint['model_state_dict'])
 
 
-    ema_model = EMA(cond_dist_model, 
-                beta = 0.95,              # exponential moving average factor
-                update_after_step = 10,    # only after this number of .update() calls will it start updating
-                update_every = 1,          # how often to actually update
-               )
-    ema_model.eval()
+    if(not flags.control_only):
+        ema_model = EMA(model, 
+                    beta = 0.95,              # exponential moving average factor
+                    update_after_step = 10,    # only after this number of .update() calls will it start updating
+                    update_every = 1,          # how often to actually update
+                   )
+        ema_model.eval()
+    else: ema_model = None
 
 
 
@@ -212,7 +215,7 @@ if __name__ == '__main__':
     
     #optimizer on only controlnet or full model (not EMA)
     if(flags.freeze_baseline_model): optimizer = optim.Adam(controlnet_model.model.parameters(), lr = float(dataset_config["LR"]))
-    else: optimizer = optim.Adam(cond_dist_model.parameters(), lr = float(dataset_config["LR"]))
+    else: optimizer = optim.Adam(model.parameters(), lr = float(dataset_config["LR"]))
 
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 15, verbose = True) 
@@ -234,27 +237,29 @@ if __name__ == '__main__':
         print("Beginning epoch %i" % epoch, flush=True)
         train_loss = 0
 
-        if(flags.freeze_baseline_model): cond_dist_model.ControlNet.model.train()
-        else: cond_dist_model.train()
+        if(flags.freeze_baseline_model): model.ControlNet.model.train()
+        else: model.train()
         for i, (E,layers, data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
-            cond_dist_model.zero_grad()
+            model.zero_grad()
             optimizer.zero_grad()
 
             data = data.to(device = device)
             E = E.to(device = device)
             layers = layers.to(device = device)
 
-            #t = torch.randint(1, cond_dist_model.nsteps, (data.size()[0],), device=device).long()
-            t = torch.repeat_interleave(torch.randint(1, sample_steps, (1,), device=device).long(), data.size()[0])
+            if(flags.control_only):
+                batch_loss = model.compute_loss(data, E, layers = layers, loss_type = loss_type )
+            else:
+                t = torch.repeat_interleave(torch.randint(1, sample_steps, (1,), device=device).long(), data.size()[0])
+                batch_loss = compute_cond_dist_loss(data, E, t=t, layers = layers, model = model, ema_model = ema_model)
 
 
-            batch_loss = compute_cond_dist_loss(data, E, t=t, layers = layers, model = cond_dist_model, ema_model = ema_model)
 
 
             batch_loss.backward()
             optimizer.step()
 
-            ema_model.update()
+            if(ema_model is not None): ema_model.update()
 
             train_loss+=batch_loss.item()
 
@@ -265,17 +270,19 @@ if __name__ == '__main__':
         print("loss: "+ str(train_loss))
 
         val_loss = 0
-        if(flags.freeze_baseline_model): cond_dist_model.ControlNet.model.eval()
-        else: cond_dist_model.eval()
+        if(flags.freeze_baseline_model): model.ControlNet.model.eval()
+        else: model.eval()
         for i, (vE, vlayers, vdata) in tqdm(enumerate(loader_val, 0), unit="batch", total=len(loader_val)):
             vdata = vdata.to(device=device)
             vE = vE.to(device = device)
             vlayers = vlayers.to(device = device)
 
-            #t = torch.randint(1, cond_dist_model.nsteps, (vdata.size()[0],), device=device).long()
-            t = torch.repeat_interleave(torch.randint(1, sample_steps, (1,), device=device).long(), vdata.size()[0])
+            if(flags.control_only):
+                batch_loss = model.compute_loss(vdata, vE, layers = vlayers, loss_type = loss_type )
+            else:
+                t = torch.repeat_interleave(torch.randint(1, sample_steps, (1,), device=device).long(), data.size()[0])
+                batch_loss = compute_cond_dist_loss(vdata, vE, t=t, layers = vlayers, model = model, ema_model = ema_model)
 
-            batch_loss = compute_cond_dist_loss(vdata, vE, t=t, layers = vlayers, model = cond_dist_model, ema_model = ema_model)
 
             val_loss+=batch_loss.item()
             del vdata,vE, batch_loss
@@ -287,11 +294,11 @@ if __name__ == '__main__':
 
         scheduler.step(torch.tensor([train_loss]))
 
+
         if(val_loss < min_validation_loss):
-            val_path = os.path.join(checkpoint_folder, 'cond_dist_best_val.pth')
+            val_path = os.path.join(checkpoint_folder, 'controlnet_best_val.pth')
             torch.save({
-                'epoch': epoch,
-                'model_state_dict': ema_model.ema_model.state_dict(),
+                'model_state_dict': model.state_dict() if flags.control_only else ema_model.ema_model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
                 'train_loss_hist': training_losses,
@@ -307,14 +314,13 @@ if __name__ == '__main__':
         print(early_stopper.__dict__)
 
         # save the model
-        cond_dist_model.eval()
+        model.eval()
         print("SAVING")
         #torch.save(model.state_dict(), checkpoint_path)
         
         #save full training state so can be resumed
         torch.save({
-            'epoch': epoch,
-            'model_state_dict': ema_model.ema_model.state_dict(),
+            'model_state_dict': model.state_dict() if flags.control_only else ema_model.ema_model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
             'train_loss_hist': training_losses,
@@ -330,11 +336,9 @@ if __name__ == '__main__':
 
     print("Saving to %s" % checkpoint_folder, flush=True)
 
-    torch.save(ema_model.ema_model.state_dict(), os.path.join(checkpoint_folder, 'cond_dist_final.pth'))
-    final_path = os.path.join(checkpoint_folder, 'cond_dist_final.pth')
+    final_path = os.path.join(checkpoint_folder, 'controlnet_final.pth')
     torch.save({
-        'epoch': epoch,
-        'model_state_dict': ema_model.ema_model.state_dict(),
+        'model_state_dict': model.state_dict() if flags.control_only else ema_model.ema_model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
         'train_loss_hist': training_losses,

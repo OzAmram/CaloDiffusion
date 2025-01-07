@@ -10,6 +10,8 @@ parser.add_argument('-n', '--name', default='test', help='job name')
 parser.add_argument("--resubmit", default = False, action='store_true')
 parser.add_argument("--constraint", default = "a100|v100|p100" , help='gpu resources')
 parser.add_argument("--memory", default = 16000 , help='RAM')
+parser.add_argument("--extra_args", default = "" , help='RAM')
+
 flags = parser.parse_args()
 
 if(flags.name[-1] =="/"): flags.name = flags.name[:-1]
@@ -29,6 +31,7 @@ if(flags.model in ['diffu', 'layers', 'consis', 'cond_dist']):
         os.system("sed -i 's/CONSTRAINT/%s/' %s" % (flags.constraint, script_loc))
         os.system("sed -i 's/MEMORY/%s/' %s" % (flags.memory, script_loc))
         os.system("sed -i 's/CONFIG/%s/' %s" % (base_dir + flags.name + "\/config.json", script_loc) )
+        os.system("sed -i 's/EXTRAARGS/%s/' %s" % (flags.extra_args, script_loc) )
     os.system("sbatch %s" % script_loc)
 else:
     print("Unrecognized model %s" % flags.model)

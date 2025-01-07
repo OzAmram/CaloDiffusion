@@ -152,6 +152,57 @@ dataset3_params = {
 
 'qt' : 'qts/dset3_quantile_transform.gz',
 }
+
+
+hgcal_william_v1_params = {
+'logit_mean' : -13.7371,
+'logit_std' : 0.68639,
+'logit_min': -13.81551,
+'logit_max' :  0.2909,
+
+'totalE_mean' : 0.0055,
+'totalE_std' : 0.00018,
+'layers_mean' : -4.4450,
+'layers_std' : 2.37667,
+
+}
+
+
+hgcal_william_v2_params = {
+'logit_mean' : -18.3170,
+'logit_std' : 1.03153,
+'logit_min': -13.81551,
+'logit_max' :  0.2909,
+
+'embed_mean': 0.0835,
+'embed_std': 3.1083,
+
+'totalE_mean' : 0.5538,
+'totalE_std' : 0.01767, 
+'layers_mean' : -4.5836,
+'layers_std' : 2.98382,
+
+}
+
+
+hgcal_william_embed_params = {
+'logit_mean' : -17.3442,
+'logit_std' : 3.26085,
+'logit_min': -13.81551,
+'logit_max' :  0.2909,
+
+'embed_mean': 0.0,
+'embed_std':  1.0,
+
+'totalE_mean' : 1.1076,
+'totalE_std' : 0.03535, 
+'layers_mean' : -4.5836,
+'layers_std' :  2.98382,
+
+}
+
+
+
 dataset_params = {
         0: dataset0_params, 
         1: dataset1_params, 
@@ -159,4 +210,8 @@ dataset_params = {
         3:dataset3_params,
         10: dataset0_origShape_params,
         11: dataset1_origShape_params,
+
+        100: hgcal_william_v1_params, #HGCal
+        101: hgcal_william_v2_params, #HGCal
+        111: hgcal_william_embed_params, #HGCal, embedding first
         }

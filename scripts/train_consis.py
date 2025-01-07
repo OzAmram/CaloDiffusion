@@ -10,9 +10,10 @@ from ema_pytorch import EMA
 from utils import *
 from ConsistencyModel import *
 from CaloDiffu import *
+from ControlNet import *
 from models import *
 
-def compute_consis_loss(x, E, t = None, layers = None,  teacher_model = None, model = None, ema_model = None, nsteps = 100, sample_algo = 'ddim'):   
+def compute_consis_loss(x, E, t = None, layers = None,  teacher_model = None, model = None, ema_model = None, nsteps = 30, sample_algo = 'ddim'):   
 
     noise = torch.randn_like(x)
     if(t is None): t = torch.randint(1, nsteps, (x.size()[0],), device=x.device).long()
@@ -20,25 +21,21 @@ def compute_consis_loss(x, E, t = None, layers = None,  teacher_model = None, mo
     sigma = extract(teacher_model.sqrt_one_minus_alphas_cumprod, t, x.shape) / extract(teacher_model.sqrt_alphas_cumprod, t, x.shape)
     sigma_prev = extract(teacher_model.sqrt_one_minus_alphas_cumprod, t-1, x.shape) / extract(teacher_model.sqrt_alphas_cumprod, t-1, x.shape)
 
-    #else:
-    #    rnd_normal = torch.randn((x.size()[0],), device=x.device)
-    #    sigma = (rnd_normal * model.P_std + model.P_mean).exp().reshape(x.shape[0], 1,1,1,1)
-
     x_noisy = x + sigma * noise
     sigma2 = sigma**2
 
 
-
     with torch.no_grad():
         #denoise 1 step using fixed diffusion model
-        #TODO
-        x_prev = teacher_model.p_sample(x_noisy, E, t, layers = layers, sample_algo = sample_algo)
+        extra_args = {'E':E, 'layers':layers, 'layer_sample' : False}
+
+        x_prev,_,x0s = sample_dd(teacher_model, x_noisy, nsteps, [t[0]], sample_algo = 'ddim', extra_args = extra_args, one_step = True)
 
         #predict using ema model on one-step denoised x
-        x0_ema = model.denoise(x_prev, E, sigma_prev, layers = layers, model = ema_model.model.model)
+        x0_ema = model.denoise(x_prev, E=E, sigma=sigma_prev, layers = layers, model = ema_model.model)
 
     #predict using model on noisy x
-    x0 = model.denoise(x_noisy, E,sigma, layers = layers, model = model.model)
+    x0 = model.denoise(x_noisy, E=E, sigma=sigma, layers = layers)
 
     #print(t[0],sigma[0], torch.std(x_noisy), torch.mean(x0_ema), torch.std(x0_ema))
     #print(sigma_prev[0], torch.std(x_prev), torch.mean(x0), torch.std(x0))
@@ -64,6 +61,7 @@ if __name__ == '__main__':
     parser.add_argument('--frac', type=float,default=0.85, help='Fraction of total events used for training')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     parser.add_argument('--seed', type=int, default=123,help='Pytorch seed')
+    parser.add_argument('--controlnet', default = False, action='store_true', help = 'Does model use a controlnet')
     parser.add_argument('--reset_training', action='store_true', default=False,help='Retrain')
     flags = parser.parse_args()
 
@@ -118,6 +116,14 @@ if __name__ == '__main__':
             energies = np.concatenate((energies, e_))
             if(layer_norm): layers = np.concatenate((layers, layers_))
 
+
+    f_avg_shower = h5.File(flags.data_folder + dataset_config["AVG_SHOWER_LOC"])
+    #Already pre-processed
+    avg_showers = torch.from_numpy(f_avg_shower["avg_showers"][()].astype(np.float32)).to(device = device)
+    std_showers = torch.from_numpy(f_avg_shower["std_showers"][()].astype(np.float32)).to(device = device)
+    E_bins = torch.from_numpy(f_avg_shower["E_bins"][()].astype(np.float32)).to(device = device)
+
+
     NN_embed = None
     if('NN' in shower_embed):
         if(dataset_num == 1):
@@ -157,24 +163,48 @@ if __name__ == '__main__':
 
 
     checkpoint_folder = '../models/{}_{}/'.format(dataset_config['CHECKPOINT_NAME'],flags.model)
+    shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
 
     #load teacher diffusion model
-    diffu_checkpoint_path = os.path.join(checkpoint_folder, "checkpoint.pth")
-    print("Loading teacher diffu model from %s" % diffu_checkpoint_path)
-    diffu_checkpoint = torch.load(diffu_checkpoint_path, map_location = device)
 
-    shape = dataset_config['SHAPE_PAD'][1:] if (not orig_shape) else dataset_config['SHAPE_ORIG'][1:]
-    diffu_model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = sample_steps).to(device = device)
+    diffu_model = CaloDiffu(shape, config=dataset_config, training_obj = training_obj, NN_embed = NN_embed, nsteps = sample_steps, 
+            E_bins = E_bins, avg_showers = avg_showers, std_showers = std_showers).to(device = device)
     diffu_model.eval()
 
-    if('model_state_dict' in diffu_checkpoint.keys()): diffu_model.load_state_dict(diffu_checkpoint['model_state_dict'])
-    elif(len(diffu_checkpoint.keys()) > 1): diffu_model.load_state_dict(diffu_checkpoint)
 
-    #init consistency model
+    if(flags.controlnet):
+        #controlnet version
+
+        controlnet_model = copy.deepcopy(diffu_model)
+        #Upsampling layers not used
+        controlnet_model.model.ups = None
+        diffu_model = ControlledUNet(diffu_model, controlnet_model)
+
+        control_checkpoint_path = os.path.join(checkpoint_folder, "controlnet_checkpoint.pth")
+        print("Loading teacher controlnet model from %s" % control_checkpoint_path)
+
+        control_checkpoint = torch.load(control_checkpoint_path, map_location = device)
+        diffu_model.load_state_dict(control_checkpoint['model_state_dict'])
+
+        label = "consis_controlnet_"
+
+    else:
+        #regular consistency model
+
+        diffu_checkpoint_path = os.path.join(checkpoint_folder, "checkpoint.pth")
+        print("Loading teacher diffu model from %s" % diffu_checkpoint_path)
+
+        diffu_checkpoint = torch.load(diffu_checkpoint_path, map_location = device)
+        if('model_state_dict' in diffu_checkpoint.keys()): diffu_model.load_state_dict(diffu_checkpoint['model_state_dict'])
+        elif(len(diffu_checkpoint.keys()) > 1): diffu_model.load_state_dict(diffu_checkpoint)
+
+        label = "consis_"
+
     consis_model = copy.deepcopy(diffu_model)
+    consis_model.train()
 
     checkpoint = dict()
-    checkpoint_path = os.path.join(checkpoint_folder, "consis_checkpoint.pth")
+    checkpoint_path = os.path.join(checkpoint_folder, label + "checkpoint.pth")
     if(flags.load and os.path.exists(checkpoint_path)): 
         print("Loading consis model from %s" % checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location = device)
@@ -190,7 +220,6 @@ if __name__ == '__main__':
 
 
 
-    checkpoint_path = os.path.join(checkpoint_folder, "consis_checkpoint.pth")
 
     early_stopper = EarlyStopper(patience = dataset_config['EARLYSTOP'], mode = 'diff', min_delta = 1e-5)
     if('early_stop_dict' in checkpoint.keys() and not flags.reset_training): early_stopper.__dict__ = checkpoint['early_stop_dict']
@@ -200,7 +229,7 @@ if __name__ == '__main__':
     criterion = nn.MSELoss().to(device = device)
 
     #optimizer only on moving model (not EMA)
-    optimizer = optim.Adam(consis_model.model.parameters(), lr = float(dataset_config["LR"]))
+    optimizer = optim.Adam(consis_model.parameters(), lr = float(dataset_config["LR"]))
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer = optimizer, factor = 0.1, patience = 15, verbose = True) 
     if('optimizer_state_dict' in checkpoint.keys() and not flags.reset_training): optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     if('scheduler_state_dict' in checkpoint.keys() and not flags.reset_training): scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -220,18 +249,18 @@ if __name__ == '__main__':
         print("Beginning epoch %i" % epoch, flush=True)
         train_loss = 0
 
-        consis_model.model.train()
+        consis_model.train()
         ema_model.eval()
         for i, (E,layers, data) in tqdm(enumerate(loader_train, 0), unit="batch", total=len(loader_train)):
-            consis_model.model.zero_grad()
+            consis_model.zero_grad()
             optimizer.zero_grad()
 
             data = data.to(device = device)
             E = E.to(device = device)
             layers = layers.to(device = device)
 
-            t = torch.randint(1, consis_model.nsteps, (data.size()[0],), device=device).long()
-            #t = torch.repeat_interleave(torch.randint(1, consis_model.nsteps, (1,), device=device).long(), data.size()[0])
+            #t = torch.randint(1, consis_model.nsteps, (data.size()[0],), device=device).long()
+            t = torch.repeat_interleave(torch.randint(1, consis_model.nsteps, (1,), device=device).long(), data.size()[0])
 
             batch_loss = compute_consis_loss(data, E, t=t, layers = layers, model = consis_model, ema_model = ema_model, teacher_model = diffu_model, 
                                              nsteps = consis_model.nsteps, sample_algo = flags.sample_algo)
@@ -255,7 +284,8 @@ if __name__ == '__main__':
             vE = vE.to(device = device)
             vlayers = vlayers.to(device = device)
 
-            t = torch.randint(1, consis_model.nsteps, (vdata.size()[0],), device=device).long()
+            #t = torch.randint(1, consis_model.nsteps, (vdata.size()[0],), device=device).long()
+            t = torch.repeat_interleave(torch.randint(1, consis_model.nsteps, (1,), device=device).long(), vdata.size()[0])
 
             batch_loss = compute_consis_loss(vdata, vE, t=t, layers = vlayers, model = consis_model, ema_model = ema_model, teacher_model = diffu_model, 
                                              nsteps = consis_model.nsteps, sample_algo = flags.sample_algo)
@@ -271,7 +301,7 @@ if __name__ == '__main__':
         scheduler.step(torch.tensor([train_loss]))
 
         if(val_loss < min_validation_loss):
-            torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'consis_best_val.pth'))
+            torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, label + 'best_val.pth'))
             min_validation_loss = val_loss
 
         if(early_stopper.early_stop(val_loss - train_loss)):
@@ -302,7 +332,7 @@ if __name__ == '__main__':
 
 
     print("Saving to %s" % checkpoint_folder, flush=True)
-    torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, 'consis_final.pth'))
+    torch.save(ema_model.state_dict(), os.path.join(checkpoint_folder, label + 'final.pth'))
 
     with open(checkpoint_folder + "/training_losses.txt","w") as tfileout:
         tfileout.write("\n".join("{}".format(tl) for tl in training_losses)+"\n")

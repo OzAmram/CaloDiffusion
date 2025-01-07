@@ -3,19 +3,29 @@ import os
 import h5py as h5
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm as LN
 from matplotlib import gridspec
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib.ticker as mtick
 import torch
 import torch.nn as nn
 import sys
 import joblib
+import torch.utils.data as torchdata
 from sklearn.preprocessing import QuantileTransformer
+import mplhep as hep
+
 sys.path.append("..")
 from CaloChallenge.code.XMLHandler import *
+from HGCal_utils import *
 from consts import *
 
 #use tqdm if local, skip if batch job
 import sys
+
+
+byteToMb = 10**(-6)
+
 if sys.stderr.isatty():
     from tqdm import tqdm
 else:
@@ -30,7 +40,7 @@ def split_data_np(data, frac=0.8):
     return train_data,test_data
 
 
-def create_phi_image(device, shape = (1,45,16,9)):
+def create_phi_image(device, shape = (1,45,16,9), dataset_num = 0):
 
     n_phi = shape[-2]
     phi_bins = torch.linspace(0., 1., n_phi, dtype = torch.float32)
@@ -40,18 +50,20 @@ def create_phi_image(device, shape = (1,45,16,9)):
     return phi_image
 
 
-def create_R_Z_image(device, scaled = True, shape = (1,45,16,9)):
+def create_R_Z_image(device, dataset_num = 0, scaled = True, shape = (1,45,16,9)):
 
-    if(shape[-1] == 30): #dataset 1, photons
-        r_bins =  [ 0.,  2.,  4.,  5.,  6.,  8., 10., 12., 15., 20., 25., 30., 40., 50., 60., 70., 80., 90.,  100.,  
-                      120., 130.,  150.,  160.,  200.,  250.,  300.,  350.,  400.,  600., 1000., 2000.]
-    elif(shape[-1] == 23): #dataset 1, pions
+    if(dataset_num == 0): #dataset 1, pions
         r_bins = [0.00, 1.00, 4.00, 5.00, 7.00, 10.00, 15.00, 20.00, 30.00, 50.00, 80.00, 90.00, 100.00, 
                 130.00, 150.00, 160.00, 200.00, 250.00, 300.00, 350.00, 400.00, 600.00, 1000.00, 2000.00]
-    elif(shape[-1] == 9): #dataset 2
+    elif(dataset_num == 1): #dataset 1, photons
+        r_bins =  [ 0.,  2.,  4.,  5.,  6.,  8., 10., 12., 15., 20., 25., 30., 40., 50., 60., 70., 80., 90.,  100.,  
+                      120., 130.,  150.,  160.,  200.,  250.,  300.,  350.,  400.,  600., 1000., 2000.]
+    elif(dataset_num == 2): #dataset 2
         r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
-    else:#dataset 3
+    elif(dataset_num == 3):
         r_bins = [0,2.325,4.65,6.975,9.3,11.625,13.95,16.275,18.6,20.925,23.25,25.575,27.9,30.225,32.55,34.875,37.2,39.525,41.85]
+    elif(dataset_num >= 100): #HGCal
+        r_bins = torch.arange(0, shape[-1]+1)
 
     r_avgs = [(r_bins[i] + r_bins[i+1]) / 2.0 for i in range(len(r_bins) -1) ]
     assert(len(r_avgs) == shape[-1])
@@ -78,7 +90,9 @@ def split_data(data,nevts,frac=0.8):
 
 line_style = {
     'Geant4':'dotted',
+    'Geant4 (CMSSW)':'dotted',
 
+    'HGCaloDiffusion' : '-',
     'CaloDiffusion' : '-',
     'Avg Shower' : '-',
     'CaloDiffusion 400 Steps' : '-',
@@ -90,18 +104,20 @@ line_style = {
 
 colors = {
     'Geant4':'black',
+    'Geant4 (CMSSW)':'black',
     'Avg Shower': 'blue',
+    'HGCaloDiffusion': 'blue',
     'CaloDiffusion': 'blue',
     'CaloDiffusion 400 Steps': 'blue',
     'CaloDiffusion 200 Steps': 'green',
     'CaloDiffusion 100 Steps': 'purple',
     'CaloDiffusion 50 Steps': 'red',
-
 }
 
 name_translate={
 
-    'Diffu' : "CaloDiffusion",
+    'Geant4' : "Geant4 (CMSSW)",
+    'Diffu' : "HGCaloDiffusion",
     'Avg' : "Avg Shower",
 
 
@@ -135,7 +151,7 @@ def SetStyle():
     mpl.rcParams.update({'xtick.labelsize': 18}) 
     mpl.rcParams.update({'ytick.labelsize': 18}) 
     mpl.rcParams.update({'axes.labelsize': 26}) 
-    mpl.rcParams.update({'legend.frameon': False}) 
+    #mpl.rcParams.update({'legend.frameon': False}) 
     mpl.rcParams.update({'lines.linewidth': 4})
     
     import matplotlib.pyplot as plt
@@ -153,16 +169,50 @@ def SetGrid(ratio=True):
     return fig,gs
 
 
+def WeightedMean(coord, energies, power=1, axis=-1):
+    ec = np.sum(energies*np.power(coord,power),axis=axis)
+    sum_energies = np.sum(energies,axis=axis)
+    ec = np.ma.divide(ec,sum_energies).filled(0)
+    return ec
 
-def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_label = "", no_mean = False):
-    assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
+def ang_center_spread(matrix, energies, axis=-1):
+    #weighted average over periodic variabel (angle)
+    #https://github.com/scipy/scipy/blob/v1.11.1/scipy/stats/_morestats.py#L4614
+    #https://en.wikipedia.org/wiki/Directional_statistics#The_fundamental_difference_between_linear_and_circular_statistics
+    cos_matrix = np.cos(matrix)
+    sin_matrix = np.sin(matrix)
+    cos_ec = WeightedMean(cos_matrix, energies, axis=axis)
+    sin_ec = WeightedMean(sin_matrix, energies, axis=axis)
+    ang_mean  = np.arctan2(sin_ec, cos_ec)
+    R = np.sqrt(sin_ec**2 + cos_ec**2)
+    eps = 1e-8
+    R = np.clip(R, eps, 1.)
+
+    ang_std = np.sqrt(-np.log(R))
+    return ang_mean, ang_std
+
+
+def PlotRoutine(feed_dict,xlabel='',ylabel='',logy=False,reference_name='Geant4 (CMSSW)', plot_label = "", no_mean = False, cms_style=False):
+    if(reference_name not in feed_dict.keys()):
+        reference_name = list(feed_dict.keys())[0]
+        print("taking %s as ref" % reference_name)
     
     fig,gs = SetGrid() 
     ax0 = plt.subplot(gs[0])
     plt.xticks(fontsize=0)
     ax1 = plt.subplot(gs[1],sharex=ax0)
 
+    if(cms_style):
+        hep.style.use(hep.style.CMS)
+        hep.cms.text(ax=ax0, text="Simulation Preliminary")
+
+
+
     for ip,plot in enumerate(feed_dict.keys()):
+        color = colors.get(plot, 'blue')
+        linestyle = line_style.get(plot, '-')
+
+
         if(no_mean): 
             d = feed_dict[plot]
             ref = feed_dict[reference_name]
@@ -170,9 +220,9 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
             d = np.mean(feed_dict[plot], 0)
             ref = np.mean(feed_dict[reference_name], 0)
         if 'steps' in plot or 'r=' in plot:
-            ax0.plot(d,label=plot,marker=line_style[plot],color=colors[plot],lw=0)
+            ax0.plot(d,label=plot,marker=linestyle,color=color,lw=0)
         else:
-            ax0.plot(d,label=plot,linestyle=line_style[plot],color=colors[plot])
+            ax0.plot(d,label=plot,linestyle=linestyle, color=color)
         if(len(plot_label) > 0): ax0.set_title(plot_label, fontsize = 20, loc = 'right', style = 'italic')
         if reference_name!=plot:
 
@@ -180,31 +230,30 @@ def PlotRoutine(feed_dict,xlabel='',ylabel='',reference_name='Geant4', plot_labe
             ax0.set_ymargin(0)
 
             eps = 1e-8
-            ratio = 100*np.divide(ref-d, d + eps)
-            #ax1.plot(ratio,color=colors[plot],marker='o',ms=10,lw=0,markerfacecolor='none',markeredgewidth=3)
+            ratio = np.divide(ref, d + eps)
 
-            plt.axhline(y=0.0, color='black', linestyle='-',linewidth=2)
-            plt.axhline(y=10, color='gray', linestyle='--',linewidth=2)
-            plt.axhline(y=-10, color='gray', linestyle='--',linewidth=2)
+            plt.axhline(y=1.0, color='black', linestyle='--',linewidth=2)
 
             
             if 'steps' in plot or 'r=' in plot:
-                ax1.plot(ratio,color=colors[plot],markeredgewidth=4,marker=line_style[plot],lw=0)
+                ax1.plot(ratio,color=color,markeredgewidth=4,marker=linestyle,lw=0)
             else:
-                ax1.plot(ratio,color=colors[plot],linestyle=line_style[plot])
+                ax1.plot(ratio,color=color,linestyle=linestyle)
                 
         
     FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0)
-    ax0.legend(loc='best',fontsize=24,ncol=1)
+    ax0.legend(loc='best',fontsize=24,ncol=1, facecolor='white', framealpha = 0.5, frameon=True)
 
 
-    plt.ylabel('Diff. (%)')
+    if(logy): ax0.set_yscale('log')
+
+    plt.ylabel('Ratio')
     plt.xlabel(xlabel)
     loc = mtick.MultipleLocator(base=10.0) 
     ax1.yaxis.set_minor_locator(loc)
-    plt.ylim([-50,50])
+    plt.ylim([0.5, 1.5])
 
-    plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
+    plt.subplots_adjust(left = 0.2, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
     #plt.tight_layout()
 
     return fig,ax0
@@ -281,15 +330,22 @@ def make_histogram(entries, labels, colors, xaxis_label="", title ="", num_bins 
     return fig
 
 
-def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, plot_label = "", leg_font = 24):
-    assert reference_name in feed_dict.keys(), "ERROR: Don't know the reference distribution"
+def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Geant4 (CMSSW)',logy=False,binning=None,label_loc='best', ratio = True, normalize = True, 
+        plot_label = "", leg_font = 24, cms_style=False):
+    if(reference_name not in feed_dict.keys()):
+        reference_name = list(feed_dict.keys())[0]
+        print("taking %s as ref" % reference_name)
     
     fig,gs = SetGrid(ratio) 
     ax0 = plt.subplot(gs[0])
+
     if(ratio):
         plt.xticks(fontsize=0)
         ax1 = plt.subplot(gs[1],sharex=ax0)
 
+    if(cms_style):
+        hep.style.use(hep.style.CMS)
+        hep.cms.text(ax=ax0, text="Simulation Preliminary")
     
     if binning is None:
         binning = np.linspace(np.quantile(feed_dict[reference_name],0.0),np.quantile(feed_dict[reference_name],1),10)
@@ -297,6 +353,9 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
     reference_hist,_ = np.histogram(feed_dict[reference_name],bins=binning,density=True)
     
     for ip,plot in enumerate(reversed(list(feed_dict.keys()))):
+        color = colors.get(plot, 'blue')
+        linestyle = line_style.get(plot, '-')
+
         if 'steps' in plot or 'r=' in plot:
             dist,_ = np.histogram(feed_dict[plot],bins=binning,density=normalize)
             ax0.plot(xaxis,dist, histtype='stepfilled', facecolor = 'silver',lw =2,label=plot, alpha = 1.0)
@@ -304,20 +363,20 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
         elif( 'Geant' in plot):
             dist,_,_ = ax0.hist(feed_dict[plot], bins = binning, label = plot, density = True, histtype='stepfilled', facecolor = 'silver',lw =2, alpha = 1.0)
         else:
-            dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,linestyle=line_style[plot],color=colors[plot],density=True,histtype="step", lw =4 )
+            dist,_,_=ax0.hist(feed_dict[plot],bins=binning,label=plot,linestyle=linestyle, color=color, density=True,histtype="step", lw =4 )
             
         if(len(plot_label) > 0): ax0.set_title(plot_label, fontsize = 20, loc = 'right', style = 'italic')
 
         if reference_name!=plot and ratio:
             eps = 1e-8
-            h_ratio = 100*np.divide(dist - reference_hist,reference_hist + eps)
+            h_ratio = np.divide(dist,reference_hist + eps)
             if 'steps' in plot or 'r=' in plot:
-                ax1.plot(xaxis,h_ratio,color=colors[plot],marker=line_style[plot],ms=10,lw=0,markeredgewidth=4)
+                ax1.plot(xaxis,h_ratio,color=color, marker=linestyle,ms=10,lw=0,markeredgewidth=4)
             else:
                 if(len(binning) > 20): # draw ratio as line
-                    ax1.plot(xaxis, h_ratio,color=colors[plot],linestyle='-', lw = 4)
+                    ax1.plot(xaxis, h_ratio,color=color,linestyle='-', lw = 4)
                 else:  #draw as markers
-                    ax1.plot(xaxis,h_ratio,color=colors[plot],marker='o',ms=10,lw=0)
+                    ax1.plot(xaxis,h_ratio,color=color, marker='o',ms=10,lw=0)
             sep_power = _separation_power(dist, reference_hist, binning)
             print("Separation power for hist '%s' is %.4f" % (xlabel, sep_power))
         
@@ -328,18 +387,16 @@ def HistRoutine(feed_dict,xlabel='',ylabel='Arbitrary units',reference_name='Gea
     
     if(ratio):
         FormatFig(xlabel = "", ylabel = ylabel,ax0=ax0) 
-        plt.ylabel('Diff. (%)')
+        plt.ylabel('Ratio')
         plt.xlabel(xlabel)
-        plt.axhline(y=0.0, color='black', linestyle='-',linewidth=1)
-        plt.axhline(y=10, color='gray', linestyle='--',linewidth=1)
-        plt.axhline(y=-10, color='gray', linestyle='--',linewidth=1)
+        plt.axhline(y=1.0, color='black', linestyle='--',linewidth=1)
         loc = mtick.MultipleLocator(base=10.0) 
         ax1.yaxis.set_minor_locator(loc)
-        plt.ylim([-50,50])
+        plt.ylim([0.5, 1.5])
     else:
         FormatFig(xlabel = xlabel, ylabel = ylabel,ax0=ax0) 
 
-    ax0.legend(loc=label_loc,fontsize=leg_font,ncol=1)        
+    ax0.legend(loc=label_loc, fontsize=leg_font,ncol=1, facecolor = 'white', framealpha = 0.5, frameon=True)        
     #plt.tight_layout()
     if(ratio):
         plt.subplots_adjust(left = 0.15, right = 0.9, top = 0.94, bottom = 0.12, wspace = 0, hspace=0)
@@ -358,10 +415,22 @@ def logit(x, alpha = 1e-6):
     o = np.ma.log(o/(1-o)).filled(0)    
     return o
 
+def DataLoader(file_name,shape,emax,emin, hgcal = False, **kwargs): 
+    if(hgcal):
+        return DataLoaderHGCal(file_name, shape, emax, emin, **kwargs)
+    else:
+        return DataLoaderCaloChall(file_name, shape, emax, emin, **kwargs)
+
+def ReverseNorm(voxels,e,shape,emax,emin,hgcal = False, **kwargs):
+    if(hgcal):
+        return ReverseNormHGCal(voxels,e,shape,emax,emin, **kwargs)
+    else:
+        return ReverseNormCaloChall(voxels,e,shape,emax,emin, **kwargs)
 
 
-def DataLoader(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
-        evt_start = 0):
+
+def DataLoaderCaloChall(file_name,shape,emax,emin, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
+        evt_start = 0, **kwargs):
 
     with h5.File(file_name,"r") as h5f:
         #holdout events for testing
@@ -494,6 +563,72 @@ def preprocess_shower(shower, e, shape, showerMap = 'log-norm', dataset_num = 2,
 
     return shower,layerE
 
+
+def plot_shower_layer(data, fname = "", title=None, fig=None, subplot=(1, 1, 1),
+                     vmin = None, vmax=None, colbar='alone', r_edges = None):
+    """ draws the shower in layer_nr only """
+    if fig is None:
+        fig = plt.figure(figsize=(5, 5), dpi=200)
+
+    #r,phi
+    shape = data.shape
+    nPhi = shape[0]
+    nRad = shape[1]
+
+    pts_per_angular_bin = 50
+    num_splits = pts_per_angular_bin * nPhi
+
+
+    if(r_edges is None):
+        r_edges = np.arange(nRad + 1) 
+    max_r = np.amax(r_edges)
+
+    phi_bins = 2.*np.pi* np.arange(num_splits+1)/ num_splits
+
+    theta, rad = np.meshgrid(phi_bins, r_edges)
+    data_reshaped = data.reshape(nPhi, -1)
+    data_repeated = np.repeat(data_reshaped, (pts_per_angular_bin), axis=0)
+
+    ax = fig.add_subplot(*subplot, polar=True)
+    #ax = plt.subplot(111, projection='polar')
+    ax.grid(False)
+    if vmax is None: vmax = data.max()
+    if vmin is None: vmin = 1e-2 if data.max() > 1e-3 else data.max()/100.
+
+
+    pcm = ax.pcolormesh(theta, rad, data_repeated.T+1e-16, norm=LN(vmin=vmin, vmax=vmax))
+    ax.axes.get_xaxis().set_visible(False)
+    ax.axes.get_yaxis().set_visible(False)
+    ax.set_rmax(max_r)
+
+    if title is not None:
+        ax.set_title(title)
+
+    if colbar == 'alone':
+        axins = inset_axes(fig.get_axes()[-1], width='100%',
+                           height="15%", loc='lower center', bbox_to_anchor=(0., -0.2, 1, 1),
+                           bbox_transform=fig.get_axes()[-1].transAxes,
+                           borderpad=0)
+        cbar = plt.colorbar(pcm, cax=axins, fraction=0.2, orientation="horizontal")
+        cbar.set_label(r'Energy (GeV)', y=0.83, fontsize=12)
+    elif colbar == 'both':
+        axins = inset_axes(fig.get_axes()[-1], width='200%',
+                           height="15%", loc='lower center',
+                           bbox_to_anchor=(-0.625, -0.2, 1, 1),
+                           bbox_transform=fig.get_axes()[-1].transAxes,
+                           borderpad=0)
+        cbar = plt.colorbar(pcm, cax=axins, fraction=0.2, orientation="horizontal")
+        cbar.set_label(r'Energy (GeV)', y=0.83, fontsize=12)
+    elif colbar == 'None':
+        pass
+
+    plt.subplots_adjust(bottom=0.25, left = 0.02, right = 0.98, top = 0.95)
+
+
+    if fname is not None:
+        plt.savefig(fname, facecolor='white')
+    #return fig
+
         
 
 def LoadJson(file_name):
@@ -502,7 +637,8 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(voxels,e,shape,emax,emin,max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
+
+def ReverseNormCaloChall(voxels,e,shape,emax,emin, max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0.):
     '''Revert the transformations applied to the training set'''
 
     if(dataset_num > 3 or dataset_num <0 ): 
@@ -630,8 +766,6 @@ class NNConverter(nn.Module):
         for i in range(len(self.gc.weight_mats)):
 
             rdim_in = len(self.gc.lay_r_edges[i]) - 1
-            #lay = nn.Sequential(*[nn.Linear(rdim_in, hidden_size), nn.GELU(), nn.Linear(hidden_size, hidden_size), 
-            #    nn.GELU(), nn.Linear(hidden_size, self.gc.dim_r_out)])
 
             lay = nn.Linear(rdim_in, self.gc.dim_r_out, bias = False)
             noise = torch.randn_like(self.gc.weight_mats[i])
@@ -640,8 +774,6 @@ class NNConverter(nn.Module):
             self.encs.append(lay)
 
 
-            #inv_lay = nn.Sequential(*[nn.Linear(self.gc.dim_r_out, hidden_size), nn.GELU(), nn.Linear(hidden_size, hidden_size), 
-                #nn.GELU(), nn.Linear(hidden_size, rdim_in)])
             inv_lay = nn.Linear(self.gc.dim_r_out, rdim_in, bias = False)
 
             inv_init = torch.linalg.pinv(self.gc.weight_mats[i])
@@ -649,6 +781,9 @@ class NNConverter(nn.Module):
             inv_lay.weight.data =  inv_init + eps*noise2
 
             self.decs.append(inv_lay)
+
+    def init(self):
+        return 
 
     def enc(self, x):
         n_shower = x.shape[0]
@@ -846,41 +981,18 @@ def draw_shower(shower, dataset_num, fout, title = None):
     hf.DrawSingleShower(shower, fout, title = title)
 
 
-if __name__ == "__main__":
-    #Preprocessing of the input files: conversion to cartesian coordinates + zero-padded mask generation
-    file_path = '/wclustre/cms/denoise/CaloChallenge/dataset_2_2.hdf5'
-    #with h5.File(file_path,"r") as h5f:
-    #    e = h5f['incident_energies'][:]
-    #    showers = h5f['showers'][:]
-    ##shape = [-1,45,50,18,1]
-    ##nx=32
-    ##ny=32
-    #
-    #shape = [-1,45,16,9,1]
+def apply_in_batches(model, data, batch_size = 128, device = 'cpu'):
+    data_loader = torchdata.DataLoader(torch.Tensor(data), batch_size = batch_size, shuffle = False)
+    out = None
+    for i,batch in enumerate(data_loader):
+        batch = batch.to(device)
+        out_ = model(batch)
+        if(i==0): out = out_.detach().cpu()
+        else: out = torch.cat([out, out_.detach().cpu()], axis = 0)
+    return out
 
-    #nx = 12
-    #ny = 12
-
-    #showers = showers.reshape((-1,shape[2],shape[3]))
-    #cart_data = []
-    #for ish,shower in enumerate(showers):
-    #    if ish%(10000)==0:print(ish)
-    #    cart_data.append(polar_to_cart(shower,nr=shape[3],nalpha=shape[2],nx=nx,ny=ny))
-
-    #cart_data = np.reshape(cart_data,(-1,45,nx,ny))
-    #with h5.File('/wclustre/cms/denoise/CaloChallenge/dataset_2_2_cart.hdf5',"w") as h5f:
-    #    dset = h5f.create_dataset("showers", data=cart_data)
-    #    dset = h5f.create_dataset("incident_energies", data=e)
-
-
-    file_path = '/wclustre/cms/denoise/CaloChallenge/dataset_2_1_cart.hdf5'
-    ##file_path='/wclustre/cms/denoise/CaloChallenge/dataset_1_photons_1.hdf5'
-    with h5.File(file_path,"r") as h5f:
-        showers = h5f['showers'][:]
-        energies = h5f['incident_energies'][:]
-    mask = np.sum(showers,0)==0
-    mask_file = file_path.replace('.hdf5','_mask.hdf5')
-    print("Creating mask file %s " % mask_file)
-    with h5.File(mask_file,"w") as h5f:
-        dset = h5f.create_dataset("mask", data=mask)
+def append_h5(f, name, data):
+    prev_size = f[name].shape[0]
+    f[name].resize(( prev_size + data.shape[0]), axis=0)
+    f[name][prev_size:] = data
     

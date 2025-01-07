@@ -1,3 +1,6 @@
 [submodule "CaloChallenge"]
 	path = CaloChallenge
 	url = git@github.com:OzAmram/homepage.git
+[submodule "HGCalShowers"]
+	path = HGCalShowers
+	url = https://github.com/OzAmram/HGCalShowers

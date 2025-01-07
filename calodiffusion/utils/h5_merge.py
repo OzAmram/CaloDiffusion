@@ -1,5 +1,5 @@
 from __future__ import absolute_import
-import utils
+import calodiffusion.utils.utils as utils
 import h5py
 import os
 import sys

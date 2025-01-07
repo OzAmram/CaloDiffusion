@@ -7,11 +7,11 @@ import h5py as h5
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import time, sys, copy
-import utils
+import calodiffusion.utils.utils as utils
 import torch
 import torch.utils.data as torchdata
-from CaloAE import *
-from CaloDiffu import *
+from calodiffusion.models.CaloAE import *
+from calodiffusion.models.CaloDiffu import *
 import h5py
 
 

@@ -1,13 +1,11 @@
 import numpy as np
 import copy
-import time
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 from torchinfo import summary
-from utils import *
-from sampling import *
-from models import *
+import calodiffusion.utils.utils as utils 
+import calodiffusion.utils.sampling as sampling
+import calodiffusion.models.models as model_utils
 
 
 class CaloDiffu(nn.Module):
@@ -91,7 +89,7 @@ class CaloDiffu(nn.Module):
 
         if(self.fully_connected):
             #fully connected network architecture
-            self.model = ResNet(cond_emb_dim = cond_dim, dim_in = config['SHAPE_ORIG'][1], num_layers = config['NUM_LAYERS_LINEAR'], hidden_dim = 512)
+            self.model = model_utils.ResNet(cond_emb_dim = cond_dim, dim_in = config['SHAPE_ORIG'][1], num_layers = config['NUM_LAYERS_LINEAR'], hidden_dim = 512)
 
             self.R_Z_inputs = False
             self.phi_inputs = False
@@ -107,8 +105,8 @@ class CaloDiffu(nn.Module):
 
             in_channels = 1
 
-            self.R_image, self.Z_image = create_R_Z_image(device, scaled = True, shape = RZ_shape)
-            self.phi_image = create_phi_image(device, shape = RZ_shape)
+            self.R_image, self.Z_image = utils.create_R_Z_image(device, scaled = True, shape = RZ_shape)
+            self.phi_image = utils.create_phi_image(device, shape = RZ_shape)
 
             if(self.R_Z_inputs): in_channels = 3
 
@@ -122,7 +120,7 @@ class CaloDiffu(nn.Module):
             summary_shape = [calo_summary_shape, [[1,cond_size]], [1]]
 
 
-            self.model = CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, block_attn = block_attn, mid_attn = mid_attn, 
+            self.model = model_utils.CondUnet(cond_dim = cond_dim, out_dim = 1, channels = in_channels, layer_sizes = layer_sizes, block_attn = block_attn, mid_attn = mid_attn, 
                     cylindrical =  config.get('CYLINDRICAL', False), compress_Z = compress_Z, data_shape = calo_summary_shape,
                     cond_embed = (self.E_embed == 'sin'), cond_size = cond_size, time_embed = (self.time_embed == 'sin')  )
 
@@ -144,7 +142,7 @@ class CaloDiffu(nn.Module):
     def set_sampling_steps(self, nsteps):
         self.nsteps = nsteps
         #precompute useful quantities for sampling
-        self.betas = cosine_beta_schedule(self.nsteps)
+        self.betas = sampling.cosine_beta_schedule(self.nsteps)
         self.alphas = 1. - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, axis = 0)
 
@@ -206,8 +204,8 @@ class CaloDiffu(nn.Module):
         if(self.discrete_time): 
             if(t is None): t = torch.randint(0, self.nsteps, (data.size()[0],), device=data.device).long()
 
-            sqrt_alphas_cumprod_t = extract(self.sqrt_alphas_cumprod, t, data.shape)
-            sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
+            sqrt_alphas_cumprod_t = sampling.extract(self.sqrt_alphas_cumprod, t, data.shape)
+            sqrt_one_minus_alphas_cumprod_t = sampling.extract(self.sqrt_one_minus_alphas_cumprod, t, data.shape)
             sigma = sqrt_one_minus_alphas_cumprod_t / sqrt_alphas_cumprod_t
 
         else:
@@ -224,7 +222,6 @@ class CaloDiffu(nn.Module):
         if('minsnr' in self.training_obj):
             sigma0 = (rnd_normal * self.P_std + self.P_mean).exp()
             c_skip, c_out, c_in = self.get_scalings(sigma)
-            c_weight = self.weighting_soft_min_snr(sigma0)
             pred = self.pred(x_noisy*c_in, E, sigma0, model = model, layers = layers)
             target = (data - c_skip * x_noisy) / c_out
 
@@ -245,12 +242,6 @@ class CaloDiffu(nn.Module):
                 target = data
                 weight = 1./ sigma2
                 pred = x0_pred
-            
-            
-                
-            
-            
-
 
         if loss_type == 'l1':
             loss = torch.nn.functional.l1_loss(target, pred)
@@ -262,21 +253,20 @@ class CaloDiffu(nn.Module):
 
         elif loss_type == "huber":
             loss =torch.nn.functional.smooth_l1_loss(target, pred)
-            
-        elif loss_type == "minsnr":
-            loss = (((pred - target) ** 2).flatten(1).mean(1) * c_weight).sum()
-            if (scale != 1):                
-                sq_error = dct(model_output - target) ** 2
-                f_weight = freq_weight_nd(sq_error.shape[2:], self.scales, dtype=sq_error.dtype, device=sq_error.device)
-                loss = ((sq_error * f_weight).flatten(1).mean(1) * c_weight).sum()
+        
+        # Not implemented
+        # elif loss_type == "minsnr":
+        #     loss = (((pred - target) ** 2).flatten(1).mean(1) * c_weight).sum()
+        #     if (scale != 1):                
+        #         sq_error = dct(model_output - target) ** 2
+        #         f_weight = freq_weight_nd(sq_error.shape[2:], self.scales, dtype=sq_error.dtype, device=sq_error.device)
+        #         loss = ((sq_error * f_weight).flatten(1).mean(1) * c_weight).sum()
         else:
-            raise NotImplementedError()
+            raise NotImplementedError("Loss %s is not implemented" % loss_type)
 
 
         return loss
         
-        
-  
 
     def do_time_embed(self, t = None, embed_type = "identity",  sigma = None,):
         if(sigma is None): sigma = self.sqrt_one_minus_alphas_cumprod[t] /self.sqrt_alphas_cumprod[t]
@@ -294,7 +284,6 @@ class CaloDiffu(nn.Module):
 
     def pred(self, x, E, t_emb, model = None, layers = None, layer_sample = False, controls = None):
         if(model is None): model = self.model
-
 
         if(self.NN_embed is not None and not layer_sample): x = self.NN_embed.enc(x).to(x.device)
         if(self.layer_cond and layers is not None): E = torch.cat([E, layers], dim = 1)
@@ -364,15 +353,15 @@ class CaloDiffu(nn.Module):
 
         x = x_start * sigmas[0]
         if('adapt' in sample_algo):
-            x = sample_dpm_adaptive(self, x, sigma_min, sigma_max, extra_args={'E':E, 'layers':layers})
+            x = sampling.sample_dpm_adaptive(self, x, sigma_min, sigma_max, extra_args={'E':E, 'layers':layers})
         elif('++' in sample_algo and 'sde' in sample_algo):
-            x = sample_dpmpp_2m_sde(self, x, sigmas, extra_args={'E':E, 'layers':layers})
+            x = sampling.sample_dpmpp_2m_sde(self, x, sigmas, extra_args={'E':E, 'layers':layers})
         elif('++' in sample_algo):
-            x = sample_dpmpp_2m(self, x, sigmas, extra_args={'E':E, 'layers':layers})
+            x = sampling.sample_dpmpp_2m(self, x, sigmas, extra_args={'E':E, 'layers':layers})
         elif('unipc' in sample_algo):
-            x = sample_unipc(self, x, sigmas, extra_args={'E':E, 'layers':layers})
+            x = sampling.sample_unipc(self, x, sigmas, extra_args={'E':E, 'layers':layers})
         else:
-            x = sample_dpm_fast(self, x, sigma_min, sigma_max, num_steps, extra_args={'E':E, 'layers':layers})
+            x = sampling.sample_dpm_fast(self, x, sigma_min, sigma_max, num_steps, extra_args={'E':E, 'layers':layers})
 
         return x, None,None
 
@@ -446,7 +435,7 @@ class CaloDiffu(nn.Module):
             sigma_max = 80.0
             orig_schedule = False
 
-            x,xs, x0s = edm_sampler(model,x_start,E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
+            x,xs, x0s = sampling.edm_sampler(model,x_start,E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, sigma_min = sigma_min, sigma_max = sigma_max, 
                     S_churn = S_churn, S_min = S_min, S_max = S_max, S_noise = S_noise, sample_offset = sample_offset, orig_schedule = orig_schedule, extra_args=extra_args)
 
         elif('consis' in sample_algo):
@@ -466,11 +455,11 @@ class CaloDiffu(nn.Module):
                 t_steps = torch.tensor([t_all_steps[0]])
             sigmas = torch.cat([torch.as_tensor(t_steps), torch.zeros_like(t_steps[:1])]) # end point is zero noise
 
-            x,xs, x0s = sample_consis(caller, x_start, sigmas, extra_args = extra_args)
+            x,xs, x0s = sampling.sample_consis(caller, x_start, sigmas, extra_args = extra_args)
             self.set_sampling_steps(orig_num_steps)
 
         elif(sample_algo == 'ddim' or sample_algo =='ddpm'):
-            x, xs, x0s = sample_dd(caller, x_start, num_steps, sample_offset = sample_offset, sample_algo = sample_algo, debug = debug, extra_args=extra_args )
+            x, xs, x0s = sampling.sample_dd(caller, x_start, num_steps, sample_offset = sample_offset, sample_algo = sample_algo, debug = debug, extra_args=extra_args )
 
         elif('dpm' in sample_algo):
             x, xs, x0s = self.dpm_sampler(x_start, E, layers = layers, num_steps = num_steps, sample_algo = sample_algo, debug = debug, model = model, extra_args = extra_args)

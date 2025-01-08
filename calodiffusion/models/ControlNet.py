@@ -1,13 +1,9 @@
-import numpy as np
-import copy
-import time
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
-from torchinfo import summary
+
 from utils import *
 from models import *
-from CaloDiffu import *
+from calodiffusion.models.CaloDiffu import *
 
 
 class ControlledUNet(nn.Module):

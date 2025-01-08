@@ -95,11 +95,6 @@ line_style = {
     'HGCaloDiffusion' : '-',
     'CaloDiffusion' : '-',
     'Avg Shower' : '-',
-    'CaloDiffusion 400 Steps' : '-',
-    'CaloDiffusion 200 Steps' : '-',
-    'CaloDiffusion 100 Steps' : '-',
-    'CaloDiffusion 50 Steps' : '-',
-
 }
 
 colors = {
@@ -108,21 +103,13 @@ colors = {
     'Avg Shower': 'blue',
     'HGCaloDiffusion': 'blue',
     'CaloDiffusion': 'blue',
-    'CaloDiffusion 400 Steps': 'blue',
-    'CaloDiffusion 200 Steps': 'green',
-    'CaloDiffusion 100 Steps': 'purple',
-    'CaloDiffusion 50 Steps': 'red',
 }
 
 name_translate={
-
     'Geant4' : "Geant4 (CMSSW)",
     'Diffu' : "HGCaloDiffusion",
     'Avg' : "Avg Shower",
-
-
-    
-    }
+}
 
 def SetStyle():
     from matplotlib import rc

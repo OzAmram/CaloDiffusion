@@ -1,13 +1,6 @@
 import numpy as np
-import time
-import utils
-import torch
 import torch.nn as nn
-import torch.nn.functional as f
-from models import *
-from torch.autograd import Variable
 from torchinfo import summary
-
 
 
 class CaloAE(nn.Module):
@@ -21,8 +14,10 @@ class CaloAE(nn.Module):
         self._num_embed = self.config['EMBED']
         self.num_heads=1
 
-        if(self.config['ACT'].lower() == 'swish'): self.activation = nn.SiLU
-        elif(self.config['ACT'].lower() == 'relu'): self.activation = nn.ReLU
+        if(self.config['ACT'].lower() == 'swish'): 
+            self.activation = nn.SiLU
+        elif(self.config['ACT'].lower() == 'relu'): 
+            self.activation = nn.ReLU
         else: 
             print("Unrecognized activation fn : %s" % self.config['ACT'].lower())
             self.activation = nn.ReLU

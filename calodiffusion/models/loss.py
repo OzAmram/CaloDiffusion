@@ -19,23 +19,24 @@ class Loss(ABC):
             # TODO Pull from config
             self.P_mean = -1.2
             self.P_std = 1.2
-            self.sigma_data = 0.5
+            self.sigma_data = 1.0
 
         self.loss = self._loss(loss_type=loss_type)
 
-    @abstractmethod
-    def get_scaling(self, x, sigma): 
+    def get_scaling(self, sigma): 
         """
             Scale input to the forward model before prediction, as required by the loss function. 
         """
-        sigma = sigma.reshape(-1, *(1,) * (len(x.shape) - 1))
-        c_in = 1 / (sigma**2 + 1).sqrt()
-        c_skip = 1.0 / (sigma**2 + 1.0)
-        c_out = torch.sqrt(sigma**2) / (sigma**2 + 1.0).sqrt()
+        c_skip = self.sigma_data**2 / (sigma**2 + self.sigma_data**2)
+        c_out = sigma * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5
+        c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
+
+
+
         return c_in, c_skip, c_out
 
     @abstractmethod
-    def loss_function(self, model, data, E, time, sigma=None, noise=None, layers=None): 
+    def loss_function(self, model, data, E, time, sigma=None, noise=None, layers=None ): 
         """
             Compute the loss for a model - pass data and E forward, produing a single step
 
@@ -46,6 +47,7 @@ class Loss(ABC):
             sigma (_type_, optional): Data sigma. Defaults to None.
             noise (_type_, optional): Noise to be applied to the batch before prediction. Defaults to None.
             layers (_type_, optional): Additional layers to compute prediction for. Requires that the model is a layer model. Defaults to None.
+            layers (_type_, optional): Use predefined noise levels 
 
         Raises:
             NotImplementedError: _description_
@@ -108,7 +110,7 @@ class Loss(ABC):
         
         return losses[loss_type]
 
-    def __call__(self, model, data, E, noise=None, time=None, layers=None) -> Any:
+    def __call__(self, model, data, E, noise=None, time=None, layers=None, rnd_normal=None) -> Any:
 
         const_shape = (data.shape[0], *((1,) * (len(data.shape) - 1)))
         if noise is None:
@@ -129,31 +131,25 @@ class Loss(ABC):
             sigma = sqrt_one_minus_alphas_cumprod_t / sqrt_alphas_cumprod_t
 
         else:
-            rnd_normal = torch.randn((data.size()[0],), device=data.device)
+            if(rnd_normal is None): rnd_normal = torch.randn((data.size()[0],), device=data.device)
             sigma = (rnd_normal * self.P_std + self.P_mean).exp().reshape(const_shape)
 
 
-        return self.loss_function(model, data, E, time, sigma, noise, layers)
+        return self.loss_function(model, data, E, sigma=sigma, noise=noise, layers=layers)
 
 class minsnr(Loss): 
     def __init__(self, config, n_steps) -> None:
         super().__init__(config, n_steps)
 
-    def get_scalings(self, x, sigma):
-        c_skip = self.sigma_data**2 / (sigma**2 + self.sigma_data**2)
-        c_out = sigma * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5
-        c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
-        return c_in, c_skip, c_out
-
-
     def apply_scaling_skips(self, prediction, x,  c_in, c_skip, c_out): 
         return c_skip * x + c_out * prediction
 
-    def loss_function(self, model, data, E, time, sigma=None, noise=None, layers=None):
+    def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
+        #TO CHECK...
         x_noisy = data + sigma * noise
         sigma0 = (noise * self.P_std + self.P_mean).exp()
-        c_skip, c_out, c_in = self.get_scalings(sigma)
-        pred = model(x_noisy * c_in, E, time, sigma0, layers=layers)
+        c_skip, c_out, c_in = self.get_scaling(sigma)
+        pred = model.denoise(x_noisy * c_in, E, sigma, layers=layers)
         pred = data - sigma * pred
 
         target = (data - c_skip * x_noisy) / c_out
@@ -164,16 +160,14 @@ class hybrid_weight(Loss):
     def __init__(self, config, n_steps, loss_type='l1') -> None:
         super().__init__(config, n_steps, loss_type)
 
-    def get_scaling(self, x, sigma):
-        return super().get_scaling(x, sigma)
     
     def apply_scaling_skips(self, prediction, x,  c_in, c_skip, c_out): 
         return c_skip * x + c_out * prediction
     
-    def loss_function(self, model, data, E, time, sigma=None, noise=None, layers=None):
+    def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
         x_noisy = data + sigma * noise
         x0_pred = model.denoise(
-                x_noisy, E, time, layers=layers
+                x_noisy, E=E, sigma=sigma, layers=layers
             )
         
         const_shape = (data.shape[0], *((1,) * (len(data.shape) - 1)))
@@ -187,13 +181,10 @@ class noise_pred(Loss):
     def __init__(self, config, n_steps, loss_type='l1') -> None:
         super().__init__(config, n_steps, loss_type)
 
-    def get_scaling(self, x, sigma):
-        return super().get_scaling(x, sigma)
-
-    def loss_function(self, model, data, E, time, sigma=None, noise=None, layers=None):
+    def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
         x_noisy = data + sigma * noise
         x0_pred = model.denoise(
-                x_noisy, E=E, time=time, sigma=sigma, layers=layers
+                x_noisy, E=E, sigma=sigma, layers=layers
             )
         x0_pred = data - sigma * x0_pred
         pred = (data - x0_pred) / sigma
@@ -205,13 +196,10 @@ class mean_pred(Loss):
     def __init__(self, config, n_steps, loss_type='l1') -> None:
         super().__init__(config, n_steps, loss_type)
 
-    def get_scaling(self, x, sigma):
-        return super().get_scaling(x, sigma)
-
     def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
         x_noisy = data + sigma * noise
         x0_pred = model.denoise(
-                x_noisy, E=E, sigma=sigma, model=model, layers=layers
+                x_noisy, E=E, sigma=sigma, layers=layers
             )
         target = data
         weight = 1.0 / (sigma**2)

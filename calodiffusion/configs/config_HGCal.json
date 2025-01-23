@@ -1,11 +1,12 @@
 
 {
-    'FILES':['HGCal_showers_william_v2/HGCal_showers1.h5', 'HGCal_showers_william_v2/HGCal_showers2.h5', 'HGCal_showers_william_v2/HGCal_showers3.h5',
+    'FILES':['HGCal_showers_william_v2/HGCal_showers1.h5' ],
+    'FILESX':['HGCal_showers_william_v2/HGCal_showers1.h5', 'HGCal_showers_william_v2/HGCal_showers2.h5', 'HGCal_showers_william_v2/HGCal_showers3.h5',
     'HGCal_showers_william_v2/HGCal_showers4.h5', 'HGCal_showers_william_v2/HGCal_showers5.h5', 'HGCal_showers_william_v2/HGCal_showers6.h5',
     'HGCal_showers_william_v2/HGCal_showers7.h5', 'HGCal_showers_william_v2/HGCal_showers8.h5', 'HGCal_showers_william_v2/HGCal_showers9.h5',
-    'HGCal_showers_william_v2/HGCal_showers10.h5', 'HGCal_showers_william_v2/HGCal_showers11.h5', 'HGCal_showers_william_v2/HGCal_showers12.h5'
+    'HGCal_showers_william_v2/HGCal_showers10.h5', 'HGCal_showers_william_v2/HGCal_showers11.h5'
     ],
-    'VAL_FILES':[ 'HGCal_showers_william_v2/HGCal_showers13.h5'],
+    'VAL_FILES':[ 'HGCal_showers_william_v2/HGCal_showers12.h5'],
     'EVAL':[ 'HGCal_showers_william_v2/HGCal_showers13.h5', 'HGCal_showers_william_v2/HGCal_showers14.h5'],
     'HGCAL' : True,
     'BIN_FILE': '/home/oamram/CaloDiffusion/HGCalShowers/geom_william.pkl',

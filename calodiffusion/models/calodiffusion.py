@@ -4,6 +4,7 @@ import torch
 from calodiffusion.models.diffusion import Diffusion
 from calodiffusion.models.models import ResNet, CondUnet
 from calodiffusion.utils import utils
+from calodiffusion.utils.HGCal_utils import HGCalConverter
 
 class CaloDiffusion(Diffusion): 
     def __init__(self, config: Union[str, dict], n_steps: int = 400, loss_type: str = 'l2'):
@@ -11,22 +12,24 @@ class CaloDiffusion(Diffusion):
 
         self.fully_connected = "FCN" in self.config.get("SHOWER_EMBED", "")
         self.time_embed = self.config.get("TIME_EMBED", "sin")
-        self.hgcal = self.config.get("HGCAL", False)
-
-        shower_embed = dataset_config.get('SHOWER_EMBED', '')
-        self.pre_embed = ("pre_embed" in shower_embed)
-        self.NN_embed = self.init_embedding_model()
-        self.do_embed = self.NN_embed is not None and (not self.pre_embed)
+        self.dataset_num = self.config.get("DATASET_NUM", 2)
 
         self.R_image, self.Z_image = utils.create_R_Z_image(
-            self.device, scaled=True, shape=self.config["SHAPE_FINAL"][1:]
+            self.device, dataset_num = self.dataset_num, scaled=True, shape=self.config["SHAPE_FINAL"][1:]
         )
         self.phi_image = utils.create_phi_image(self.device, shape=self.config["SHAPE_FINAL"][1:])
         self.training_objective = self.config.get("TRAINING_OBJ", "noise_pred")
         self.layer_cond = "layer" in config.get("SHOWERMAP", "") 
 
     def init_model(self):
+
+        self.pre_embed = "pre-embed" in self.config['SHOWER_EMBED']
+        self.hgcal = self.config.get("HGCAL", False)
         self.fully_connected = "FCN" in self.config.get("SHOWER_EMBED", "")
+
+        self.NN_embed = self.init_embedding_model()
+        self.do_embed = self.NN_embed is not None and (not self.pre_embed)
+
 
         if self.fully_connected: 
             model = ResNet(
@@ -34,7 +37,7 @@ class CaloDiffusion(Diffusion):
                 dim_in=self.config["SHAPE_ORIG"][1],
                 num_layers=self.config["NUM_LAYERS_LINEAR"],
                 hidden_dim=512,
-            )
+            ).to(device=self.device)
 
         else: 
 
@@ -64,16 +67,18 @@ class CaloDiffusion(Diffusion):
                 cond_embed=(self.config.get("COND_EMBED", "sin") == "sin"),
                 cond_size=cond_size,
                 time_embed=(self.config.get("TIME_EMBED", "sin") == "sin"),
-            )
+            ).to(device=self.device)
+
+
 
         return model
 
     def noise_generation(self, shape):
         return super().noise_generation(shape)
 
-    def forward(self, x, E, time, layers, controls=None):
+    def forward(self, x, E, time, layers, layer_sample=False, controls=None):
 
-        if (self.do_emebd):
+        if (self.do_embed):
             x = self.NN_embed.enc(x).to(x.device)
         if self.layer_cond and layers is not None:
             E = torch.cat([E, layers], dim=1)
@@ -100,11 +105,10 @@ class CaloDiffusion(Diffusion):
 
             NN_embed = utils.NNConverter(bins=bins).to(device=self.device)
 
-        elif(self.hgcal):
+        elif(self.hgcal and not self.pre_embed):
             trainable = self.config.get('TRAINABLE_EMBED', False)
-            NN_embed = HGCalConverter(bins = dataset_config['SHAPE_FINAL'], geom_file = geom_file, device = device, trainable = trainable).to(device = device)
+            NN_embed = HGCalConverter(bins = self.config['SHAPE_FINAL'], geom_file = self.config['BIN_FILE'], device = self.device, trainable = trainable).to(device = self.device)
             if(not trainable): NN_embed.init(norm = self.pre_embed, dataset_num = dataset_num)
-
 
         return NN_embed
 
@@ -141,20 +145,14 @@ class CaloDiffusion(Diffusion):
         }
         return embed[self.time_embed]()
     
-    def denoise(self, x, E=None, sigma=None, layers = None):
+    def denoise(self, x, E=None, sigma=None, layers = None, layer_sample=False, controls=None):
         t_emb = self.do_time_embed(sigma = sigma.reshape(-1))
         loss_function_name = type(self.loss_function).__name__
-        if('minsnr' in loss_function_name):
-            c_skip, c_out, c_in = self.get_scalings(sigma)
-        else:
-            sigma = sigma.reshape(-1, *(1,)*(len(x.shape)-1))
-            c_in = 1 / (sigma**2 + 1).sqrt()
-            sigma2 = sigma**2
-            c_skip = 1. / (sigma2 + 1.)
-            c_out = torch.sqrt(sigma2) / (sigma2 + 1.).sqrt()
+
+        c_skip, c_out, c_in = self.loss_function.get_scaling(sigma)
 
 
-        pred = self.forward(x * c_in, E, t_emb, layers = layers)
+        pred = self.forward(x * c_in, E, t_emb, layers = layers, layer_sample=layer_sample)
 
         if('noise_pred' in loss_function_name):
             return (x - sigma * pred)

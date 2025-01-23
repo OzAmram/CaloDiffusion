@@ -5,11 +5,9 @@ from einops import rearrange
 from torch.masked import masked_tensor
 import torch.sparse
 
-sys.path.append("..")
-sys.path.append("../HGCalShowers/")
-from utils import *
-from HGCalShowers.HGCalGeo import *
-from consts import *
+from calodiffusion.utils.utils import *
+from HGCalShowers.HGCalGeo import HGCalGeo
+import calodiffusion.utils.consts as constants
 
 
 def logit(x, alpha = 1e-8):
@@ -28,7 +26,7 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
 
     print('dset', dataset_num)
 
-    c = dataset_params[dataset_num]
+    c = constants.dataset_params[dataset_num]
 
 
     alpha = 1e-8
@@ -79,7 +77,7 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
 
 
 def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
-        evt_start = 0, max_cells = None, embed = False, NN_embed = None, shower_scale = 200.):
+        evt_start = 0, max_cells = None, embed = False, shower_scale = 200., config = None, binning_file = ""):
 
     with h5.File(file_name,"r") as h5f:
         #holdout events for testing
@@ -98,11 +96,15 @@ def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2,
     gen_max = np.array(gen_max)
 
     print(shower.shape)
-    if(embed): shower = NN_embed.enc_batches(torch.Tensor(shower))
+    if(embed): 
+        trainable = config.get('TRAINABLE_EMBED', False)
+        NN_embed = HGCalConverter(bins = config['SHAPE_FINAL'], geom_file = binning_file, trainable = trainable)
+        NN_embed.init(norm = True, dataset_num = dataset_num)
+
+        shower = NN_embed.enc_batches(torch.Tensor(shower))
     print(shower.shape)
 
     shower_preprocessed, layerE_preprocessed = preprocess_hgcal_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
-    print("preprocessed")
 
     gen_preprocessed = (gen_info-gen_min)/(gen_max-gen_min)
 
@@ -119,7 +121,7 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
     print('vox', voxels.shape)
 
 
-    c = dataset_params[dataset_num]
+    c = constants.dataset_params[dataset_num]
 
     alpha = 1e-8
 
@@ -337,8 +339,8 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay, trainable = False):
 class RenameUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
         renamed_module = module
-        if module == "tools":
-            renamed_module = "whyteboard.tools"
+        if module == "HGCalGeo":
+            renamed_module = "HGCalShowers.HGCalGeo"
 
         return super(RenameUnpickler, self).find_class(renamed_module, name)
 
@@ -433,7 +435,7 @@ class HGCalConverter(nn.Module):
 
         if(norm):
             self.norm = True
-            c = dataset_params[dataset_num]
+            c = constants.dataset_params[dataset_num]
             self.embed_mean = c['embed_mean']
             self.embed_std = c['embed_std']
             

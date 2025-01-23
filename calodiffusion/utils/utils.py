@@ -13,7 +13,8 @@ import torch.utils.data as torchdata
 import numpy as np
 import torch
 from calodiffusion.utils.XMLHandler import XMLHandler
-import calodiffusion.utils.hgcal_utils as hgcal_utils
+from calodiffusion.utils.dataset import Dataset
+import calodiffusion.utils.HGCal_utils as HGCal_utils
 import calodiffusion.utils.consts as constants
 
 
@@ -246,13 +247,13 @@ def logit(x, alpha=1e-6):
 
 def DataLoader(file_name,shape,emax,emin, hgcal = False, **kwargs):
     if(hgcal):
-        return hgcal_utils.DataLoaderHGCal(file_name, shape, emax, emin, **kwargs)
+        return HGCal_utils.DataLoaderHGCal(file_name, shape, emax, emin, **kwargs)
     else:
         return DataLoaderCaloChall(file_name, shape, emax, emin, **kwargs)
 
 def ReverseNorm(voxels,e,shape,emax,emin,hgcal = False, **kwargs):
     if(hgcal):
-        return hgcal_utils.ReverseNormHGCal(voxels,e,shape,emax,emin, **kwargs)
+        return HGCal_utils.ReverseNormHGCal(voxels,e,shape,emax,emin, **kwargs)
     else:
         return ReverseNormCaloChall(voxels,e,shape,emax,emin, **kwargs)
 
@@ -832,7 +833,7 @@ def conversion_preprocess(file_path):
     with h5.File(mask_file, "w") as h5f:
         h5f.create_dataset("mask", data=mask)
 
-def load_data(args, config, eval=False):
+def load_data(args, config, eval=False, NN_embed = None):
 
     nholdout = config.get("HOLDOUT", 0)
     batch_size = config["BATCH"]
@@ -840,6 +841,11 @@ def load_data(args, config, eval=False):
     shower_embed = config.get("SHOWER_EMBED", "")
     orig_shape = "orig" in shower_embed
     layer_norm = "layer" in config["SHOWERMAP"]
+
+    pre_embed = ('pre-embed' in shower_embed)
+    shower_scale = config.get('SHOWERSCALE', 200.)
+    max_cells = config.get('MAX_CELLS', None)
+    hgcal = config.get('HGCAL', False)
 
 
     if eval: 
@@ -849,75 +855,61 @@ def load_data(args, config, eval=False):
             torch.manual_seed(args.seed)
         files = config['FILES']
 
-    for i, dataset in enumerate(files):
-        data_, e_, layers_ = DataLoader(
-            os.path.join(args.data_folder, dataset),
-            config["SHAPE_PAD"],
-            emax=config["EMAX"],
-            emin=config["EMIN"],
-            nevts=args.nevts,
-            binning_file=config["BIN_FILE"],
-            max_deposit=config[
-                "MAXDEP"
-            ],  # noise can generate more deposited energy than generated
-            logE=config["logE"],
-            showerMap=config["SHOWERMAP"],
-            nholdout=nholdout if (i == len(files) - 1) else 0,
-            dataset_num=dataset_num,
-            orig_shape=orig_shape,
-        )
+    val_file_list = config.get('VAL_FILES', [])
 
-        if i == 0:
-            data = data_
-            energies = e_
-            if layer_norm:
-                layers = layers_
-        else:
-            data = np.concatenate((data, data_))
-            energies = np.concatenate((energies, e_))
-            if layer_norm:
-                layers = np.concatenate((layers, layers_))
+    train_files = []
+    val_files = []
 
-    dshape = config["SHAPE_PAD"]
-    if layer_norm:
-        layers = np.reshape(layers, (layers.shape[0], -1))
-    if not orig_shape:
-        data = np.reshape(data, dshape)
-    else:
-        data = np.reshape(data, (len(data), -1))
+    for i, dataset in enumerate(files + val_file_list):
 
-    num_data = data.shape[0]
-    print("Data Shape " + str(data.shape))
+        tag = ".npz"
+        if(args.nevts > 0): tag = ".n%i.npz" % args.nevts
+        #path of pre-processed data files
+        path_clean = os.path.join(args.data_folder,dataset + tag)
 
-    torch_data_tensor = torch.from_numpy(data)
-    torch_E_tensor = torch.from_numpy(energies)
-    torch_layer_tensor = (
-        torch.from_numpy(layers) if layer_norm else torch.zeros_like(torch_E_tensor)
-    )
-    del data
+        if(not os.path.exists(path_clean) or args.reclean):
+            #process this dataset
+            showers,E,layers = DataLoader(
+                os.path.join(args.data_folder,dataset),
+                config['SHAPE_PAD'],
+                emax = config['EMAX'],
+                emin = config['EMIN'],
+                hgcal = hgcal,
+                nevts = args.nevts,
+                binning_file=config["BIN_FILE"],
+                max_deposit=config['MAXDEP'], #noise can generate more deposited energy than generated
+                logE=config['logE'],
+                showerMap = config['SHOWERMAP'],
+                shower_scale = shower_scale,
+                max_cells = max_cells,
 
-    torch_dataset = torch.utils.data.TensorDataset(
-        torch_E_tensor, torch_layer_tensor, torch_data_tensor
-    )
-    if eval: 
-        del torch_E_tensor
-        return  torch.utils.data.DataLoader(
-            torch_dataset, batch_size=batch_size, shuffle=True
-        )
-    
-    nTrain = int(round(args.frac * num_data))
-    nVal = num_data - nTrain
+                nholdout = nholdout if (i == len(files) -1 ) else 0,
+                dataset_num  = dataset_num,
+                orig_shape = orig_shape,
+                config = config, 
+                embed = pre_embed,
+            )
 
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        torch_dataset, [nTrain, nVal]
-    )
-    loader_train = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True
-    )
-    loader_val = torch.utils.data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=True
-    )
-    del torch_E_tensor, train_dataset, val_dataset
+            layers = np.reshape(layers, (layers.shape[0], -1))
+
+            if(orig_shape): showers = np.reshape(showers, config['SHAPE_ORIG'])
+            else : showers = np.reshape(showers, config['SHAPE_PAD'])
+
+            np.savez_compressed(path_clean, E=E, layers=layers, showers=showers, )
+            del E, layers, showers
+
+        if dataset in files: train_files.append(path_clean)
+        else: val_files.append(path_clean) 
+
+
+    dataset_train = Dataset(train_files)
+    loader_train  = torchdata.DataLoader(dataset_train, batch_size = batch_size, pin_memory=True)
+
+    loader_val = None
+    if(len(val_files) > 0):
+        dataset_val = Dataset(val_files)
+        loader_val  = torchdata.DataLoader(dataset_val, batch_size = batch_size, pin_memory = True)
+
     return loader_train, loader_val
 
 

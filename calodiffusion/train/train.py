@@ -16,6 +16,8 @@ class Train(ABC):
         self.config = config
         self.flags = flags
 
+        self.batch_size = self.config.get("BATCH", 256)
+
         self.checkpoint_folder = f"{flags.checkpoint_folder.strip('/')}/{config['CHECKPOINT_NAME']}_{flags.model}/"
         
         if not os.path.exists(self.checkpoint_folder):

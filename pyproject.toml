@@ -22,7 +22,8 @@ dependencies = [
   "scikit-learn>=1.5.2", 
   "torchinfo>=1.8.0", 
   "optuna>=4.0.0", 
-  "fvcore>=0.1.5"
+  "fvcore>=0.1.5", 
+  "torchsde>=0.2.6"
 ]
 
 [build-system]

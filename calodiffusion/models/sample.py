@@ -4,12 +4,16 @@ methods for sampling on inference
 """
 
 from abc import ABC
+import os
 from typing import Any
 import torch
 import numpy as np
 
 from calodiffusion.utils import sampling
+from calodiffusion.utils.utils import load_data
+from calodiffusion.utils.utils import import_tqdm
 
+tqdm = import_tqdm()
 
 class Sample:
     def __init__(self, config) -> None:
@@ -1008,98 +1012,111 @@ class Consistency(Sample):
 
 class BespokeNonStationary(Sample): 
     def __init__(self, config):
+        """
+        _summary_
+
+        Args:
+            config: _description_
+
+        Config Params: 
+            LR: Learning rate for the theta parameterization
+            TRAIN_SAMPLER: Train the sampler or load from a path
+            SAMPLER_PATH: Path to the trained theta parameters
+            MAX_ITER: Maximum number of iterations to train the sampler
+        """
         "Reference https://arxiv.org/abs/2403.01329"
+        "Reference https://github.com/heidelberg-hepml/calo_dreamer/blob/master/src/Models/bespoke_solvers.py"
         super().__init__(config)
 
-        class BespokeSampler(torch.nn.Module): 
-            def __init__(self, config, n_steps):
-                super().__init__()
-                self.config = config
-                self.n_steps = n_steps
-                # parameterize with Equation 12 
-                # initialize theta, a = 1 and b is deterimined by using midpoint or euler
-                self.theta = torch.zeros(2, self.n_steps)
-                self.theta[0, 0] = 1
-                self.theta[0, 1] = self.midpoint_b() if self.config.get("sampler_init") == "midpoint" else self.euler_b()
-
-            def midpoint_b(
-                self
-            ): 
-                return 0.5 * (-h - eta_h).expm1().neg() * (1 / r)
-
-
-            def euler_b(self): 
-                d_cur = (self.x_hat - self.denoised) / self.t_hat
-                h = self.t_next - self.t_hat
-                return h * d_cur
-
-            def forward(self, x): 
-                pass 
-
-            def update_theta(self, step):
-                self.theta -= step
-
-        self.sampler = BespokeSampler(self.sample_config)
-        self.lr = self.config.get("")
         self.model = None
         self.energy = None
         self.layers = None
 
-    def load_sampler(self): 
-        if self.sample_config.get("train_sampler", False): 
-            self.optimize_sampler()
-        else: 
-            self.load_sampler()
+    def load_sampler(self, num_steps=None): 
 
+        self.theta = torch.torch.nn.parameter.Parameter(torch.ones(2, num_steps))
+
+        if self.sample_config.get("TRAIN_SAMPLER", False): 
+            self.lr = self.sample_config.get("LR", 1e-3)
+            self.optimizer = torch.optim.Adam([self.theta], lr=self.lr)
+            self.optimize_sampler(num_steps)
+        else: 
+            theta_params = self.sample_config.get("SAMPLER_PATH", self.config['flags'].data_folder + "/bns_sampler.pth")
+            if not os.path.exists(theta_params):
+                raise ValueError("No sampler path provided, set it with 'SAMPLER_PATH' in the config")
+            print("Loading sampler from %s" % theta_params)
+            self.theta = torch.load(theta_params)
+
+    def sampler(self, x, debug=False, offset=0):
+
+        U = []
+        xs = []
+        start = x
+        parameterization = zip(self.theta[:, offset:][0], self.theta[:, offset:][1])
+        for i, (a, b) in enumerate(parameterization):
+            U.append(self.model_fn(x))
+            x = x * a + U[i] * b
+            xs.append(x)
+
+        if debug:
+            return x, xs, start, U
+        
+        return x, xs, start
 
     def optimize_sampler(self): 
 
         def loss_function(x, x_prime):
-            mse = np.mean((x - x_prime) ** 2) 
+            """eq 13"""
+            mse = torch.mean((x - x_prime) ** 2) 
             if(mse == 0):  
                 return 100
-            max_val = np.max(x, axis=-1)
-            psnr = 20 * np.log10(max_val / np.sqrt(mse)) 
+            max_val = torch.max(x, axis=-1).values
+            psnr = 20 * torch.log10(max_val / torch.sqrt(mse))
             return psnr 
 
-        def training_step(): 
-            x = "" # Get the initializer
-            x_prime = self.sampler(x)
-            self.sampler.update_theta(self.lr*loss_function(x, x_prime))
+        def training_step(loader): 
+            """algo 2. With modifications from CaloDream"""
+            loss = []
+            for  E, layer_, d_batch in loader: 
+                x = d_batch#.to(self.device)
+                self.energy = E
+                self.layers = layer_
 
-        def not_converaged_condition(): 
-            return False # Your defintion
+                x_prime, _, _ = self.sampler(x, debug=False)
+                self.optimizer.zero_grad()
+
+                loss = torch.mean(loss_function(x, x_prime))
+                loss.backward()
+                self.optimizer.step()
+
+        train, _ = load_data(self.config['flags'], self.config, eval=False)
+        max_iter = self.sample_config.get("MAX_ITER", 30)
+        for _ in tqdm(range(max_iter), "training sampler..."):
+            training_step(train)
+
+        # TODO: Save the trained sampler
+        path = self.sample_config.get("SAMPLER_PATH")
+        if path is None: 
+            path = self.config['flags'].data_folder.rstrip('/') + "/bns_sampler.pt"
         
-        max_iter = self.config.get() # Comes from the config
-        not_converaged = False
-        for _ in range(max_iter):
-            if not_converaged: 
-                training_step()
-                not_converaged = not_converaged_condition()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
+        torch.save(self.theta, open(path, "wb"))
 
-
-    def model_fn(self, x, sigma): 
+    def model_fn(self, x):
+        sigma = torch.randn(x.shape[0]) # Don't really care about the noise schedule for this method.
         return self.model.denoise(x=x, sigma=sigma, E=self.energy, layers=self.layers)
     
     def __call__(self, model, start, energy, layers, num_steps, sample_offset, debug):
-
         self.model = model
-        self.energy = energy
+
+        self.load_sampler()
+        # In case we need to train, energy and layers are set after training with a dataloader
         self.layers = layers
+        self.energy = energy
 
-        sampler_params = self.sampler.theta()
-        if sampler_params != num_steps: 
-            raise ValueError("Sampler was not trained for the correct number of steps. Please check your sampler configurations.")
-        parameterization = [][sample_offset:] # Tuple of (a_i, b_i), from trained sampler_params
-        noise_schedule = [][sample_offset:] # Any monotonically increasing noise schedule, from 0 to 1. 
-        U = []
-
-        x = start
-        for i, (a,b), t in enumerate(zip(parameterization, noise_schedule)):
-            U.append(self.model_fn(x, t))
-            x = x * a + U[i] * b
-
-        if debug: 
-            return x, U
+        if num_steps != self.theta.shape[1]: 
+            raise ValueError("Number of steps must match the number of steps in the theta parameterization")
         
-        return x
+        return self.sampler(start, debug=debug, offset=sample_offset)
+

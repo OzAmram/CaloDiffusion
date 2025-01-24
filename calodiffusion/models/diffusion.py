@@ -44,8 +44,8 @@ class Diffusion(torch.nn.Module, ABC):
                 sample, sampler_algo
             )(self.config)
             
-        except AttributeError: 
-            raise ValueError("Sampler '%s' is not supported" % sampler_algo)
+        except AttributeError as e:
+            raise ValueError(f"Sampler '%s' is not supported: {e}" % sampler_algo)
 
         self.model = self.init_model()
         self.NN_embed = None

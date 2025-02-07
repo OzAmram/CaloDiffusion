@@ -25,7 +25,7 @@ class Train(ABC):
             if not os.path.exists(self.checkpoint_folder):
                 os.makedirs(self.checkpoint_folder)
 
-        self.checkpoint_folder = f"{flags.checkpoint_folder.strip('/')}/{config['CHECKPOINT_NAME']}_{self.__class__.__name__.removeprefix("Train")}/"
+        self.checkpoint_folder = f"{flags.checkpoint_folder.strip('/')}/{config['CHECKPOINT_NAME']}_{self.__class__.__name__.removeprefix('Train')}/"
         
         if hasattr(flags, "model_loc"): 
             if flags.model_loc is not None: 

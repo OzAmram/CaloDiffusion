@@ -415,7 +415,7 @@ class ResNet(nn.Module):
             nn.GELU(),
             nn.Linear(half_cond_dim, half_cond_dim),
         ]
-
+        
         cond_layers = []
         # if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
         cond_layers = [nn.Linear(cond_size, half_cond_dim // 2), nn.GELU()]

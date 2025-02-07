@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
+import json
 import os
 
 import numpy as np
 import torch
 
-
 from calodiffusion.utils import utils
+
 tqdm = utils.import_tqdm()
 
 class Train(ABC): 
@@ -24,9 +25,18 @@ class Train(ABC):
             if not os.path.exists(self.checkpoint_folder):
                 os.makedirs(self.checkpoint_folder)
 
-            os.system(
-                "cp {} {}/config.json".format(flags.config, self.checkpoint_folder)
-            )  # bkp of config file
+        self.checkpoint_folder = f"{flags.checkpoint_folder.strip('/')}/{config['CHECKPOINT_NAME']}_{self.__class__.__name__.removeprefix("Train")}/"
+        
+        if hasattr(flags, "model_loc"): 
+            if flags.model_loc is not None: 
+                self.checkpoint_folder = os.path.dirname(flags.model_loc) + "/"
+        
+        if not os.path.exists(self.checkpoint_folder):
+            os.makedirs(self.checkpoint_folder)
+
+        with open(os.path.join(self.checkpoint_folder, "config.json"), "w") as config_file:
+            json.dump(flags.config, config_file) 
+
 
     @abstractmethod
     def init_model(self): 
@@ -58,7 +68,7 @@ class Train(ABC):
 
         if os.path.exists(checkpoint_path):
             print("Loading training checkpoint from %s" % checkpoint_path, flush=True)
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         else:
             raise ValueError("No checkpoint at %s" % checkpoint_path)
 
@@ -112,9 +122,9 @@ class Train(ABC):
             )
 
         with open(self.checkpoint_folder + f"/{name}_training_losses.txt", "w") as tfileout:
-            tfileout.write("\n".join("{}".format(tl) for tl in training_losses.values()) + "\n")
+            tfileout.write("\n".join(str(loss) for loss in training_losses.values()) + "\n")
         with open(self.checkpoint_folder + f"/{name}_validation_losses.txt", "w") as vfileout:
-            vfileout.write("\n".join("{}".format(vl) for vl in validation_losses.values()) + "\n")
+            vfileout.write("\n".join(str(vl) for vl in validation_losses.values()) + "\n")
 
 
     def train(self): 
@@ -154,7 +164,7 @@ class Train(ABC):
             num_epochs, 
             training_losses, 
             val_losses
-        )    
+        )
         # Also save at the end of training
         self.save(
             model.state_dict(),

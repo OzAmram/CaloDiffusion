@@ -151,8 +151,6 @@ class CaloDiffusion(Diffusion):
         loss_function_name = type(self.loss_function).__name__
 
         c_skip, c_out, c_in = self.loss_function.get_scaling(sigma)
-
-
         pred = self.forward(x * c_in, E, t_emb, layers = layers, layer_sample=layer_sample)
 
         if('noise_pred' in loss_function_name):

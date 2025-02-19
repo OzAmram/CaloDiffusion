@@ -82,7 +82,7 @@ class CaloDiffusion(Diffusion):
 
         if (self.do_embed):
             x = self.NN_embed.enc(x).to(x.device)
-        if self.layer_cond and layers is not None:
+        if (self.layer_cond) and (layers is not None):
             E = torch.cat([E, layers], dim=1)
 
         rz_phi = self.add_RZPhi(x).float()

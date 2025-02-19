@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-import argparse
-=======
->>>>>>> ebacf4f (layer model function with training and inference methods)
 import os
 import click 
 
@@ -9,67 +5,6 @@ import numpy as np
 import h5py
 
 from calodiffusion.utils import utils
-<<<<<<< HEAD
-from calodiffusion.train import Diffusion
-#models = {model.__name__: model for model in [Diffusion]}
-models = {'diffusion': Diffusion}
-
-
-def inference_parser():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "-d", "--data-folder", default="./data/", help="Folder containing data and MC files"
-    )
-    parser.add_argument(
-        "--plot-folder", default="./plots", help="Folder to save results"
-    )
-    parser.add_argument(
-        "--plot", action='store_true', help='generate plot at the same time as running inference.'
-    )
-    parser.add_argument(
-        "--model-folder", dest='checkpoint_folder', default="../models/", help="Folder containing trained model"
-    )
-    parser.add_argument("--generated", "-g", default="", help="File name for generated showers")
-    parser.add_argument("--model-loc", default="test", help="Location of model")
-    parser.add_argument(
-        "--config", "-c", default="config_dataset2.json", help="Training parameters"
-    )
-    parser.add_argument(
-        "-n", "--nevts", type=int, default=-1, help="Number of events to load"
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=100, help="Batch size for generation"
-    )
-    parser.add_argument(
-        "--model",
-        default="diffusion",
-        help="Diffusion model to load.",
-        choices=models.keys()
-    )
-    parser.add_argument("--plot-label", default="", help="Add to plot")
-
-    parser.add_argument(
-        "--sample", action="store_true", default=False, help="Sample from learned model"
-    )
-    parser.add_argument(
-        "--reclean", action="store_true", default=False, help="Redo preprocessing on loaded sample"
-    )
-    parser.add_argument(
-        "--sample-steps",
-        default=None,
-        type=int,
-        help="How many steps for sampling (override config)",
-    )
-    parser.add_argument(
-        "--sample-offset",
-        default=0,
-        type=int,
-        help="Skip some iterations in the sampling (noisiest iters most unstable)",
-    )
-    
-    parser.add_argument("--frac", help=argparse.SUPPRESS, default=0.75)
-=======
 import calodiffusion.utils.plots as plots
 from calodiffusion.utils.utils import LoadJson
 
@@ -82,15 +17,16 @@ class dotdict(dict):
     __delattr__ = dict.__delitem__
 
 @click.group()
-@click.option("--config", required=True)
-@click.option("--data-folder", default="./data/", help="Folder containing data and MC files")
+@click.option("-c", "--config", required=True)
+@click.option("-d", "--data-folder", default="./data/", help="Folder containing data and MC files")
 @click.option("--checkpoint-folder", default="./trained_models/", help="Folder to save checkpoints")
 @click.option("-n", "--n-events", default=-1, type=int, help="Number of events to load")
 @click.option("--job-idx", default=-1, type=int, help="Split generation among different jobs")
 @click.option("--layer-only/--no-layer", default=False, help="Only sample layer energies")
+@click.option("--reclean/--no-reclean", default=False, help="Redo preprocessing on loaded sample")
 @click.option("--debug/--no-debug", default=False, help="Debugging options")
 @click.pass_context
-def inference_parser(ctx, debug, config, data_folder, checkpoint_folder, layer_only, job_idx, n_events): 
+def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, job_idx, n_events): 
     ctx.ensure_object(dotdict)
     
     ctx.obj.config = LoadJson(config)
@@ -102,7 +38,7 @@ def inference_parser(ctx, debug, config, data_folder, checkpoint_folder, layer_o
     ctx.obj.layer_only = layer_only
 
 
-@inference_parser.group()
+@inference.group()
 @click.option("--sample-steps", default=400, type=int, help="How many steps for sampling (override config)")
 @click.option("--sample-offset", default=0, type=int, help="Skip some iterations in the sampling (noisiest iters most unstable)")
 @click.option("--sample-algo", default="ddpm", help="What sampling algorithm (ddpm, ddim, cold, cold2)")
@@ -119,16 +55,14 @@ def sample(ctx, sample_steps, sample_algo, sample_offset, model_loc):
 @click.pass_context
 def layer(ctx, layer_model): 
     ctx.obj.config['layer_model'] = layer_model
-    inference(ctx.obj, ctx.obj.config, model=TrainLayerModel)
+    run_inference(ctx.obj, ctx.obj.config, model=TrainLayerModel)
 
 @sample.command()
 @click.pass_context
 def diffusion(ctx):
-    inference(ctx.obj, ctx.obj.config, model=Diffusion)
->>>>>>> ebacf4f (layer model function with training and inference methods)
+    run_inference(ctx.obj, ctx.obj.config, model=Diffusion)
 
-
-@inference_parser.command()
+@inference.command()
 @click.option("-g", "--generated", help="Generated showers", required=True)
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
@@ -136,12 +70,6 @@ def diffusion(ctx):
 def plot(ctx, generated, plot_label):
     ctx.obj.plot_label = plot_label
 
-<<<<<<< HEAD
-    flags = parser.parse_args()
-    config = utils.LoadJson(flags.config)
-    config['flags'] = flags  # Access shortcut
-    return flags, config
-=======
     flags = ctx.obj
     evt_start = flags.job_idx * flags.nevts
     dataset_num = ctx.obj.config.get("DATASET_NUM", 2)
@@ -173,7 +101,6 @@ def plot(ctx, generated, plot_label):
     }
 
     plot_results(flags, ctx.config, data_dict, energies)
->>>>>>> ebacf4f (layer model function with training and inference methods)
 
 
 def write_out(fout, flags, config, generated, energies, first_write = True, do_mask = False):
@@ -188,7 +115,6 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
     hgcal = config.get("HGCAL", False)
     shower_scale = config.get('SHOWERSCALE', 200.)
 
-<<<<<<< HEAD
     if(do_mask  and dataset_num > 1):
         #mask for voxels that are always empty
         mask_file = os.path.join(flags.data_folder,config['EVAL'][0].replace('.hdf5','_mask.hdf5'))
@@ -200,10 +126,6 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
             with h5py.File(mask_file,"r") as h5f:
                 mask = h5f['mask'][:]
         generated = generated*(np.reshape(mask,(1,-1))==0)
-=======
-        if flags.debug: 
-            data.append(d_batch)
->>>>>>> ebacf4f (layer model function with training and inference methods)
 
     generated = np.reshape(generated, config['SHAPE_ORIG'])
     if(first_write):
@@ -231,56 +153,7 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
 
     first_write = True
 
-<<<<<<< HEAD
     write_out(fout, flags, config, generated, energies, first_write=first_write)
-
-
-def inference(flags, config):
-    data_loader, _ = utils.load_data(flags, config, eval=True)
-=======
-                fout_ex = "{}/{}_{}_norm_voxels_x0_step{}.{}".format(
-                    flags.plot_folder,
-                    config["CHECKPOINT_NAME"],
-                    flags.model,
-                    j,
-                    ".png",
-                )
-                plot.Plot(flags, config)._histogram(
-                    [x0s[j].cpu().reshape(-1), np.concatenate(data).reshape(-1)],
-                    ["Diffu", "Geant4"],
-                    ["blue", "black"],
-                    xaxis_label="Normalized Voxel Energy",
-                    num_bins=40,
-                    normalize=True,
-                    fname=fout_ex,
-                )
-
-            generated.append(gen)
-
-    generated = np.concatenate(generated)
-    energies = np.concatenate(energies)
-    layers = np.concatenate(layers)
-
-    if not orig_shape:
-        generated = generated.reshape(config["SHAPE"])
-
-    generated, energies = utils.ReverseNorm(
-        generated,
-        energies,
-        layerE=layers,
-        shape=config["SHAPE"],
-        logE=config["logE"],
-        binning_file=config["BIN_FILE"],
-        max_deposit=config["MAXDEP"],
-        emax=config["EMAX"],
-        emin=config["EMIN"],
-        showerMap=config["SHOWERMAP"],
-        dataset_num=config.get("DATASET_NUM", 2),
-        orig_shape=orig_shape,
-        ecut=config["ECUT"],
-    )
-
-    return generated, energies
 
 
 def LoadSamples(flags, config, geom_conv):
@@ -323,10 +196,8 @@ def plot_results(flags, config, data_dict, energies):
         plotting_method(data_dict, energies)
 
 
-def inference(flags, config, model):
+def run_inference(flags, config, model):
     data_loader = utils.load_data(flags, config, eval=True)
-    dataset_num = config.get("DATASET_NUM", 2)
->>>>>>> ebacf4f (layer model function with training and inference methods)
 
     model_instance = model(flags, config, load_data=False)
     model_instance.init_model()
@@ -349,9 +220,4 @@ def inference(flags, config, model):
     write_out(fout, flags, config, generated, energies, first_write=True)
 
 if __name__ == "__main__":
-<<<<<<< HEAD
-    flags, config = inference_parser()
-    inference(flags, config)
-=======
-    inference_parser()
->>>>>>> ebacf4f (layer model function with training and inference methods)
+    inference()

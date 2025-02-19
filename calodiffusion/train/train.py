@@ -64,13 +64,17 @@ class Train(ABC):
         n_epochs,
         restart_training,
     ):
-        checkpoint_path = os.path.join(self.checkpoint_folder, "checkpoint.pth")
+        
+        if not hasattr(self.flags, "model_loc"):
+            checkpoint_path = os.path.join(self.checkpoint_folder, "checkpoint.pth")
 
-        if os.path.exists(checkpoint_path):
-            print("Loading training checkpoint from %s" % checkpoint_path, flush=True)
-            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        else:
-            raise ValueError("No checkpoint at %s" % checkpoint_path)
+            if os.path.exists(checkpoint_path):
+                print("Loading training checkpoint from %s" % checkpoint_path, flush=True)
+                checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            else:
+                raise ValueError("No checkpoint at %s" % checkpoint_path)
+        else: 
+            checkpoint = torch.load(self.flags.model_loc, map_location=self.device, weights_only=False)
 
         if "model_state_dict" in checkpoint.keys():
             model.load_state_dict(checkpoint["model_state_dict"])

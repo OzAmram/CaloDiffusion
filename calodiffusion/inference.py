@@ -125,7 +125,7 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
         else:
             with h5py.File(mask_file,"r") as h5f:
                 mask = h5f['mask'][:]
-        generated = generated*(np.reshape(mask,(1,-1))==0)
+        generated = generated *(np.reshape(mask,(1,-1))==0)
 
     generated = np.reshape(generated, config['SHAPE_ORIG'])
     if(first_write):

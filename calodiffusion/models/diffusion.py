@@ -150,8 +150,12 @@ class Diffusion(torch.nn.Module, ABC):
             if debug:
                 data.append(d_batch.detach().cpu().numpy())
 
+<<<<<<< HEAD
             E = E.detach().cpu().numpy()
             energies.append(E)
+=======
+            energies.append(E.detach())
+>>>>>>> 42d4ce7 (detact results from gpu)
 
             if "layer" in self.config["SHOWERMAP"]:
                 layers.append(layers_.detach().cpu().numpy())

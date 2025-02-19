@@ -17,7 +17,7 @@ class LayerDiffusion(CaloDiffusion):
 
     def init_model(self):
         self.layer_model = ResNet(dim_in = self.config['SHAPE_PAD'][2] + 1, num_layers = 5).to(device = self.device)
-        model = super().init_model()
+        model = super().init_model().to(device = self.device)
         self.base_model = model
         return model
 
@@ -40,7 +40,6 @@ class LayerDiffusion(CaloDiffusion):
         out = self.model(rz_phi, cond=E.to(torch.float32), time=time.to(torch.float32), controls=kwargs)
         return out
     
-
     def sample_layers(self, energy, layers, debug = False, sample_offset = None):
         self.model = self.layer_model
         self.layer_loss = True

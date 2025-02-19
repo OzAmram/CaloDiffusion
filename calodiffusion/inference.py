@@ -67,9 +67,11 @@ def diffusion(ctx):
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
 @click.pass_context
-def plot(ctx, generated, plot_label):
+def plot(ctx, generated, plot_label, plot_folder):
     ctx.obj.plot_label = plot_label
-
+    ctx.obj.plot_folder = plot_folder
+    ctx.obj.generated = generated
+    
     flags = ctx.obj
     evt_start = flags.job_idx * flags.nevts
     dataset_num = ctx.obj.config.get("DATASET_NUM", 2)

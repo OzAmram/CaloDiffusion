@@ -1,7 +1,13 @@
-# CaloDiffusion unofficial repository (WIP)
+# CaloDiffusion unofficial repository (WIP) - 2.0
 
+Implemented with Pytorch 2.0. 
+Depedencies listed in the pyproject.yaml
 
-Pytorch v1.9  was used to implement all models. 
+Insall with 
+```
+git clone https://github.com/[fork]/CaloDiffusion.git
+pip install -e .
+```
 
 # Data
 
@@ -13,20 +19,34 @@ Results are presented using the [Fast Calorimeter Data Challenge dataset](https:
 # Run the training scripts with
 
 ```bash
-cd scripts
-python train_diffu.py  --config CONFIG
+calodif-train 
+    -d DATA-DIR \
+    -c CONFIG \
+    --checkpoint SAVE-DIR \
+MODEL-TYPE
 ```
-* Example configs in ```[config_dataset1.json/config_dataset2.json/config_dataset3.json]```
+* Example configs in ```[config_dataset1.json/config_dataset2.json/config_dataset3.json]```'
+* Additional options can be seen with `calodif-train --help`
 
 # Sampling with the learned model
 
 ```bash
-python plot.py  --nevts N  --sample  --config CONFIG --model MODEL
+calodif-inference
+  --n-events N \
+  -c CONFIG \
+sample MODEL-TYPE
+  
 ```
+* Additional options can be found with `calodif-inference --help`
+  
 # Creating the plots shown in the paper
 
 ```bash
-python plot.py  --config CONFIG --model MODEL
+calodif-inference
+  --n-events N \
+  -c CONFIG \
+plot \
+  --generated RESULTS-H5F
 ```
 
 

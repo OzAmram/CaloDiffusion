@@ -26,6 +26,8 @@ dependencies = [
   "fvcore>=0.1.5", 
   "torchsde>=0.2.6"
   "click>=8.0.1"
+  "click>=8.0.1", 
+  "torchsde>=0.2.6"
 ]
 
 [build-system]
@@ -34,3 +36,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["calodiffusion"]
+
+[project.scripts]
+calodif-inference = "calodiffusion.inference:inference_parser"
+calodif-train = "calodiffusion.train:train"

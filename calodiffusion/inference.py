@@ -66,11 +66,13 @@ def diffusion(ctx):
 @click.option("-g", "--generated", help="Generated showers", required=True)
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
+@click.option("-e", "--extension", help="Types of files to save under.", multiple=True, default=["png"])
 @click.pass_context
-def plot(ctx, generated, plot_label, plot_folder):
+def plot(ctx, generated, plot_label, plot_folder, extension):
     ctx.obj.plot_label = plot_label
     ctx.obj.plot_folder = plot_folder
     ctx.obj.generated = generated
+    ctx.obj.plot_extensions = extension
 
     flags = ctx.obj
     

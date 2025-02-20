@@ -71,9 +71,10 @@ def plot(ctx, generated, plot_label, plot_folder):
     ctx.obj.plot_label = plot_label
     ctx.obj.plot_folder = plot_folder
     ctx.obj.generated = generated
-    
+
     flags = ctx.obj
-    evt_start = flags.job_idx * flags.nevts
+    
+    evt_start = flags.job_idx * flags.nevts if flags.job_idx >=0 else 0
     dataset_num = ctx.obj.config.get("DATASET_NUM", 2)
 
     bins = utils.XMLHandler(ctx.obj.config["PART_TYPE"], ctx.obj.config["BIN_FILE"])
@@ -99,10 +100,10 @@ def plot(ctx, generated, plot_label, plot_folder):
 
     data_dict = {
         "Geant4": np.reshape(data, ctx.obj.config["SHAPE"]),
-        utils.name_translate.get(flags.model, flags.model): generated,
+        utils.name_translate(generated_file_path=ctx.obj.generated): generated,
     }
 
-    plot_results(flags, ctx.config, data_dict, energies)
+    plot_results(flags, ctx.obj.config, data_dict, energies)
 
 
 def write_out(fout, flags, config, generated, energies, first_write = True, do_mask = False):

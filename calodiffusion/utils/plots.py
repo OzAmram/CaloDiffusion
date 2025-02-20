@@ -263,9 +263,8 @@ class Plot(ABC):
         reference_name="Geant4",
         no_mean=False,
     ):
-        assert (
-            reference_name in feed_dict.keys()
-        ), "ERROR: Don't know the reference distribution"
+        if reference_name not in feed_dict.keys(): 
+            raise NotImplementedError("Reference distribution %s not included, choice from %s", (reference_name, feed_dict.keys()))
 
         fig, gs = self.SetGrid()
         ax0 = plt.subplot(gs[0])

@@ -1039,7 +1039,7 @@ class BespokeNonStationary(Sample):
         if self.sample_config.get("TRAIN_SAMPLER", False): 
             self.lr = self.sample_config.get("LR", 1e-3)
             self.optimizer = torch.optim.Adam([self.theta], lr=self.lr)
-            self.optimize_sampler(num_steps)
+            self.optimize_sampler()
         else: 
             theta_params = self.sample_config.get("SAMPLER_PATH", self.config['flags'].data_folder + "/bns_sampler.pth")
             if not os.path.exists(theta_params):
@@ -1089,6 +1089,7 @@ class BespokeNonStationary(Sample):
                 loss.backward()
                 self.optimizer.step()
 
+        self.config['flags'].frac = 0.9
         train, _ = load_data(self.config['flags'], self.config, eval=False)
         max_iter = self.sample_config.get("MAX_ITER", 30)
         for _ in tqdm(range(max_iter), "training sampler..."):
@@ -1110,7 +1111,7 @@ class BespokeNonStationary(Sample):
     def __call__(self, model, start, energy, layers, num_steps, sample_offset, debug):
         self.model = model
 
-        self.load_sampler()
+        self.load_sampler(num_steps)
         # In case we need to train, energy and layers are set after training with a dataloader
         self.layers = layers
         self.energy = energy

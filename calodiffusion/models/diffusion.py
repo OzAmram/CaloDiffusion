@@ -32,7 +32,7 @@ class Diffusion(torch.nn.Module, ABC):
         self.loss_function = utils.load_attr("loss", loss_algo)(self.config, self.nsteps, self.loss_type)
 
         sampler_algo = self.config.get("SAMPLER", "DDim")
-        self.sampler_algorithm = utils.load_attr("sampler", sampler_algo)(self.config, sampler_algo.lower())
+        self.sampler_algorithm = utils.load_attr("sampler", sampler_algo)(self.config)
 
         self.model = self.init_model()
         self.NN_embed = None

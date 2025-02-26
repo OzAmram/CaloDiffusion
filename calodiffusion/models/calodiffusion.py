@@ -22,6 +22,14 @@ class CaloDiffusion(Diffusion):
         self.layer_cond = "layer" in config.get("SHOWERMAP", "")
         self.NN_embed = self.init_embedding_model()
 
+
+    def load_state_dict(self, state_dict, strict = True):
+        base_model_name = list(state_dict.keys())[10].split('.')[0]
+        state_dict = {
+            key.removeprefix(f"{base_model_name}."): value for key, value in state_dict.items() if key.split('.')[0] == base_model_name
+        }
+        return super().load_state_dict(state_dict, strict)
+    
     def init_model(self):
 
         self.pre_embed = "pre-embed" in self.config['SHOWER_EMBED']

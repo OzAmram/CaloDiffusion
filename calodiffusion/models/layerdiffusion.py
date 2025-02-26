@@ -11,7 +11,7 @@ class LayerDiffusion(CaloDiffusion):
         super().__init__(config, n_steps, loss_type)
         self.layer_loss = False 
         sampler_algo = self.config.get("LAYER_SAMPLER", "DDim")
-        self.layer_sampler = utils.load_attr("sampler", sampler_algo)(self.config, sampler_algo.lower())
+        self.layer_sampler = utils.load_attr("sampler", sampler_algo)(self.config)
         self.layer_steps = self.config.get("LAYER_STEPS", n_steps)
         self.base_forward = self.forward
 

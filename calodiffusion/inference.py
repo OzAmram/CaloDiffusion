@@ -18,7 +18,7 @@ class dotdict(dict):
     __delattr__ = dict.__delitem__
 
 @click.group()
-@click.option("-c", "--config", required=True)
+@click.option("-c", "--config")
 @click.option("-d", "--data-folder", default="./data/", help="Folder containing data and MC files")
 @click.option("--checkpoint-folder", default="./trained_models/", help="Folder to save checkpoints")
 @click.option("-n", "--n-events", default=-1, type=int, help="Number of events to load")
@@ -35,7 +35,7 @@ def inference_parser(ctx, debug, config, data_folder, checkpoint_folder, layer_o
 >>>>>>> ac78ce1 (Small corrections post merge pr)
     ctx.ensure_object(dotdict)
     
-    ctx.obj.config = LoadJson(config)
+    ctx.obj.config = LoadJson(config) if config is not None else {}
     ctx.obj.checkpoint_folder = checkpoint_folder
     ctx.obj.data_folder = data_folder
     ctx.obj.debug = debug
@@ -85,7 +85,7 @@ def diffusion(ctx):
     run_inference(ctx.obj, ctx.obj.config, model=Diffusion)
 
 @inference.command()
-@click.option("-g", "--generated", help="Generated showers", required=True)
+@click.option("-g", "--generated", help="Generated showers")
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
 @click.option("-e", "--extension", help="Types of files to save under.", multiple=True, default=["png"])

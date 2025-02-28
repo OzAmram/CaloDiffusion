@@ -8,8 +8,11 @@ from calodiffusion.utils.plots import RadialEnergyHGCal
 from calodiffusion.utils.utils import *
 from calodiffusion.utils.HGCal_utils import *
 
-if(torch.cuda.is_available()): device = torch.device('cuda')
-else: device = torch.device('cpu')
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+
 
 def test_parser():
     parser = ArgumentParser()
@@ -18,17 +21,25 @@ def test_parser():
         "--data-folder", default="./data/", help="Folder containing data and MC files"
     )
     parser.add_argument(
-        "--plot-folder", default="./plots/hgcal_energy_test/", help="Folder to save results"
+        "--plot-folder",
+        default="./plots/hgcal_energy_test/",
+        help="Folder to save results",
     )
     parser.add_argument(
-        "--plot-reshape", default=False, action='store_true', help='Plots in embeded space'
+        "--plot-reshape",
+        default=False,
+        action="store_true",
+        help="Plots in embeded space",
     )
     parser.add_argument(
-        "--cms", default=False, action='store_true', help='CMS style for the plots'
+        "--cms", default=False, action="store_true", help="CMS style for the plots"
     )
-    parser.add_argument("--generated", "-g", default='', help="Generated showers")
+    parser.add_argument("--generated", "-g", default="", help="Generated showers")
     parser.add_argument(
-        "--config", "-c", default="calodiffusion/configs/config_HGCal.json", help="Training parameters"
+        "--config",
+        "-c",
+        default="calodiffusion/configs/config_HGCal.json",
+        help="Training parameters",
     )
     parser.add_argument(
         "--EMin", default=-1.0, type=float, help="Min cell energy threshold"
@@ -38,7 +49,6 @@ def test_parser():
     )
     parser.add_argument("--plot-label", default="", help="Add to plot")
 
-
     flags = parser.parse_args()
     config = LoadJson(flags.config)
     return flags, config
@@ -47,108 +57,111 @@ def test_parser():
 def test_hgcal_energy_loader(flags, config):
     hgcal = True
 
-    dataset = os.path.join(flags.data_folder, config['FILES'][0])
-
+    dataset = os.path.join(flags.data_folder, config["FILES"][0])
 
     batch_size = config["BATCH"]
     dataset_num = config.get("DATASET_NUM", 2)
     shower_embed = config.get("SHOWER_EMBED", "")
     orig_shape = "orig" in shower_embed
     layer_norm = "layer" in config["SHOWERMAP"]
-    geom_file = config.get('BIN_FILE', '')
+    geom_file = config.get("BIN_FILE", "")
 
-    pre_embed = ('pre-embed' in shower_embed)
-    shower_scale = config.get('SHOWERSCALE', 200.)
-    max_cells = config.get('MAX_CELLS', None)
+    pre_embed = "pre-embed" in shower_embed
+    shower_scale = config.get("SHOWERSCALE", 200.0)
+    max_cells = config.get("MAX_CELLS", None)
 
-    shape_orig = config.get('SHAPE_ORIG')
-    shape_pad = config.get('SHAPE_PAD')
-    shape_final = config.get('SHAPE_FINAL')
+    shape_orig = config.get("SHAPE_ORIG")
+    shape_pad = config.get("SHAPE_PAD")
+    shape_final = config.get("SHAPE_FINAL")
 
     geom_file = config.get("BIN_FILE")
 
-
-    NN_embed = HGCalConverter(bins = shape_final, geom_file = geom_file, device = device ).to(device = device)
+    NN_embed = HGCalConverter(bins=shape_final, geom_file=geom_file, device=device).to(
+        device=device
+    )
     NN_embed.init()
 
-    e_key = 'gen_info'
+    e_key = "gen_info"
 
+    with h5.File(dataset, "r") as h5f:
+        gen = h5f[e_key][0 : int(flags.nevts)].astype(np.float32)
+        gen[:, 0] *= shower_scale
+        raw_shower = (
+            h5f["showers"][0 : int(flags.nevts)].astype(np.float32) * shower_scale
+        )
+        raw_shower = raw_shower[:, :, :max_cells]
 
-
-
-    with h5.File(dataset,"r") as h5f:
-        gen = h5f[e_key][0:int(flags.nevts)].astype(np.float32)
-        gen[:,0] *= shower_scale
-        raw_shower = h5f['showers'][0:int(flags.nevts)].astype(np.float32) * shower_scale
-        raw_shower = raw_shower[:,:,:max_cells]
-
-
-    #process this dataset
+    # process this dataset
     data_, e_, layers = DataLoader(
         dataset,
-        shape = config['SHAPE_PAD'],
-        emax = config['EMAX'],
-        emin = config['EMIN'],
-        hgcal = hgcal,
-        nevts = flags.nevts,
+        shape=config["SHAPE_PAD"],
+        emax=config["EMAX"],
+        emin=config["EMIN"],
+        hgcal=hgcal,
+        nevts=flags.nevts,
         binning_file=geom_file,
-        max_deposit=config['MAXDEP'], #noise can generate more deposited energy than generated
-        logE=config['logE'],
-        showerMap = config['SHOWERMAP'],
-        shower_scale = shower_scale,
-        max_cells = max_cells,
-
-        dataset_num  = dataset_num,
-        orig_shape = orig_shape,
-        config = config, 
-        embed = pre_embed,
-        NN_embed = NN_embed,
+        max_deposit=config[
+            "MAXDEP"
+        ],  # noise can generate more deposited energy than generated
+        logE=config["logE"],
+        showerMap=config["SHOWERMAP"],
+        shower_scale=shower_scale,
+        max_cells=max_cells,
+        dataset_num=dataset_num,
+        orig_shape=orig_shape,
+        config=config,
+        embed=pre_embed,
+        NN_embed=NN_embed,
     )
-
 
     print(data_.shape)
     print(layers.shape)
 
-
     print(shape_pad)
-    data = np.reshape(data_,shape_pad)
+    data = np.reshape(data_, shape_pad)
 
-    if(not pre_embed):
+    if not pre_embed:
         tdata = torch.tensor(data)
-        
+
         data_enc = apply_in_batches(NN_embed.enc, tdata, device=device)
-        data_dec  = apply_in_batches(NN_embed.dec, data_enc, device=device).detach().cpu().numpy()
+        data_dec = (
+            apply_in_batches(NN_embed.dec, data_enc, device=device)
+            .detach()
+            .cpu()
+            .numpy()
+        )
         data_enc = data_enc.detach().cpu().numpy()
 
     else:
         data_enc = data_dec = data
 
-
-
-    data_rev, e_rev = ReverseNorm( data_dec, e_, shape=shape_pad, layerE = layers, 
-        emax = config['EMAX'],
-        emin = config['EMIN'],
-        max_deposit=config['MAXDEP'], #noise can generate more deposited energy than generated
-        logE=config['logE'],
-        showerMap = config['SHOWERMAP'],
-        dataset_num = dataset_num,
-        ecut = flags.EMin,
-        orig_shape = orig_shape,
-        hgcal = hgcal,
-
-        embed = pre_embed,
-        NN_embed = NN_embed,
+    data_rev, e_rev = ReverseNorm(
+        data_dec,
+        e_,
+        shape=shape_pad,
+        layerE=layers,
+        emax=config["EMAX"],
+        emin=config["EMIN"],
+        max_deposit=config[
+            "MAXDEP"
+        ],  # noise can generate more deposited energy than generated
+        logE=config["logE"],
+        showerMap=config["SHOWERMAP"],
+        dataset_num=dataset_num,
+        ecut=flags.EMin,
+        orig_shape=orig_shape,
+        hgcal=hgcal,
+        embed=pre_embed,
+        NN_embed=NN_embed,
     )
 
+    data_rev[data_rev < flags.EMin] = 0.0
 
-
-    data_rev[data_rev < flags.EMin] = 0.
-
-    print("ShowerMap %s" % config['SHOWERMAP'])
+    print("ShowerMap %s" % config["SHOWERMAP"])
     print("RAW: \n")
-    #print(raw_shower[0,0,10])
+    # print(raw_shower[0,0,10])
     print("PREPROCESSED: \n")
-    #print(data_[0,0,10])
+    # print(data_[0,0,10])
     mean = np.mean(data_enc)
     std = np.std(data_enc)
     maxE = np.amax(data_enc)
@@ -156,44 +169,42 @@ def test_hgcal_energy_loader(flags, config):
 
     maxEn = np.amax(e_)
     minEn = np.amin(e_)
-    print("MEAN: %.4f STD : %.5f"  % (mean, std))
-    print("MAX: %.4f MIN : %.5f"  % (maxE, minE))
+    print("MEAN: %.4f STD : %.5f" % (mean, std))
+    print("MAX: %.4f MIN : %.5f" % (maxE, minE))
     print("maxE %.2f minE %.2f" % (maxEn, minEn))
 
-    if(layers is not None):
-        totalE,layers_ = layers[:,0], layers[:,1:]
+    if layers is not None:
+        totalE, layers_ = layers[:, 0], layers[:, 1:]
         print("TotalE MEAN %.4f, STD: %.5f" % (np.mean(totalE), np.std(totalE)))
         print("LAYERS MEAN %.4f, STD: %.5f" % (np.mean(layers_), np.std(layers_)))
     print("REVERSED: \n")
-    print("AVG DIFF: ", np.mean( data_rev[:100] - raw_shower[:100]))
+    print("AVG DIFF: ", np.mean(data_rev[:100] - raw_shower[:100]))
 
-    if(not orig_shape):
+    if not orig_shape:
         data_rev = np.reshape(data_rev, shape_orig)
         raw_shower = np.reshape(raw_shower, shape_orig)
         layer_rev = np.sum(data_rev, (2))
         raw_layer = np.sum(raw_shower, (2))
         print(data_rev.shape)
-        print("AVG LAYER DIFF: ", np.mean( layer_rev[:100] - raw_layer[:100]))
+        print("AVG LAYER DIFF: ", np.mean(layer_rev[:100] - raw_layer[:100]))
 
     print("REVERSED: \n")
-    #print(data_rev[0,0,10])
+    # print(data_rev[0,0,10])
     print("AVG DIFF: ", torch.mean(torch.tensor(data_rev[:1000]) - raw_shower[:1000]))
 
-
-
     data_dict = {}
-    data_dict['Geant4'] = raw_shower
-    data_dict['Embed- Pre-process - ReverseNorm - Decode'] = data_rev
-    flags.model="test"
+    data_dict["Geant4"] = raw_shower
+    data_dict["Embed- Pre-process - ReverseNorm - Decode"] = data_rev
+    flags.model = "test"
     rad_plotter = RadialEnergyHGCal(flags, config)
     rad_plotter(data_dict, e_rev)
 
-    if(False):
+    if False:
         layers = [3, 10, 24]
         geo = NN_embed.geom
 
-        avg_shower_before = np.squeeze(np.mean(raw_shower, axis = 0))
-        avg_shower_after = np.squeeze(np.mean(data_rev, axis = 0))
+        avg_shower_before = np.squeeze(np.mean(raw_shower, axis=0))
+        avg_shower_after = np.squeeze(np.mean(data_rev, axis=0))
 
         avg_shower_ratio = avg_shower_after / avg_shower_before
 
@@ -201,12 +212,32 @@ def test_hgcal_energy_loader(flags, config):
             print(ilay)
 
             ncells = int(round(geo.ncells[ilay]))
-            plot_shower_hex(geo.xmap[ilay][:ncells], geo.ymap[ilay][:ncells], avg_shower_before[ilay][:ncells] , log_scale=False, nrings = geo.nrings, fout = flags.plot_folder + "avg_shower_lay%i_before.png" % (ilay))
-            plot_shower_hex(geo.xmap[ilay][:ncells], geo.ymap[ilay][:ncells], avg_shower_after[ilay][:ncells] , log_scale=False, nrings = geo.nrings, fout = flags.plot_folder + "avg_shower_lay%i_after.png" % (ilay))
-            plot_shower_hex(geo.xmap[ilay][:ncells], geo.ymap[ilay][:ncells], avg_shower_ratio[ilay][:ncells] , log_scale=False, nrings = geo.nrings, fout = flags.plot_folder + "avg_shower_lay%i_ratio.png" % (ilay))
+            plot_shower_hex(
+                geo.xmap[ilay][:ncells],
+                geo.ymap[ilay][:ncells],
+                avg_shower_before[ilay][:ncells],
+                log_scale=False,
+                nrings=geo.nrings,
+                fout=flags.plot_folder + "avg_shower_lay%i_before.png" % (ilay),
+            )
+            plot_shower_hex(
+                geo.xmap[ilay][:ncells],
+                geo.ymap[ilay][:ncells],
+                avg_shower_after[ilay][:ncells],
+                log_scale=False,
+                nrings=geo.nrings,
+                fout=flags.plot_folder + "avg_shower_lay%i_after.png" % (ilay),
+            )
+            plot_shower_hex(
+                geo.xmap[ilay][:ncells],
+                geo.ymap[ilay][:ncells],
+                avg_shower_ratio[ilay][:ncells],
+                log_scale=False,
+                nrings=geo.nrings,
+                fout=flags.plot_folder + "avg_shower_lay%i_ratio.png" % (ilay),
+            )
 
 
-
-if(__name__ == "__main__"):
+if __name__ == "__main__":
     flags, config = test_parser()
     test_hgcal_energy_loader(flags, config)

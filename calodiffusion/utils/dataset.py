@@ -45,7 +45,9 @@ class Dataset(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         files_to_read = self.files
         if worker_info is not None:
-            files_to_read = np.array_split(files_to_read, worker_info.num_workers)[ worker_info.id ]
+            files_to_read = np.array_split(files_to_read, worker_info.num_workers)[
+                worker_info.id
+            ]
 
         for file in files_to_read:
             if self.verbose:
@@ -54,6 +56,6 @@ class Dataset(IterableDataset):
                 Es = data["E"]
                 layers = data["layers"]
                 showers = data["showers"]
-                for E,layer,shower in zip(Es,layers,showers):
+                for E, layer, shower in zip(Es, layers, showers):
                     yield E, layer, shower
         return None

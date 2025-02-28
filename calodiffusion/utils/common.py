@@ -12,6 +12,7 @@ import torch.utils.data as torchdata
 
 import mplhep as hep
 
+
 def get_device():
     if torch.cuda.is_available():
         device = torch.device("cuda")

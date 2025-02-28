@@ -872,7 +872,7 @@ def load_data(args, config, eval=False, NN_embed = None):
             #process this dataset
             showers,E,layers = DataLoader(
                 os.path.join(args.data_folder,dataset),
-                config['SHAPE_PAD'],
+                shape = config['SHAPE_PAD'],
                 emax = config['EMAX'],
                 emin = config['EMIN'],
                 hgcal = hgcal,

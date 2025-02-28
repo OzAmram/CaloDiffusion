@@ -396,7 +396,8 @@ class HistERatio(Plot):
         for key in data_dict:
             feed_dict[key] /= norm
 
-        binning = np.linspace(0.5, 1.5, 51)
+        #binning = np.linspace(0.5, 1.5, 51)
+        binning = np.linspace(0.7, 1.3, 30)
 
         fig,ax0 = self._hist(
             feed_dict,

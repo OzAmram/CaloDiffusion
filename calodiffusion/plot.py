@@ -87,8 +87,8 @@ def LoadSamples(fname, flags, config, NN_embed = None, nevts = -1):
 
 
     if(flags.EMin > 0.):
-        mask = generated < EMin
-        generated = apply_mask_conserveE(generated, mask)
+        mask = generated < flags.EMin
+        generated = utils.apply_mask_conserveE(generated, mask)
 
     return generated, energies
 

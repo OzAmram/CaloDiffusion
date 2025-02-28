@@ -74,21 +74,14 @@ class Train(ABC):
         if "early_stop_dict" in checkpoint.keys() and not restart_training:
             early_stopper.__dict__ = checkpoint["early_stop_dict"]
 
-        training_losses = np.zeros(n_epochs)
-        val_losses = np.zeros(n_epochs)
+        training_losses = {}
+        val_losses = {}
         start_epoch = 0
 
         if "train_loss_hist" in checkpoint.keys() and not restart_training:
             training_losses = checkpoint["train_loss_hist"]
             val_losses = checkpoint["val_loss_hist"]
             start_epoch = checkpoint["epoch"] + 1
-            if len(training_losses) < n_epochs:
-                training_losses = np.concatenate(
-                    (training_losses, [0] * (n_epochs - len(training_losses)))
-                )
-                val_losses = np.concatenate(
-                    (val_losses, [0] * (n_epochs - len(val_losses)))
-                )
 
         return model, optimizer, scheduler, start_epoch, training_losses, val_losses
 

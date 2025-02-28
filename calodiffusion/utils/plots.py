@@ -7,6 +7,7 @@ from matplotlib import gridspec
 import matplotlib.ticker as mtick
 
 from calodiffusion.utils import utils
+import calodiffusion.utils.HGCal_utils as HGCal_utils
 
 def WeightedMean(coord, energies, power=1, axis=-1):
     ec = np.sum(energies*np.power(coord,power),axis=axis)
@@ -31,6 +32,10 @@ def ang_center_spread(matrix, energies, axis=-1):
     return ang_mean, ang_std
 
 
+def GetWidth(mean, mean2):
+    width = np.ma.sqrt(mean2 - mean**2).filled(0)
+    return width
+
 class ScalarFormatterClass(mtick.ScalarFormatter):
     # https://www.tutorialspoint.com/show-decimal-places-and-scientific-notation-on-the-axis-of-a-matplotlib-plot
     def _set_format(self):
@@ -43,6 +48,7 @@ class Plot(ABC):
         self.config = config
 
         self.plt_exts = ["png", "pdf"]
+        self.axis_scales = ["", "_logy"]
 
 
         self.line_style = {
@@ -60,16 +66,29 @@ class Plot(ABC):
             "CaloDiffusion": "blue",
             "HGCaloDiffusion": "blue",
         }
+
+        
         Plot.set_style()
+        self.geant_key='Geant4'
+
+        self.hgcal = config.get('HGCAL', False)
+
+        if((not self.hgcal) or flags.plot_reshape): self.shape_plot = config['SHAPE_FINAL']
+        else: self.shape_plot = config['SHAPE_PAD']
 
 
     def save_names(self, plot_name) -> list[str]: 
         return [
-            f"{self.flags.plot_folder}/{plot_name}_{self.config['CHECKPOINT_NAME']}_{self.flags.model}.{extension}"
+            f"{self.flags.plot_folder}/{plot_name}_{self.config['CHECKPOINT_NAME']}_{self.flags.model}{axis_scale}.{extension}"
             for extension 
-            in self.plt_exts
+            in self.plt_exts 
+            for axis_scale in self.axis_scales
         ]
     
+    def save_fig(self, name, fig, ax0) -> None:
+        if('logy') in name: ax0.set_yscale("log")
+        else: ax0.set_yscale("linear")
+        fig.savefig(name)
 
     @staticmethod
     def set_style(): 
@@ -110,13 +129,11 @@ class Plot(ABC):
             xlabel="",
             ylabel="Arbitrary units",
             reference_name="Geant4",
-            logy=False,
             binning=None,
             label_loc="best",
             ratio=True,
             normalize=True,
             leg_font=24,
-            cms_style=False,
         ):
             if(reference_name not in feed_dict.keys()):
                 reference_name = list(feed_dict.keys())[0]
@@ -128,7 +145,7 @@ class Plot(ABC):
                 plt.xticks(fontsize=0)
                 ax1 = plt.subplot(gs[1], sharex=ax0)
 
-            if cms_style :
+            if self.flags.cms:
                 hep.style.use(hep.style.CMS)
                 hep.cms.text(ax=ax0, text="Simulation Preliminary")
 
@@ -176,7 +193,7 @@ class Plot(ABC):
                         bins=binning,
                         label=plot,
                         linestyle=linestyle,
-                        color=self.color,
+                        color=color,
                         density=True,
                         histtype="step",
                         lw=4,
@@ -208,8 +225,6 @@ class Plot(ABC):
                     sep_power = self._separation_power(dist, reference_hist, binning)
                     print("Separation power for hist '%s' is %.4f" % (xlabel, sep_power))
 
-            if logy:
-                ax0.set_yscale("log")
 
             if ratio:
                 self.FormatFig(xlabel="", ylabel=ylabel, ax0=ax0)
@@ -237,7 +252,6 @@ class Plot(ABC):
         ylabel="",
         reference_name="Geant4",
         no_mean=False,
-        cms_style=False,
     ):
         assert (
             reference_name in feed_dict.keys()
@@ -248,13 +262,13 @@ class Plot(ABC):
         plt.xticks(fontsize=0)
         ax1 = plt.subplot(gs[1], sharex=ax0)
 
-        if(cms_style):
+        if(self.flags.cms):
             hep.style.use(hep.style.CMS)
             hep.cms.text(ax=ax0, text="Simulation Preliminary")
 
         for ip, plot in enumerate(feed_dict.keys()):
-            color = colors.get(plot, 'blue')
-            linestyle = linestyle.get(plot, '-')
+            color = self.colors.get(plot, 'blue')
+            linestyle = self.line_style.get(plot, '-')
 
             if no_mean:
                 d = feed_dict[plot]
@@ -293,7 +307,6 @@ class Plot(ABC):
         ax0.legend(loc="best", fontsize=24, ncol=1, facecolor="white", framealpha=0.5, frameon=True)
 
         plt.ylabel("Ratio")
-        if(logy): ax0.set_yscale("log")
         plt.xlabel(xlabel)
         loc = mtick.MultipleLocator(base=10.0)
         ax1.yaxis.set_minor_locator(loc)
@@ -377,17 +390,22 @@ class HistERatio(Plot):
             else:
                 feed_dict[key] = dep / energies.reshape(-1)
 
+
+        #Energy scale is arbitrary, scale so dist centered at 1 for geant
+        norm = np.mean(feed_dict[self.geant_key])
+        for key in data_dict:
+            feed_dict[key] /= norm
+
         binning = np.linspace(0.5, 1.5, 51)
 
-        fig, _ = self._hist(
+        fig,ax0 = self._hist(
             feed_dict,
             xlabel="Dep. energy / Gen. energy",
-            logy=False,
             binning=binning,
             ratio=True,
         )
-        for name in self.save_names("FCC_ERatio"): 
-            fig.savefig(name)
+        for name in self.save_names("ERatio"): 
+            self.save_fig(name, fig, ax0)
 
 class ScatterESplit(Plot):
     def __init__(self, flags, config) -> None:
@@ -417,31 +435,24 @@ class AverageShowerWidth(Plot):
         super().__init__(flags, config)
 
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
-        def GetMatrix(sizex, sizey, minval=-1, maxval=1, binning=None):
+
+        def GetMatrix(sizex, minval=-1,maxval=1, binning = None):
             nbins = sizex
-            if binning is None:
-                binning = np.linspace(minval, maxval, nbins + 1)
-            coord = [(binning[i] + binning[i + 1]) / 2.0 for i in range(len(binning) - 1)]
-            matrix = np.repeat(np.expand_dims(coord, -1), sizey, -1)
+            if(binning is None): binning = np.linspace(minval,maxval,nbins+1)
+            coord = [(binning[i] + binning[i+1])/2.0 for i in range(len(binning)-1)]
+            matrix = np.array(coord)
             return matrix
 
         # TODO : Use radial bins
-        # r_bins = [0,4.65,9.3,13.95,18.6,23.25,27.9,32.55,37.2,41.85]
 
-        phi_matrix = GetMatrix(
-            self.config["SHAPE"][2],
-            self.config["SHAPE"][3],
-            minval=-math.pi,
-            maxval=math.pi,
-        )
-        phi_matrix = np.reshape(
-            phi_matrix, (1, 1, phi_matrix.shape[0], phi_matrix.shape[1], 1)
-        )
+        phi_matrix = GetMatrix(self.shape_plot[3], minval = -math.pi, maxval = math.pi)
+        phi_matrix = np.reshape(phi_matrix,(1,1, phi_matrix.shape[0]))
 
-        r_matrix = np.transpose(
-            GetMatrix(self.config["SHAPE"][3], self.config["SHAPE"][2])
-        )
-        r_matrix = np.reshape(r_matrix, (1, 1, r_matrix.shape[0], r_matrix.shape[1], 1))
+
+        r_matrix = GetMatrix(self.shape_plot[4], minval = 0, maxval = self.shape_plot[4])
+        r_matrix = np.reshape(r_matrix,(1,1, r_matrix.shape[0]))
+
+
 
         def GetCenter(matrix, energies, power=1):
             ec = energies * np.power(matrix, power)
@@ -452,25 +463,6 @@ class AverageShowerWidth(Plot):
             ec = np.ma.divide(np.sum(ec, -1), sum_energies).filled(0)
             return ec
 
-        def ang_center_spread(matrix, energies):
-            # weighted average over periodic variabel (angle)
-            # https://github.com/scipy/scipy/blob/v1.11.1/scipy/stats/_morestats.py#L4614
-            # https://en.wikipedia.org/wiki/Directional_statistics#The_fundamental_difference_between_linear_and_circular_statistics
-            cos_matrix = np.cos(matrix)
-            sin_matrix = np.sin(matrix)
-            cos_ec = GetCenter(cos_matrix, energies)
-            sin_ec = GetCenter(sin_matrix, energies)
-            ang_mean = np.arctan2(sin_ec, cos_ec)
-            R = sin_ec**2 + cos_ec**2
-            eps = 1e-8
-            R = np.clip(R, eps, 1.0)
-
-            ang_std = np.sqrt(-np.log(R))
-            return ang_mean, ang_std
-
-        def GetWidth(mean, mean2):
-            width = np.ma.sqrt(mean2 - mean**2).filled(0)
-            return width
 
         feed_dict_phi = {}
         feed_dict_phi2 = {}
@@ -478,13 +470,18 @@ class AverageShowerWidth(Plot):
         feed_dict_r2 = {}
 
         for key in data_dict:
-            feed_dict_phi[key], feed_dict_phi2[key] = ang_center_spread(
-                phi_matrix, data_dict[key]
-            )
-            feed_dict_r[key] = GetCenter(r_matrix, data_dict[key])
-            feed_dict_r2[key] = GetWidth(
-                feed_dict_r[key], GetCenter(r_matrix, data_dict[key], 2)
-            )
+
+            data = data_dict[key]
+            phi_preprocessed = np.reshape(data,(data.shape[0],self.shape_plot[2], self.shape_plot[3],-1))
+            phi_proj = preprocessed = np.sum(phi_preprocessed, axis = -1)
+
+            r_preprocessed = np.reshape(data,(data.shape[0],self.shape_plot[2], self.shape_plot[4],-1))
+            r_proj = preprocessed = np.sum(r_preprocessed, axis = -1)
+
+            feed_dict_phi[key], feed_dict_phi2[key] = ang_center_spread(phi_matrix, phi_proj)
+            feed_dict_r[key] = GetCenter(r_matrix, r_proj)
+            feed_dict_r2[key] = GetWidth(feed_dict_r[key],GetCenter(r_matrix,r_proj,2))
+
 
         if self.config.get("cartesian_plot", False):
             xlabel1 = "x"
@@ -502,7 +499,7 @@ class AverageShowerWidth(Plot):
             ylabel="%s-center of energy" % xlabel1,
         )
         for name in self.save_names(f"FCC{f_str1}EC"):
-            fig.savefig(name)
+            self.save_fig(name, fig, ax0)
             
         fig, ax0 = self._plot(
             feed_dict_phi,
@@ -510,46 +507,45 @@ class AverageShowerWidth(Plot):
             ylabel="%s-center of energy" % xlabel2,
         )
         for name in self.save_names(f"FCC{f_str2}EC"):
-            fig.savefig(name)
+            self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._plot(
             feed_dict_r2,
             xlabel="Layer number",
             ylabel="%s-width" % xlabel1,
         )
-        for name in self.save_names(f"FCC_{f_str1}W"):
-            fig.savefig(name)
+        for name in self.save_names(f"{f_str1}W"):
+            self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._plot(
             feed_dict_phi2,
             xlabel="Layer number",
             ylabel="%s-width (radians)" % xlabel2,
         )
-        for name in self.save_names(f"FCC_{f_str2}W"):
-            fig.savefig(name)
+        for name in self.save_names(f"{f_str2}W"):
+            self.save_fig(name, fig, ax0)
 
 class ELayer(Plot):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
 
-    def _preprocess(self, data, total_events):
-        preprocessed = np.reshape(data, (total_events, self.config["SHAPE"][1], -1))
-        layer_sum = np.sum(preprocessed, -1)
-        totalE = np.sum(preprocessed, -1)
-        layer_mean = np.mean(layer_sum, 0)
-        layer_std = np.std(layer_sum, 0) / layer_mean
-        layer_nonzero = layer_sum > (1e-6 * totalE)
-        # preprocessed = np.mean(preprocessed,0)
-        return layer_mean, layer_std, layer_nonzero
 
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+        def _preprocess(data):
+            preprocessed = np.reshape(data, (data.shape[0], self.shape_plot[2], -1))
+            layer_sum = np.sum(preprocessed, -1)
+            totalE = np.sum(preprocessed, -1)
+            layer_mean = np.mean(layer_sum, 0)
+            layer_std = np.std(layer_sum, 0) / layer_mean
+            layer_nonzero = layer_sum > (1e-6 * totalE)
+            # preprocessed = np.mean(preprocessed,0)
+            return layer_mean, layer_std, layer_nonzero
+
         feed_dict_avg = {}
         feed_dict_std = {}
         feed_dict_nonzero = {}
         for key in data_dict:
-            feed_dict_avg[key], feed_dict_std[key], feed_dict_nonzero[key] = self._preprocess(
-                data_dict[key], total_events=data_dict[key].shape[0]
-            )
+            feed_dict_avg[key], feed_dict_std[key], feed_dict_nonzero[key] = _preprocess(data_dict[key])
 
         fig, ax0 = self._plot(
             feed_dict_avg,
@@ -557,8 +553,8 @@ class ELayer(Plot):
             ylabel="Mean dep. energy [GeV]",
             no_mean=True,
         )
-        for name in self.save_names("FCC_EnergyZ"):
-            fig.savefig(name)
+        for name in self.save_names("EnergyZ"):
+            self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._plot(
             feed_dict_std,
@@ -566,30 +562,29 @@ class ELayer(Plot):
             ylabel="Std. Dev. / Mean of energy [GeV]",
             no_mean=True,
         )
-        for name in self.save_names("FCC_StdEnergyZ"):
-            fig.savefig(name)
+        for name in self.save_names("StdEnergyZ"):
+            self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._plot(
             feed_dict_nonzero,
             xlabel="Layer number",
             ylabel="Freq. > $10^{-6}$ Total Energy",
         )
-        for name in self.save_names("C_NonZeroEnergyZ"):
-            fig.savefig(name)
+        for name in self.save_names("NonZeroEnergyZ"):
+            self.save_fig(name, fig, ax0)
 
 class AverageER(Plot):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
 
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
-    
+
         def _preprocess(data):
-            preprocessed = np.transpose(data, (0, 3, 1, 2, 4))
-            preprocessed = np.reshape(
-                preprocessed, (data.shape[0], self.config["SHAPE"][3], -1)
-            )
-            preprocessed = np.sum(preprocessed, -1)
+            preprocessed = np.transpose(data,(0,4,1,2,3))
+            preprocessed = np.reshape(preprocessed,(data.shape[0],self.shape_plot[4],-1))
+            preprocessed = np.sum(preprocessed,-1)
             return preprocessed
+    
 
         feed_dict = {}
         for key in data_dict:
@@ -607,8 +602,8 @@ class AverageER(Plot):
             xlabel=xlabel,
             ylabel="Mean Energy [GeV]",
         )
-        for name in self.save_names(f"FCC_Energy_{f_str}"):
-            fig.savefig(name)
+        for name in self.save_names(f"Energy_{f_str}"):
+            self.save_fig(name, fig, ax0)
 
 
 class AverageEPhi(Plot):
@@ -617,11 +612,9 @@ class AverageEPhi(Plot):
 
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         def _preprocess(data):
-            preprocessed = np.transpose(data, (0, 2, 1, 3, 4))
-            preprocessed = np.reshape(
-                preprocessed, (data.shape[0], self.config["SHAPE"][2], -1)
-            )
-            preprocessed = np.sum(preprocessed, -1)
+            preprocessed = np.transpose(data,(0,3,1,2,4))
+            preprocessed = np.reshape(preprocessed,(data.shape[0],self.shape_plot[3],-1))
+            preprocessed = np.sum(preprocessed,-1)
             return preprocessed
 
         feed_dict = {}
@@ -640,8 +633,155 @@ class AverageEPhi(Plot):
             xlabel=xlabel,
             ylabel="Mean Energy [GeV]",
         )
-        for name in self.save_names(f"FCC_Energy{f_str}"):
-            fig.savefig(name)
+        for name in self.save_names(f"Energy{f_str}"):
+            self.save_fig(name, fig, ax0)
+
+class SparsityLayer(Plot):
+    def __init__(self, flags, config) -> None:
+        super().__init__(flags, config)
+        
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+        def _preprocess(data):
+            eps = 1e-6
+            preprocessed = np.reshape(data,(data.shape[0],self.shape_plot[2],-1))
+            layer_sparsity = np.sum(preprocessed > eps, axis = -1) / preprocessed.shape[2]
+            mean_sparsity = np.mean(layer_sparsity, axis = 0)
+            std_sparsity = np.std(layer_sparsity, axis = 0)
+            #preprocessed = np.mean(preprocessed,0)
+            return mean_sparsity, std_sparsity
+        
+        feed_dict_avg = {}
+        feed_dict_std = {}
+        feed_dict_nonzero = {}
+        for key in data_dict:
+            feed_dict_avg[key], feed_dict_std[key] = _preprocess(data_dict[key])
+
+        fig,ax0 = self._plot(feed_dict_avg,xlabel='Layer number', ylabel= 'Mean sparsity', no_mean = True )
+        for name in self.save_names(f"SparsityZ"):
+            self.save_fig(name, fig, ax0)
+
+        fig,ax0 = self._plot(feed_dict_std,xlabel='Layer number', ylabel= 'Std. dev. sparsity', no_mean = True )
+        for name in self.save_names(f"StdSparsityZ"):
+            self.save_fig(name, fig, ax0)
+
+
+
+class RadialEnergyHGCal(Plot):
+    def __init__(self, flags, config) -> None:
+        super().__init__(flags, config)
+
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+
+        geom_file = self.config.get('BIN_FILE', '')
+        geom = HGCal_utils.load_geom(geom_file)
+        r_vals = geom.ring_map[:, :geom.max_ncell]
+
+        feed_dict = {}
+        for key in data_dict:
+            nrings = geom.nrings
+            r_bins = np.zeros((data_dict[key].shape[0], nrings))
+            for i in range(nrings):
+                mask = (r_vals == i)
+                r_bins[:,i] = np.sum(data_dict[key] * mask,axis = (1,2))
+
+            feed_dict[key] = r_bins
+
+        fig,ax0 = self._plot(feed_dict, xlabel='R-bin', ylabel= 'Avg. Energy')
+
+        for name in self.save_names(f"EnergyR"):
+            self.save_fig(name, fig, ax0)
+
+        return feed_dict
+
+class RCenterHGCal(Plot):
+    def __init__(self, flags, config) -> None:
+        super().__init__(flags, config)
+
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+        geom_file = self.config.get('BIN_FILE', '')
+        geom = HGCal_utils.load_geom(geom_file)
+        r_vals = geom.ring_map[:, :geom.max_ncell]
+
+        feed_dict_C_hist = {}
+        feed_dict_C_avg = {}
+        feed_dict_W_hist = {}
+        feed_dict_W_avg = {}
+        for key in data_dict:
+            #center
+            r_centers = WeightedMean(r_vals, np.squeeze(data_dict[key]))
+            r2_centers =WeightedMean(r_vals, np.squeeze(data_dict[key]), power=2)
+            feed_dict_C_hist[key] = np.reshape(r_centers,(-1))
+            feed_dict_C_avg[key] = np.mean(r_centers, axis = 0)
+
+            #width
+            r_widths = GetWidth(r_centers, r2_centers)
+            feed_dict_W_hist[key] = np.reshape(r_widths,(-1))
+            feed_dict_W_avg[key] = np.mean(r_widths, axis = 0)
+
+
+        fig,ax0 = self._hist(feed_dict_C_hist, xlabel='Shower R Center', normalize = True)
+        for name in self.save_names(f"RCenter"):
+            self.save_fig(name, fig, ax0)
+
+        fig,ax0 = self._plot(feed_dict_C_avg, ylabel='Avg. Shower R Center', xlabel= 'Layer',  no_mean = True )
+        for name in self.save_names(f"RCenterLayer"):
+            self.save_fig(name, fig, ax0)
+
+        fig,ax0 = self._hist(feed_dict_W_hist, xlabel='Shower R Width', normalize = True)
+        for name in self.save_names(f"RWidth"):
+            self.save_fig(name, fig, ax0)
+
+        fig,ax0 = self._plot(feed_dict_W_avg, ylabel='Avg. Shower R Width', xlabel='Layer', no_mean = True)
+        for name in self.save_names(f"RWidthLayer"):
+            self.save_fig(name, fig, ax0)
+
+        return
+
+class PhiCenterHGCal(Plot):
+    def __init__(self, flags, config) -> None:
+        super().__init__(flags, config)
+
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+
+        geom_file = self.config.get('BIN_FILE', '')
+        geom = HGCal_utils.load_geom(geom_file)
+        phi_vals = geom.theta_map[:, :geom.max_ncell]
+
+        feed_dict_C_hist = {}
+        feed_dict_C_avg = {}
+        feed_dict_W_hist = {}
+        feed_dict_W_avg = {}
+        for key in data_dict:
+            #center
+            phi_centers, phi_widths = ang_center_spread(phi_vals, np.squeeze(data_dict[key]))
+            feed_dict_C_hist[key] = np.reshape(phi_centers,(-1))
+            feed_dict_C_avg[key] = np.mean(phi_centers, axis = 0)
+
+            #width
+            feed_dict_W_hist[key] = np.reshape(phi_widths,(-1))
+            feed_dict_W_avg[key] = np.mean(phi_widths, axis = 0)
+
+
+        fig,ax0 = self._hist(feed_dict_C_hist, xlabel='Shower Phi Center', ylabel= 'Arbitrary units', normalize=True)
+        for name in self.save_names(f"PhiCenter"):
+            self.save_fig(name, fig, ax0)
+
+        fig,ax0 = self._plot(feed_dict_C_avg, ylabel='Avg. Shower Phi Center', xlabel= 'Layer',  no_mean = True )
+        for name in self.save_names(f"PhiCenterLayer"):
+            self.save_fig(name, fig, ax0)
+
+
+        fig,ax0 = self._hist(feed_dict_W_hist, xlabel='Shower Phi Width', ylabel= 'Arbitrary units', normalize=True)
+        for name in self.save_names(f"PhiWidth"):
+            self.save_fig(name, fig, ax0)
+
+        fig,ax0 = self._plot(feed_dict_W_avg, ylabel='Avg. Shower Phi Width', xlabel= 'Layer',  no_mean = True )
+        for name in self.save_names(f"PhiWidthLayer"):
+            self.save_fig(name, fig, ax0)
+
+        return 
+
+
 
 
 class HistEtot(Plot):
@@ -657,16 +797,16 @@ class HistEtot(Plot):
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
 
-        binning = np.geomspace(1.0, np.amax(feed_dict["Geant4"]), 20)
+        #binning = np.geomspace(1.0, np.amax(feed_dict["Geant4"]), 20)
+        binning = np.geomspace(np.quantile(feed_dict[self.geant_key],0.01),np.quantile(feed_dict[self.geant_key],1.0),20)
         fig, ax0 = self._hist(
             feed_dict,
             xlabel="Deposited energy [GeV]",
-            logy=True,
             binning=binning,
         )
         ax0.set_xscale("log")
-        for name in self.save_names("FCC_TotalE"):
-            fig.savefig(name)
+        for name in self.save_names("TotalE"):
+            self.save_fig(name, fig, ax0)
 
 
 class HistNhits(Plot):
@@ -680,12 +820,13 @@ class HistNhits(Plot):
             return np.sum(preprocessed > min_voxel, -1)
 
         feed_dict = {}
+        vMax = 0.
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
+            vMax = max(np.max(feed_dict[key]), vMax)
 
-        binning = np.linspace(
-            np.quantile(feed_dict["Geant4"], 0.0), np.quantile(feed_dict["Geant4"], 1), 20
-        )
+        binning = np.linspace(np.min(feed_dict[self.geant_key]), vMax, 20)
+
         fig, ax0 = self._hist(
             feed_dict,
             xlabel="Number of hits (> 1 MeV)",
@@ -696,8 +837,8 @@ class HistNhits(Plot):
         yScalarFormatter = ScalarFormatterClass(useMathText=True)
         yScalarFormatter.set_powerlimits((0, 0))
         ax0.yaxis.set_major_formatter(yScalarFormatter)
-        for name in self.save_names("FCC_Nhits"):
-            fig.savefig(name)
+        for name in self.save_names("Nhits"):
+            self.save_fig(name, fig, ax0)
 
 
 class HistVoxelE(Plot):
@@ -705,28 +846,34 @@ class HistVoxelE(Plot):
         super().__init__(flags, config)
 
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
-    
-        def _preprocess(data):
-            return np.reshape(data, (-1))
+
+        def _preprocess(data, nShowers):
+            nShowers = min(nShowers, data.shape[0])
+            return np.reshape(data[:nShowers], (-1))
 
         feed_dict = {}
+        nShowers = 1000
+        vMax = 0.
         for key in data_dict:
-            feed_dict[key] = _preprocess(data_dict[key])
+            feed_dict[key] = _preprocess(data_dict[key], nShowers)
+            vMax = max(np.max(feed_dict[key]), vMax)
+    
 
-        vmin = np.amin(feed_dict["Geant4"][feed_dict["Geant4"] > 0])
-        binning = np.geomspace(vmin, np.quantile(feed_dict["Geant4"], 1.0), 50)
+        vMin = np.amin(feed_dict[self.geant_key][feed_dict[self.geant_key] > 0])
+        #binning = np.geomspace(vmin, np.quantile(feed_dict["Geant4"], 1.0), 50)
+        #vMin= 1e-4
+        binning = np.geomspace(vMin,vMax, 50)
         fig, ax0 = self._hist(
             feed_dict,
             xlabel="Voxel Energy [GeV]",
-            logy=True,
             binning=binning,
             ratio=True,
             normalize=False,
         )
 
         ax0.set_xscale("log")
-        for name in self.save_names("FCC_VoxelE"):
-            fig.savefig(name)
+        for name in self.save_names("VoxelE"):
+            self.save_fig(name, fig, ax0)
 
 
 class HistMaxELayer(Plot):
@@ -735,10 +882,8 @@ class HistMaxELayer(Plot):
         
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         def _preprocess(data):
-            preprocessed = np.reshape(data, (data.shape[0], self.config["SHAPE"][1], -1))
-            preprocessed = np.ma.divide(
-                np.max(preprocessed, -1), np.sum(preprocessed, -1)
-            ).filled(0)
+            preprocessed = np.reshape(data,(data.shape[0],self.shape_plot[2],-1))
+            preprocessed = np.ma.divide(np.max(preprocessed,-1),np.sum(preprocessed,-1)).filled(0)
             return preprocessed
 
         feed_dict = {}
@@ -750,8 +895,8 @@ class HistMaxELayer(Plot):
             xlabel="Layer number",
             ylabel="Max voxel/Dep. energy",
         )
-        for name in self.save_names("FCC_MaxEnergyZ"):
-            fig.savefig(name)
+        for name in self.save_names("MaxEnergyZ"):
+            self.save_fig(name, fig, ax0)
 
 
 class HistMaxE(Plot):
@@ -776,10 +921,9 @@ class HistMaxE(Plot):
             feed_dict,
             xlabel="Max. voxel/Dep. energy",
             binning=binning,
-            logy=True,
         )
-        for name in self.save_names("FCC_MaxEnergy"):
-            fig.savefig(name)
+        for name in self.save_names("MaxEnergy"):
+            self.save_fig(name, fig, ax0)
 
 
 class Plot_Shower_2D(Plot):
@@ -836,13 +980,13 @@ class Plot_Shower_2D(Plot):
             ):
                 average = _preprocess(data_dict[key])
 
-                fout_avg = self.save_names(f"FCC_{key}2D_{layer}")[0]
+                fout_avg = self.save_names(f"{key}2D_{layer}")[0]
                 title = "{}, layer number {}".format(key, layer)
                 self.plot_shower(average, fout=fout_avg, title=title)
 
                 for i in range(nShowers):
                     shower = data_dict[key][i, layer]
-                    fout_ex = self.save_names(f"FCC_{key}2D_{layer}_shower{i}")[0]
+                    fout_ex = self.save_names(f"{key}2D_{layer}_shower{i}")[0]
 
                     title = "{} Shower {}, layer number {}".format(key, i, layer)
                     vmax, vmin = self.plot_shower(

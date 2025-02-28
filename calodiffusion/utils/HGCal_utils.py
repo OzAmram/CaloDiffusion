@@ -1,11 +1,5 @@
-import sys
-import io
-import pickle
-from einops import rearrange
-from torch.masked import masked_tensor
-import torch.sparse
+from calodiffusion.utils.common import *
 
-from calodiffusion.utils.utils import *
 from HGCalShowers.HGCalGeo import HGCalGeo
 import calodiffusion.utils.consts as constants
 
@@ -76,8 +70,8 @@ def preprocess_hgcal_shower(shower, e, shape, showerMap = 'log-norm', dataset_nu
 
 
 
-def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
-        evt_start = 0, max_cells = None, embed = False, shower_scale = 200., config = None, binning_file = ""):
+def DataLoaderHGCal(file_name,shape=None, emax=9999.,emin=0.0001, nevts=-1,  max_deposit = 2, ecut = 0, logE=True, showerMap = 'log-norm', nholdout = 0, from_end = False, dataset_num = 2, orig_shape = False,
+        evt_start = 0, max_cells = None, embed = False, NN_embed = None, shower_scale = 200., config = None, binning_file = ""):
 
     with h5.File(file_name,"r") as h5f:
         #holdout events for testing
@@ -89,19 +83,19 @@ def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2,
         if(end == -1): end = None 
         print("Event start, stop: ", evt_start, end)
         gen_info = h5f['gen_info'][evt_start:end].astype(np.float32)
-        shower = h5f['showers'][evt_start:end][:,:,:max_cells].astype(np.float32) *200 # sampling fraction is roughly 1/200, multiply by 200 to get rough match to energy scale
+        shower = h5f['showers'][evt_start:end][:,:,:max_cells].astype(np.float32) *shower_scale # rough correction for sampling fraction
 
     e = gen_info[:,0]
-    gen_min = np.array(gen_min)
-    gen_max = np.array(gen_max)
+    gen_min = np.array(emin)
+    gen_max = np.array(emax)
 
     print(shower.shape)
-    if(embed): 
+    if(embed and NN_embed is None): 
         trainable = config.get('TRAINABLE_EMBED', False)
-        NN_embed = HGCalConverter(bins = config['SHAPE_FINAL'], geom_file = binning_file, trainable = trainable)
+        NN_embed = HGCalConverter(bins = config['SHAPE_FINAL'], geom_file = binning_file, trainable = trainable, device=get_device()).to(device=get_device())
         NN_embed.init(norm = True, dataset_num = dataset_num)
 
-        shower = NN_embed.enc_batches(torch.Tensor(shower))
+    if(embed): shower = NN_embed.enc_batches(torch.Tensor(shower))
     print(shower.shape)
 
     shower_preprocessed, layerE_preprocessed = preprocess_hgcal_shower(shower, e, shape, showerMap, dataset_num = dataset_num, orig_shape = orig_shape, ecut = ecut, max_deposit=max_deposit)
@@ -115,7 +109,7 @@ def DataLoaderHGCal(file_name,shape,gen_max,gen_min, nevts=-1,  max_deposit = 2,
     return shower_preprocessed, gen_preprocessed , layerE_preprocessed
 
 
-def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0., embed = False, NN_embed = None):
+def ReverseNormHGCal(voxels,e,shape=None,emax=9999.,emin=0.0001, max_deposit=2,logE=True, layerE = None, showerMap ='log', dataset_num = 2, orig_shape = False, ecut = 0., embed = False, NN_embed = None, binning_file = "", config = None):
     '''Revert the transformations applied to the training set'''
 
     print('vox', voxels.shape)
@@ -125,8 +119,8 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
 
     alpha = 1e-8
 
-    gen_min = np.array(gen_min)
-    gen_max = np.array(gen_max)
+    gen_min = np.array(emin)
+    gen_max = np.array(emax)
 
     gen_out = gen_min + (gen_max-gen_min)*e
     energy = gen_out[:,0]
@@ -158,6 +152,11 @@ def ReverseNormHGCal(voxels,e,shape,gen_max,gen_min, max_deposit=2,logE=True, la
 
 
         data = np.exp(voxels)
+
+    if(embed and NN_embed is None): 
+        trainable = config.get('TRAINABLE_EMBED', False)
+        NN_embed = HGCalConverter(bins = config['SHAPE_FINAL'], geom_file = binning_file, trainable = trainable, device=get_device()).to(device=get_device())
+        NN_embed.init(norm = True, dataset_num = dataset_num)
 
     if(embed): data = NN_embed.dec_batches(data)
 
@@ -348,23 +347,27 @@ class RenameUnpickler(pickle.Unpickler):
 def pickle_load(file_obj):
     return RenameUnpickler(file_obj).load()
 
+def load_geom(geom_filename):
+    geom_file = open(geom_filename, 'rb')
+
+    geom = pickle_load(geom_file)
+
+    #angle from 0 to 2pi, arctan2 has (y,x) convention for some reason
+    geom.theta_map = np.arctan2(geom.xmap, geom.ymap) % (2. *np.pi)
+    geom.max_ncell = int(round(np.amax(geom.ncells)))
+    return geom 
+
+
 class HGCalConverter(nn.Module):
     "Convert irregular hgcal geometry to regular one, initialized with regular geometric conversion, but uses trainable linear map"
     def __init__(self, bins = None, geom_file = None, hidden_size = 32, device = None, trainable = False):
         super().__init__()
         print("Loading geometry from %s " % geom_file)
 
-        self.geom_file = open(geom_file, 'rb')
         self.device = device
-
         self.trainable = trainable
 
-        self.geom = pickle_load(self.geom_file)
-        #angle from 0 to 2pi, arctan2 has (y,x) convention for some reason
-        self.geom.theta_map = np.arctan2(self.geom.xmap, self.geom.ymap) % (2. *np.pi)
-        self.geom.max_ncell = int(round(np.amax(self.geom.ncells)))
-        print("Ncell max %i" % self.geom.max_ncell)
-
+        self.geom = load_geom(geom_file)
 
         self.bins = bins
         self.num_r_bins = bins[-1]
@@ -396,20 +399,14 @@ class HGCalConverter(nn.Module):
             lay_size = self.geom.ncells[i]
 
             conv_map, mask = init_map(self.num_alpha_bins, self.num_r_bins, self.geom, i)
-            #print(conv_map[:10])
-            #print(mask[:10])
-
-            #print("emb size", torch.sum(conv_map))
-            #print("mask size", torch.sum(mask))
-
+            conv_map = conv_map.to(device=self.device)
             #How to define sparse mask of inverse ? 
             inv_init = torch.linalg.pinv(conv_map)
 
             eps = 1e-6
             #cleanup some noise from inverse
-            #inv_init[inv_init < eps] = 0.
-            inv_mask = torch.linalg.pinv(mask)
-            #inv_mask = inv_init
+            #inv_mask = torch.abs(torch.linalg.pinv(mask)) > eps
+            inv_mask = torch.abs(inv_init) > eps
 
             #print("Inv size", torch.sum(inv_init > 0.))
             #print("Inv mask size", torch.sum(inv_mask))
@@ -422,13 +419,9 @@ class HGCalConverter(nn.Module):
                 inv_init += eps*noise2
 
             self.enc_mat[i] = conv_map
-            #self.enc_mask[i] = torch.abs(mask) > eps
             self.enc_mask[i] = mask > eps
             self.dec_mat[i] = inv_init
-            self.dec_mask[i] = torch.abs(inv_mask) > eps
-
-            #print(i)
-            #print('sum', torch.sum(conv_map))
+            self.dec_mask[i] = inv_mask
 
         self.embeder.set(self.enc_mat, self.enc_mask)
         self.decoder.set(self.dec_mat, self.dec_mask)

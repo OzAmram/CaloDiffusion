@@ -118,9 +118,9 @@ class Train(ABC):
         )
 
         with open(self.checkpoint_folder + f"/{name}_training_losses.txt", "w") as tfileout:
-            tfileout.write("\n".join("{}".format(tl) for tl in training_losses) + "\n")
+            tfileout.write("\n".join("{}".format(tl) for tl in training_losses.values()) + "\n")
         with open(self.checkpoint_folder + f"/{name}_validation_losses.txt", "w") as vfileout:
-            vfileout.write("\n".join("{}".format(vl) for vl in validation_losses) + "\n")
+            vfileout.write("\n".join("{}".format(vl) for vl in validation_losses.values()) + "\n")
 
 
     def train(self): 

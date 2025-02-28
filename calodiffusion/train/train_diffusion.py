@@ -70,6 +70,7 @@ class Diffusion(Train):
             training_losses[epoch] = train_loss
 
             print("loss: " + str(train_loss))
+            print(training_losses)
 
             val_loss = 0
             self.model.eval()
@@ -100,6 +101,7 @@ class Diffusion(Train):
                 val_loss = val_loss / len(self.loader_val)
                 val_losses[epoch] = val_loss
                 print("val_loss: " + str(val_loss), flush=True)
+                print(val_losses)
 
             scheduler.step(torch.tensor([train_loss]))
 

@@ -27,6 +27,7 @@ class CaloDiffusion(Diffusion):
         self.hgcal = self.config.get("HGCAL", False)
         self.fully_connected = "FCN" in self.config.get("SHOWER_EMBED", "")
 
+
         self.NN_embed = self.init_embedding_model()
         self.do_embed = self.NN_embed is not None and (not self.pre_embed)
 
@@ -92,6 +93,7 @@ class CaloDiffusion(Diffusion):
         return out
     
     def init_embedding_model(self):
+
 
         dataset_num = self.config.get("DATASET_NUM", 2)
         shower_embed = self.config.get("SHOWER_EMBED", "")

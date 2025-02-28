@@ -395,6 +395,7 @@ class ResNet(nn.Module):
         num_layers=3,
         hidden_dim=256,
         cond_emb_dim=128,
+        cond_size=1,
     ):
         super().__init__()
 
@@ -415,7 +416,7 @@ class ResNet(nn.Module):
 
         cond_layers = []
         # if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
-        cond_layers = [nn.Linear(1, half_cond_dim // 2), nn.GELU()]
+        cond_layers = [nn.Linear(cond_size, half_cond_dim // 2), nn.GELU()]
         cond_layers += [
             nn.Linear(half_cond_dim // 2, half_cond_dim),
             nn.GELU(),
@@ -536,6 +537,7 @@ class CondUnet(nn.Module):
         time_embed=True,
         cond_embed=True,
         cond_size=1,
+        no_time=False,
     ):
         super().__init__()
 
@@ -543,6 +545,8 @@ class CondUnet(nn.Module):
         self.channels = channels
         self.block_attn = block_attn
         self.mid_attn = mid_attn
+
+        self.no_time = no_time
 
         # dims = [channels, *map(lambda m: dim * m, dim_mults)]
         # layer_sizes.insert(0, channels)
@@ -570,20 +574,23 @@ class CondUnet(nn.Module):
         half_cond_dim = cond_dim // 2
 
         time_layers = []
-        if time_embed:
-            time_layers = [SinusoidalPositionEmbeddings(half_cond_dim // 2)]
-        else:
-            time_layers = [
-                nn.Unflatten(-1, (-1, 1)),
-                nn.Linear(1, half_cond_dim // 2),
+        if(not self.no_time):
+            if time_embed:
+                time_layers = [SinusoidalPositionEmbeddings(half_cond_dim // 2)]
+            else:
+                time_layers = [
+                    nn.Unflatten(-1, (-1, 1)),
+                    nn.Linear(1, half_cond_dim // 2),
+                    nn.GELU(),
+                ]
+            time_layers += [
+                nn.Linear(half_cond_dim // 2, half_cond_dim),
                 nn.GELU(),
+                nn.Linear(half_cond_dim, half_cond_dim),
             ]
-        time_layers += [
-            nn.Linear(half_cond_dim // 2, half_cond_dim),
-            nn.GELU(),
-            nn.Linear(half_cond_dim, half_cond_dim),
-        ]
+            self.time_mlp = nn.Sequential(*time_layers)
 
+        last_cond_size = half_cond_dim if not self.no_time else cond_dim
         cond_layers = []
         cond_hidden_size = max(cond_size, half_cond_dim // 2)
         if cond_embed:
@@ -593,10 +600,9 @@ class CondUnet(nn.Module):
         cond_layers += [
             nn.Linear(cond_hidden_size, half_cond_dim),
             nn.GELU(),
-            nn.Linear(half_cond_dim, half_cond_dim),
+            nn.Linear(half_cond_dim, last_cond_size),
         ]
 
-        self.time_mlp = nn.Sequential(*time_layers)
         self.cond_mlp = nn.Sequential(*cond_layers)
 
         # layers
@@ -693,9 +699,12 @@ class CondUnet(nn.Module):
     def forward(self, x, cond=None, time=None, controls=None):
         x = self.init_conv(x)
 
-        t = self.time_mlp(time)
         c = self.cond_mlp(cond)
-        conditions = torch.cat([t, c], axis=-1)
+        if(not self.no_time):
+            t = self.time_mlp(time)
+            conditions = torch.cat([t, c], axis=-1)
+        else: 
+            conditions = c
 
         h = []
 

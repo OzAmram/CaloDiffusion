@@ -16,6 +16,8 @@ class Train(ABC):
         self.config = config
         self.flags = flags
 
+        self.batch_size = self.config.get("BATCH", 256)
+
         self.checkpoint_folder = f"{flags.checkpoint_folder.strip('/')}/{config['CHECKPOINT_NAME']}_{flags.model}/"
         
         if not os.path.exists(self.checkpoint_folder):
@@ -116,9 +118,9 @@ class Train(ABC):
         )
 
         with open(self.checkpoint_folder + f"/{name}_training_losses.txt", "w") as tfileout:
-            tfileout.write("\n".join("{}".format(tl) for tl in training_losses) + "\n")
+            tfileout.write("\n".join("{}".format(tl) for tl in training_losses.values()) + "\n")
         with open(self.checkpoint_folder + f"/{name}_validation_losses.txt", "w") as vfileout:
-            vfileout.write("\n".join("{}".format(vl) for vl in validation_losses) + "\n")
+            vfileout.write("\n".join("{}".format(vl) for vl in validation_losses.values()) + "\n")
 
 
     def train(self): 

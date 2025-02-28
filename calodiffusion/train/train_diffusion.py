@@ -28,6 +28,11 @@ class Diffusion(Train):
         cold_diffu = self.config.get("COLD_DIFFU", False)
         cold_noise_scale = self.config.get("COLD_NOISE", 1.0)
 
+        #fixed noise levels for  the validation loss for stability
+        if(self.loader_val is not None):
+            val_rnd = torch.randn( (len(self.loader_val),self.batch_size,), device=self.device)
+
+
         # training loop
         min_validation_loss = 99999.0
         for epoch in range(start_epoch, num_epochs):
@@ -45,15 +50,15 @@ class Diffusion(Train):
                 E = E.to(device=self.device)
                 layers = layers.to(device=self.device)
 
-                t = torch.randint(0, self.model.nsteps, (data.size()[0],), device=self.device).long()
                 noise = torch.randn_like(data)
 
                 if cold_diffu:  # cold diffusion interpolates from avg showers instead of pure noise
                     noise = self.model.gen_cold_image(E, cold_noise_scale, noise)
 
                 batch_loss = self.model.compute_loss(
-                    data, E, noise=noise, layers=layers, time=t
+                    data, E, noise=noise, layers=layers
                 )
+
                 batch_loss.backward()
 
                 optimizer.step()
@@ -65,31 +70,38 @@ class Diffusion(Train):
             training_losses[epoch] = train_loss
 
             print("loss: " + str(train_loss))
+            print(training_losses)
 
             val_loss = 0
             self.model.eval()
-            for i, (vE, vlayers, vdata) in tqdm(
-                enumerate(self.loader_val, 0), unit="batch", total=len(self.loader_val)
-            ):
-                vdata = vdata.to(device=self.device)
-                vE = vE.to(device=self.device)
-                vlayers = vlayers.to(device=self.device)
 
-                t = torch.randint(0, self.model.nsteps, (vdata.size()[0],), device=self.device).long()
-                noise = torch.randn_like(vdata)
-                if cold_diffu:
-                    noise = self.model.gen_cold_image(vE, cold_noise_scale, noise)
+            if(self.loader_val is not None):
+                for i, (vE, vlayers, vdata) in tqdm(
+                    enumerate(self.loader_val, 0), unit="batch", total=len(self.loader_val)
+                ):
+                    vdata = vdata.to(device=self.device)
+                    vE = vE.to(device=self.device)
+                    vlayers = vlayers.to(device=self.device)
 
-                batch_loss = self.model.compute_loss(
-                    vdata, vE, noise=noise, layers=vlayers, time=t
-                )
+                    noise = torch.randn_like(vdata)
 
-                val_loss += batch_loss.item()
-                del vdata, vE, vlayers, noise, batch_loss
+                    #use fixed time steps for stable val loss
+                    rnd_normal = val_rnd[i].to(device=self.device)
 
-            val_loss = val_loss / len(self.loader_val)
-            val_losses[epoch] = val_loss
-            print("val_loss: " + str(val_loss), flush=True)
+                    if cold_diffu:
+                        noise = self.model.gen_cold_image(vE, cold_noise_scale, noise)
+
+                    batch_loss = self.model.compute_loss(
+                        vdata, vE, noise=noise, layers=vlayers, rnd_normal=rnd_normal,
+                    )
+
+                    val_loss += batch_loss.item()
+                    del vdata, vE, vlayers, noise, batch_loss
+
+                val_loss = val_loss / len(self.loader_val)
+                val_losses[epoch] = val_loss
+                print("val_loss: " + str(val_loss), flush=True)
+                print(val_losses)
 
             scheduler.step(torch.tensor([train_loss]))
 
@@ -99,9 +111,9 @@ class Diffusion(Train):
                 )
                 min_validation_loss = val_loss
 
-            if early_stopper.early_stop(val_loss - train_loss):
-                print("Early stopping!")
-                break
+                if early_stopper.early_stop(val_loss):
+                    print("Early stopping!")
+                    break
 
             # save the model for each checkpoint
             self.model.eval()

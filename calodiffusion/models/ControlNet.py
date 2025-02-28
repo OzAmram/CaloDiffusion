@@ -23,6 +23,9 @@ class ControlledUNet(nn.Module):
         self.control_adds.append(ScalarAddLayer())
         self.control_adds.append(ScalarAddLayer())
 
+        self.sqrt_one_minus_alphas_cumprod = self.UNet.sqrt_one_minus_alphas_cumprod
+        self.sqrt_alphas_cumprod = self.UNet.sqrt_alphas_cumprod
+
         
     def denoise(self, x, c_x = None, E =None, sigma=None, model = None, layers = None, layer_sample = False, controls = None):
 
@@ -42,6 +45,57 @@ class ControlledUNet(nn.Module):
 
         out = self.UNet.denoise(x, conds, sigma, controls = controls)
         return out
+
+    def compute_loss(self, data, E, model = None, noise = None, t = None, layers = None, loss_type = "l2", rnd_normal = None, layer_loss = False, scale=1 ):
+        if noise is None:
+            noise = torch.randn_like(data)
+
+        const_shape = (data.shape[0], *((1,) * (len(data.shape) - 1)))
+        
+
+        rnd_normal = torch.randn((data.size()[0],), device=data.device)
+        sigma = (rnd_normal * self.UNet.P_std + self.UNet.P_mean).exp().reshape(const_shape)
+
+        x_noisy = data + sigma * noise
+        sigma2 = sigma**2
+
+        weight = 1.
+
+        x0_pred = self.denoise(x_noisy, E=E, sigma=sigma, model = model, layers = layers)
+
+        training_obj = self.UNet.training_obj
+
+        if('hybrid' in training_obj ):
+            weight = torch.reshape(1. + (1./ sigma2), const_shape)
+            target = data
+            pred = x0_pred
+
+        elif('noise_pred' in training_obj):
+            pred = (data - x0_pred)/sigma
+            target = noise
+            weight = 1.
+        elif('mean_pred' in training_obj):
+            target = data
+            weight = 1./ sigma2
+            pred = x0_pred
+            
+        if loss_type == 'l1':
+            loss = torch.nn.functional.l1_loss(target, pred)
+        elif loss_type == 'l2':
+            if('weight' in training_obj):
+                loss = (weight * ((pred - data) ** 2)).sum() / (torch.mean(weight) * self.UNet.nvoxels)
+            else:
+                loss = torch.nn.functional.mse_loss(target, pred)
+
+        elif loss_type == "huber":
+            loss =torch.nn.functional.smooth_l1_loss(target, pred)
+            
+        else:
+            print(loss_type)
+            raise NotImplementedError()
+
+
+        return loss
 
     def __call__(self, x, **kwargs):
         return self.denoise(x, **kwargs)

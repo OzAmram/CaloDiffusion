@@ -1,28 +1,25 @@
-import os
-import h5py as h5
-import numpy as np
-import torch
-import torch.nn as nn
-import sys
-import joblib
+from calodiffusion.utils.common import *
 
-import os
-
-import numpy as np
-import torch
 from calodiffusion.utils.XMLHandler import XMLHandler
+from calodiffusion.utils.dataset import Dataset
+import calodiffusion.utils.HGCal_utils as HGCal_utils
 import calodiffusion.utils.consts as constants
 
+
 import sys
 
-def import_tqdm(): 
+
+def import_tqdm():
     if sys.stderr.isatty():
         from tqdm import tqdm
     else:
+
         def tqdm(iterable, **kwargs):
             return iterable
+
     return tqdm
-        
+
+
 def split_data_np(data, frac=0.8):
     np.random.shuffle(data)
     split = int(frac * data.shape[0])
@@ -40,8 +37,8 @@ def create_phi_image(device, shape=(1, 45, 16, 9)):
     return phi_image
 
 
-def create_R_Z_image(device, scaled=True, shape=(1, 45, 16, 9)):
-    if shape[-1] == 30:  # dataset 1, photons
+def create_R_Z_image(device, dataset_num=0, scaled=True, shape=(1, 45, 16, 9)):
+    if dataset_num == 0:  # dataset 1, photons
         r_bins = [
             0.0,
             2.0,
@@ -75,7 +72,7 @@ def create_R_Z_image(device, scaled=True, shape=(1, 45, 16, 9)):
             1000.0,
             2000.0,
         ]
-    elif shape[-1] == 23:  # dataset 1, pions
+    elif dataset_num == 1:  # dataset 1, pions
         r_bins = [
             0.00,
             1.00,
@@ -102,9 +99,9 @@ def create_R_Z_image(device, scaled=True, shape=(1, 45, 16, 9)):
             1000.00,
             2000.00,
         ]
-    elif shape[-1] == 9:  # dataset 2
+    elif dataset_num == 2:  # dataset 2
         r_bins = [0, 4.65, 9.3, 13.95, 18.6, 23.25, 27.9, 32.55, 37.2, 41.85]
-    else:  # dataset 3
+    elif dataset_num == 3:  # dataset 2
         r_bins = [
             0,
             2.325,
@@ -126,6 +123,10 @@ def create_R_Z_image(device, scaled=True, shape=(1, 45, 16, 9)):
             39.525,
             41.85,
         ]
+    elif dataset_num >= 100:  # HGCal
+        r_bins = torch.arange(0, shape[-1] + 1)
+    else:
+        print("RZ binning missing for dataset num %i ? " % (dataset_num))
 
     r_avgs = [(r_bins[i] + r_bins[i + 1]) / 2.0 for i in range(len(r_bins) - 1)]
     assert len(r_avgs) == shape[-1]
@@ -152,7 +153,7 @@ def split_data(data, nevts, frac=0.8):
 
 
 name_translate = {
-    "Diffu": "CaloDiffusion",
+    "diffusion": "CaloDiffusion",
     "Avg": "Avg Shower",
 }
 
@@ -223,6 +224,7 @@ def make_histogram(
     # else: plt.show(block=False)
     return fig
 
+
 def reverse_logit(x, alpha=1e-6):
     exp = np.exp(x)
     o = exp / (1 + exp)
@@ -236,12 +238,26 @@ def logit(x, alpha=1e-6):
     return o
 
 
-def DataLoader(
+def DataLoader(file_name, hgcal=False, **kwargs):
+    if hgcal:
+        return HGCal_utils.DataLoaderHGCal(file_name, **kwargs)
+    else:
+        return DataLoaderCaloChall(file_name, **kwargs)
+
+
+def ReverseNorm(voxels, e, hgcal=False, **kwargs):
+    if hgcal:
+        return HGCal_utils.ReverseNormHGCal(voxels, e, **kwargs)
+    else:
+        return ReverseNormCaloChall(voxels, e, **kwargs)
+
+
+def DataLoaderCaloChall(
     file_name,
-    shape,
-    emax,
-    emin,
-    binning_file,
+    shape=None,
+    emax=99999.0,
+    emin=0.0001,
+    binning_file="",
     nevts=-1,
     max_deposit=2,
     ecut=0,
@@ -252,6 +268,8 @@ def DataLoader(
     dataset_num=2,
     orig_shape=False,
     evt_start=0,
+    shower_scale=0.001,
+    **kwargs,
 ):
     with h5.File(file_name, "r") as h5f:
         # holdout events for testing
@@ -264,8 +282,8 @@ def DataLoader(
         if end == -1:
             end = None
         print("Event start, stop: ", evt_start, end)
-        e = h5f["incident_energies"][evt_start:end].astype(np.float32) / 1000.0
-        shower = h5f["showers"][evt_start:end].astype(np.float32) / 1000.0
+        e = h5f["incident_energies"][evt_start:end].astype(np.float32) * shower_scale
+        shower = h5f["showers"][evt_start:end].astype(np.float32) * shower_scale
 
     e = np.reshape(e, (-1, 1))
 
@@ -422,13 +440,14 @@ def LoadJson(file_name):
     return yaml.safe_load(open(JSONPATH))
 
 
-def ReverseNorm(
+def ReverseNormCaloChall(
     voxels,
     e,
-    shape,
-    emax,
-    binning_file,
-    emin,
+    emax=9999.0,
+    emin=0.0001,
+    config=None,
+    shape=None,
+    binning_file="",
     max_deposit=2,
     logE=True,
     layerE=None,
@@ -436,6 +455,7 @@ def ReverseNorm(
     dataset_num=2,
     orig_shape=False,
     ecut=0.0,
+    **kwargs,
 ):
     """Revert the transformations applied to the training set"""
 
@@ -583,6 +603,9 @@ class NNConverter(nn.Module):
             inv_lay.weight.data = inv_init + eps * noise2
 
             self.decs.append(inv_lay)
+
+    def init(self):
+        return
 
     def enc(self, x):
         n_shower = x.shape[0]
@@ -789,6 +812,7 @@ class EarlyStopper:
                     return True
             return False
 
+
 def draw_shower(shower, dataset_num, fout, title=None):
     from CaloChallenge.code.HighLevelFeatures import HighLevelFeatures
 
@@ -806,7 +830,8 @@ def conversion_preprocess(file_path):
     with h5.File(mask_file, "w") as h5f:
         h5f.create_dataset("mask", data=mask)
 
-def load_data(args, config, eval=False):
+
+def load_data(args, config, eval=False, NN_embed=None):
 
     nholdout = config.get("HOLDOUT", 0)
     batch_size = config["BATCH"]
@@ -814,95 +839,149 @@ def load_data(args, config, eval=False):
     shower_embed = config.get("SHOWER_EMBED", "")
     orig_shape = "orig" in shower_embed
     layer_norm = "layer" in config["SHOWERMAP"]
+    geom_file = config.get("BIN_FILE", "")
 
+    pre_embed = "pre-embed" in shower_embed
+    shower_scale = config.get("SHOWERSCALE", 200.0)
+    max_cells = config.get("MAX_CELLS", None)
+    hgcal = config.get("HGCAL", False)
 
-    if eval: 
-        files = config['EVAL']
-    else: 
+    if eval:
+        files = config["EVAL"]
+        val_file_list = []
+    else:
         if hasattr(args, "seed"):
             torch.manual_seed(args.seed)
-        files = config['FILES']
+        files = config["FILES"]
+        val_file_list = config.get("VAL_FILES", [])
 
-    for i, dataset in enumerate(files):
-        data_, e_, layers_ = DataLoader(
-            os.path.join(args.data_folder, dataset),
-            config["SHAPE_PAD"],
-            emax=config["EMAX"],
-            emin=config["EMIN"],
-            nevts=args.nevts,
-            binning_file=config["BIN_FILE"],
-            max_deposit=config[
-                "MAXDEP"
-            ],  # noise can generate more deposited energy than generated
-            logE=config["logE"],
-            showerMap=config["SHOWERMAP"],
-            nholdout=nholdout if (i == len(files) - 1) else 0,
-            dataset_num=dataset_num,
-            orig_shape=orig_shape,
-        )
+    NN_embed = None
+    if pre_embed:
+        trainable = config.get("TRAINABLE_EMBED", False)
+        NN_embed = HGCal_utils.HGCalConverter(
+            bins=config["SHAPE_FINAL"],
+            geom_file=geom_file,
+            trainable=trainable,
+            device=get_device(),
+        ).to(device=get_device())
+        NN_embed.init(norm=True, dataset_num=dataset_num)
 
-        if i == 0:
-            data = data_
-            energies = e_
-            if layer_norm:
-                layers = layers_
+    train_files = []
+    val_files = []
+
+    do_break = False
+
+    for i, dataset in enumerate(files + val_file_list):
+
+        tag = ".npz"
+        if args.nevts > 0:
+            tag = ".n%i.npz" % args.nevts
+        # path of pre-processed data files
+        path_clean = os.path.join(args.data_folder, dataset + tag)
+
+        if not os.path.exists(path_clean) or args.reclean:
+            # process this dataset
+            showers, E, layers = DataLoader(
+                os.path.join(args.data_folder, dataset),
+                shape=config["SHAPE_PAD"],
+                emax=config["EMAX"],
+                emin=config["EMIN"],
+                hgcal=hgcal,
+                nevts=args.nevts,
+                binning_file=geom_file,
+                max_deposit=config[
+                    "MAXDEP"
+                ],  # noise can generate more deposited energy than generated
+                logE=config["logE"],
+                showerMap=config["SHOWERMAP"],
+                shower_scale=shower_scale,
+                max_cells=max_cells,
+                nholdout=nholdout if (i == len(files) - 1) else 0,
+                dataset_num=dataset_num,
+                orig_shape=orig_shape,
+                config=config,
+                embed=pre_embed,
+                NN_embed=NN_embed,
+            )
+
+            layers = np.reshape(layers, (layers.shape[0], -1))
+
+            if orig_shape:
+                showers = np.reshape(showers, config["SHAPE_ORIG"])
+            else:
+                showers = np.reshape(showers, config["SHAPE_PAD"])
+
+            np.savez_compressed(
+                path_clean,
+                E=E,
+                layers=layers,
+                showers=showers,
+            )
+            if args.nevts > 0 and showers.shape[0] >= args.nevts:
+                do_break = True
+
+            del E, layers, showers
+
+        if dataset in files:
+            train_files.append(path_clean)
         else:
-            data = np.concatenate((data, data_))
-            energies = np.concatenate((energies, e_))
-            if layer_norm:
-                layers = np.concatenate((layers, layers_))
+            val_files.append(path_clean)
 
-    dshape = config["SHAPE_PAD"]
-    if layer_norm:
-        layers = np.reshape(layers, (layers.shape[0], -1))
-    if not orig_shape:
-        data = np.reshape(data, dshape)
-    else:
-        data = np.reshape(data, (len(data), -1))
+        if do_break:
+            break
 
-    num_data = data.shape[0]
-    print("Data Shape " + str(data.shape))
-
-    torch_data_tensor = torch.from_numpy(data)
-    torch_E_tensor = torch.from_numpy(energies)
-    torch_layer_tensor = (
-        torch.from_numpy(layers) if layer_norm else torch.zeros_like(torch_E_tensor)
+    print(train_files)
+    dataset_train = Dataset(train_files)
+    loader_train = torchdata.DataLoader(
+        dataset_train, batch_size=batch_size, pin_memory=True
     )
-    del data
 
-    torch_dataset = torch.utils.data.TensorDataset(
-        torch_E_tensor, torch_layer_tensor, torch_data_tensor
-    )
-    if eval: 
-        del torch_E_tensor
-        return  torch.utils.data.DataLoader(
-            torch_dataset, batch_size=batch_size, shuffle=True
+    loader_val = None
+    if len(val_files) > 0:
+        dataset_val = Dataset(val_files)
+        loader_val = torchdata.DataLoader(
+            dataset_val, batch_size=batch_size, pin_memory=True
         )
-    
-    nTrain = int(round(args.frac * num_data))
-    nVal = num_data - nTrain
 
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        torch_dataset, [nTrain, nVal]
-    )
-    loader_train = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True
-    )
-    loader_val = torch.utils.data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=True
-    )
-    del torch_E_tensor, train_dataset, val_dataset
     return loader_train, loader_val
 
-
-def get_device():
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-    return device
 
 def subsample_alphas(alpha, time, x_shape):
     batch_size = time.shape[0]
     out = alpha.gather(-1, time.cpu())
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(time.device)
+
+
+def apply_in_batches(model, data, batch_size=128, device="cpu"):
+    data_loader = torchdata.DataLoader(
+        torch.Tensor(data), batch_size=batch_size, shuffle=False
+    )
+    out = None
+    for i, batch in enumerate(data_loader):
+        batch = batch.to(device)
+        out_ = model(batch)
+        if i == 0:
+            out = out_.detach().cpu()
+        else:
+            out = torch.cat([out, out_.detach().cpu()], axis=0)
+    return out
+
+
+def append_h5(f, name, data):
+    prev_size = f[name].shape[0]
+    f[name].resize((prev_size + data.shape[0]), axis=0)
+    f[name][prev_size:] = data
+
+
+def apply_mask_conserveE(generated, mask):
+    # Preserve layer energies after applying a mask
+    generated[generated < 0] = 0
+    d_masked = np.where(mask, generated, 0.0)
+    lostE = np.sum(d_masked, axis=-1, keepdims=True)
+    ELayer = np.sum(generated, axis=-1, keepdims=True)
+    eps = 1e-10
+    rescale = (ELayer + eps) / (ELayer - lostE + eps)
+    generated[mask] = 0.0
+    generated *= rescale
+
+    return generated

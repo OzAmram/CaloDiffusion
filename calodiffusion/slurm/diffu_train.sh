@@ -66,9 +66,10 @@ cd /work1/cms_mlsim/oamram/CaloDiffusion/scripts
 
 if [[ $restarts -eq 0 ]]; then
 # Timeout command to catch / resubmit before 8h max
-torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; timeout 7.8h python3 train_MODELTYPE.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load --reset_training"
+torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; timeout 7.8h python3 train_MODELTYPE.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load --reset_training EXTRAARGS"
+#torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; timeout 7.8h python3 train_MODELTYPE.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load"
 else 
-torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; timeout 7.8h python3 train_MODELTYPE.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load "
+torchexec bash -c "export HOME=/work1/cms_mlsim/oamram/CaloDiffusion/; timeout 7.8h python3 train_MODELTYPE.py --model Diffu --config CONFIG --data_folder /wclustre/cms_mlsim/denoise/CaloChallenge/ --load EXTRAARGS"
 fi
 
 #resubmit

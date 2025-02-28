@@ -27,6 +27,8 @@ class Diffusion(torch.nn.Module, ABC):
         self.nsteps = n_steps
         self.loss_type = loss_type
 
+        self.hgcal = self.pre_embed = False
+
         loss_algo = self.config.get('TRAINING_OBJ', "noise_pred")
         try: 
             self.loss_function = getattr(
@@ -46,7 +48,8 @@ class Diffusion(torch.nn.Module, ABC):
             raise ValueError("Sampler '%s' is not supported" % sampler_algo)
 
         self.model = self.init_model()
-        self.NN_embed = self.init_embedding_model()
+        self.NN_embed = None
+        #self.NN_embed = self.init_embedding_model()
 
         if "orig" not in self.config.get("SHOWER_EMBED", ""): 
             self._data_shape =  self.config["SHAPE_PAD"][1:]
@@ -114,11 +117,11 @@ class Diffusion(torch.nn.Module, ABC):
         else:
             return x.detach().cpu().numpy()
         
-    def compute_loss(self, data, energy, noise, time, layers):
+    def compute_loss(self, data, energy, noise, layers, rnd_normal=None):
         """
         Compute loss for a single model step
         """
-        return self.loss_function(self, data, energy, noise=noise, time=time, layers=layers)
+        return self.loss_function(self, data, energy, noise=noise, layers=layers, rnd_normal=None)
 
     def load_state_dict(
         self, state_dict: OrderedDict[str, torch.Tensor], strict: bool = True
@@ -142,9 +145,11 @@ class Diffusion(torch.nn.Module, ABC):
         data = []
         energies = []
         layers = []
+
         for E, layers_, d_batch in self.tqdm(data_loader):
             E = E.to(device=self.device)
             d_batch = d_batch.to(device=self.device)
+            layers_ = layers_.to(device=self.device)
 
             batch_generated = self.sample(
                 E,
@@ -154,19 +159,20 @@ class Diffusion(torch.nn.Module, ABC):
                 sample_offset=sample_offset,
             )
 
-            if debug:
-                data.append(d_batch)
 
+            if debug:
+                data.append(d_batch.detach().cpu().numpy())
+
+            E = E.detach().cpu().numpy()
             energies.append(E)
 
             if "layer" in self.config["SHOWERMAP"]:
-                layers.append(layers_)
+                layers.append(layers_.detach().cpu().numpy())
 
             # Plot the histograms of normalized voxels for both the diffusion model and Geant4
             if debug:
                 gen = self._debug_sample_plot(batch_generated, data)
                 generated.append(gen)
-
             else: 
                 generated.append(batch_generated)
 
@@ -174,24 +180,29 @@ class Diffusion(torch.nn.Module, ABC):
         energies = np.concatenate(energies)
         layers = np.concatenate(layers)
 
-        if not orig_shape:
-            generated = generated.reshape(self.config["SHAPE"])
-
         generated, energies = utils.ReverseNorm(
             generated,
             energies,
+            shape=self.config["SHAPE_FINAL"],
+            config = self.config,
+            emax=self.config["EMAX"],
+            emin=self.config["EMIN"],
             layerE=layers,
-            shape=self.config["SHAPE"],
             logE=self.config["logE"],
             binning_file=self.config["BIN_FILE"],
             max_deposit=self.config["MAXDEP"],
-            emax=self.config["EMAX"],
-            emin=self.config["EMIN"],
             showerMap=self.config["SHOWERMAP"],
             dataset_num=self.config.get("DATASET_NUM", 2),
             orig_shape=orig_shape,
             ecut=self.config["ECUT"],
+            hgcal=self.hgcal,
+            embed=self.pre_embed,
+            NN_embed=self.NN_embed,
         )
+        if not orig_shape:
+            generated = generated.reshape(self.config["SHAPE_ORIG"])
+
+        energies = np.reshape(energies,(energies.shape[0],-1))
 
         return generated, energies
 

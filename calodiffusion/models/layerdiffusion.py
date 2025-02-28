@@ -21,14 +21,40 @@ class LayerDiffusion(CaloDiffusion):
         self.base_model = model
         return model
 
-    def load_state_dict(self, state_dict, strict = True):
+    def load_layer_model_state(self, strict = True): 
         layer_model_state_dict = torch.load(self.config['layer_model'], map_location=self.device, weights_only=False)
-        layer_model_state = {".".join(key.split(".")[1:]): state for key, state in layer_model_state_dict['model_state_dict'].copy().items() if "layer_model" in key}
-        layer_model_state.pop('', None)  # Can have a leftover "" in the keys. Strange. 
-        self.layer_model.load_state_dict(layer_model_state, strict)
+        state_dict = layer_model_state_dict if 'model_state_dict' not in layer_model_state_dict else layer_model_state_dict['model_state_dict']
         
-        base_model_state_dict = {".".join(key.split(".")[1:]): state for key, state in state_dict.copy().items() if "NN_embed" not in key or "layer_model" not in key}
-        self.base_model.load_state_dict(base_model_state_dict, strict=False)
+        weights_prefixes = set([key.split('.')[0] for key in state_dict.keys()])
+        if "layer_model" in weights_prefixes: 
+            state_dict = {key.removeprefix("layer_model."): value for key, value in state_dict.items()}
+
+        try: 
+            self.layer_model.load_state_dict(state_dict=state_dict, strict=strict)
+        except RuntimeError as e: 
+            if ("size mismatch" in str(e)) or ("Missing key(s) in state_dict" in str(e)): 
+                raise RuntimeError(e)
+            else: 
+                self.layer_model.load_state_dict(state_dict=state_dict, strict=False)
+
+    def load_state_dict(self, state_dict, strict = True):
+        self.load_layer_model_state(strict)        
+        # Load the base model 
+        
+        weights_prefixes = set([key.split('.')[0] for key in state_dict.keys()])
+        if "base_model" in weights_prefixes: 
+            state_dict = {key.removeprefix("base_model."): value for key, value in state_dict.items()}
+
+        elif "model" in weights_prefixes: 
+            state_dict = {key.removeprefix("model."): value for key, value in state_dict.items()}
+
+        try: 
+            self.base_model.load_state_dict(state_dict, strict)
+        except RuntimeError as e: 
+            if ("size mismatch" in str(e)) or ("Missing key(s) in state_dict" in str(e)): 
+                raise RuntimeError(e)
+            else: 
+                self.base_model.load_state_dict(state_dict, strict=False)
     
     def state_dict(self):
         state_dict = super().state_dict()

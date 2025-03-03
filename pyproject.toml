@@ -39,4 +39,4 @@ include = ["calodiffusion"]
 
 [project.scripts]
 calodif-inference = "calodiffusion.inference:inference"
-calodif-train = "calodiffusion.train:train"
+calodif-train = "calodiffusion.training:train"

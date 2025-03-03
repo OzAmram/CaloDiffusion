@@ -874,12 +874,15 @@ def load_data(args, config, eval=False, NN_embed=None):
             tag = ".n%i.npz" % args.nevts
         # path of pre-processed data files
         path_clean = os.path.join(args.data_folder, dataset + tag)
+        shape = config.get("SHAPE_PAD")
+        if shape is None:
+            shape = config.get("SHAPE_FINAL")
 
         if not os.path.exists(path_clean) or args.reclean:
             # process this dataset
             showers, E, layers = DataLoader(
                 os.path.join(args.data_folder, dataset),
-                shape=config["SHAPE_PAD"],
+                shape=shape,
                 emax=config["EMAX"],
                 emin=config["EMIN"],
                 hgcal=hgcal,

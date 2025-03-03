@@ -104,7 +104,7 @@ class Diffusion(torch.nn.Module, ABC):
         else:
             return x.detach().cpu().numpy()
         
-    def compute_loss(self, data, energy, noise, layers, rnd_normal=None):
+    def compute_loss(self, data, energy, noise, layers, time=None, rnd_normal=None):
         """
         Compute loss for a single model step
         """

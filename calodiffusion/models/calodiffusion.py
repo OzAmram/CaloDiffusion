@@ -4,11 +4,13 @@ import torch
 from calodiffusion.models.diffusion import Diffusion
 from calodiffusion.models.models import ResNet, CondUnet
 from calodiffusion.utils import utils
-from calodiffusion.utils.HGCal_utils import HGCalConverter
+import calodiffusion.utils.HGCal_utils as hgcal_utils
 
 class CaloDiffusion(Diffusion): 
     def __init__(self, config: Union[str, dict], n_steps: int = 400, loss_type: str = 'l2'):
         super().__init__(config, n_steps, loss_type)
+        self.pre_embed = "pre-embed" in self.config['SHOWER_EMBED']
+        self.hgcal = self.config.get("HGCAL", False)
 
         self.fully_connected = "FCN" in self.config.get("SHOWER_EMBED", "")
         self.time_embed = self.config.get("TIME_EMBED", "sin")
@@ -21,7 +23,7 @@ class CaloDiffusion(Diffusion):
         self.training_objective = self.config.get("TRAINING_OBJ", "noise_pred")
         self.layer_cond = "layer" in config.get("SHOWERMAP", "")
         self.NN_embed = self.init_embedding_model()
-
+        self.do_embed = self.NN_embed is not None and (not self.pre_embed)
 
     def load_state_dict(self, state_dict, strict = True):
         base_model_name = list(state_dict.keys())[10].split('.')[0]
@@ -32,15 +34,6 @@ class CaloDiffusion(Diffusion):
         return super().load_state_dict(state_dict, strict)
     
     def init_model(self):
-
-        self.pre_embed = "pre-embed" in self.config['SHOWER_EMBED']
-        self.hgcal = self.config.get("HGCAL", False)
-        self.fully_connected = "FCN" in self.config.get("SHOWER_EMBED", "")
-
-
-        self.NN_embed = self.init_embedding_model()
-        self.do_embed = self.NN_embed is not None and (not self.pre_embed)
-
 
         self.fully_connected = "FCN" in self.config.get("SHOWER_EMBED", "")
 
@@ -90,7 +83,7 @@ class CaloDiffusion(Diffusion):
     def forward(self, x, E, time, layers, layer_sample=False, controls=None):
 
         if (self.do_embed):
-            x = self.NN_embed.enc(x).to(x.device)
+            x = self.NN_embed.enc(x.to(torch.float32)).to(x.device)
         if (self.layer_cond) and (layers is not None):
             E = torch.cat([E, layers], dim=1)
 
@@ -117,8 +110,9 @@ class CaloDiffusion(Diffusion):
 
         elif(self.hgcal and not self.pre_embed):
             trainable = self.config.get('TRAINABLE_EMBED', False)
-            NN_embed = HGCalConverter(bins = self.config['SHAPE_FINAL'], geom_file = self.config['BIN_FILE'], device = self.device, trainable = trainable).to(device = self.device)
-            if(not trainable): NN_embed.init(norm = self.pre_embed, dataset_num = dataset_num)
+            NN_embed = hgcal_utils.HGCalConverter(bins = self.config['SHAPE_FINAL'], geom_file = self.config['BIN_FILE'], device = self.device, trainable = trainable).to(device = self.device)
+            if not trainable: 
+                NN_embed.init(norm = self.pre_embed, dataset_num = dataset_num)
 
         return NN_embed
 
@@ -156,7 +150,7 @@ class CaloDiffusion(Diffusion):
         return embed[self.time_embed](sigma)
     
     def denoise(self, x, E=None, sigma=None, layers = None, layer_sample=False, controls=None):
-        t_emb = self.do_time_embed(sigma = sigma.reshape(-1))
+        t_emb = self.do_time_embed(sigma = sigma.reshape(-1)).to(float)
         loss_function_name = type(self.loss_function).__name__
 
         c_skip, c_out, c_in = self.loss_function.get_scaling(sigma)

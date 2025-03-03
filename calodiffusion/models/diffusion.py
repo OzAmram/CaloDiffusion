@@ -34,7 +34,6 @@ class Diffusion(torch.nn.Module, ABC):
         sampler_algo = self.config.get("SAMPLER", "DDim")
         self.sampler_algorithm = utils.load_attr("sampler", sampler_algo)(self.config)
 
-        self.model = self.init_model()
         self.NN_embed = None
         #self.NN_embed = self.init_embedding_model()
 

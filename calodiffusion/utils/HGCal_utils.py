@@ -36,7 +36,6 @@ def preprocess_hgcal_shower(
 
     layerE = None
     prefix = ""
-    print(shower.shape)
     if "layer" in showerMap:
         eshape = (-1, *(1,) * (len(shower.shape) - 1))
         shower = np.ma.divide(shower, (max_deposit * e.reshape(eshape)))
@@ -186,8 +185,6 @@ def ReverseNormHGCal(
     config=None,
 ):
     """Revert the transformations applied to the training set"""
-
-    print("vox", voxels.shape)
 
     c = constants.dataset_params[dataset_num]
 

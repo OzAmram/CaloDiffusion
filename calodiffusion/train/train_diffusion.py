@@ -78,10 +78,15 @@ class Diffusion(Train):
                     vE = vE.to(device=self.device)
                     vlayers = vlayers.to(device=self.device)
 
+
                     noise = torch.randn_like(vdata)
 
                     #use fixed time steps for stable val loss
                     rnd_normal = val_rnd[i].to(device=self.device)
+
+                    #make sure shape of last batch handled properly
+                    if(vE.shape[0] != self.batch_size):
+                        rnd_normal = rnd_normal[:vE.shape[0]]
 
                     if cold_diffu:
                         noise = self.model.gen_cold_image(vE, cold_noise_scale, noise)

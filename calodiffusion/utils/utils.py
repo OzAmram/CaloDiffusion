@@ -865,7 +865,7 @@ def load_data(args, config, eval=False, NN_embed=None):
     train_files = []
     val_files = []
 
-    do_break = False
+    n_showers = 0
 
     for i, dataset in enumerate(files + val_file_list):
 
@@ -902,6 +902,7 @@ def load_data(args, config, eval=False, NN_embed=None):
                 embed=pre_embed,
                 NN_embed=NN_embed,
             )
+            n_showers += showers.shape[0]
 
             layers = np.reshape(layers, (layers.shape[0], -1))
 
@@ -916,9 +917,6 @@ def load_data(args, config, eval=False, NN_embed=None):
                 layers=layers,
                 showers=showers,
             )
-            if args.nevts > 0 and showers.shape[0] >= args.nevts:
-                do_break = True
-
             del E, layers, showers
 
         if dataset in files:
@@ -926,7 +924,7 @@ def load_data(args, config, eval=False, NN_embed=None):
         else:
             val_files.append(path_clean)
 
-        if do_break:
+        if (args.nevts > 0 and n_showers >= args.nevts):
             break
 
     dataset_train = Dataset(train_files)

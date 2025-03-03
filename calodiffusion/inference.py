@@ -21,6 +21,7 @@ class dotdict(dict):
 
 @click.group()
 @click.option("-c", "--config")
+@click.option("-g", "--generated", default="", help="File name for generated showers")
 @click.option("-d", "--data-folder", default="./data/", help="Folder containing data and MC files")
 @click.option("--checkpoint-folder", default="./trained_models/", help="Folder to save checkpoints")
 @click.option("-n", "--n-events", default=-1, type=int, help="Number of events to load")
@@ -31,7 +32,7 @@ class dotdict(dict):
 @click.option("--hgcal/--no-hgcal", default=False, help="Use HGCal settings (overwrites config)")
 @click.option("--seed", default=None, help='Set a manual seed (saved in config)')
 @click.pass_context
-def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, job_idx, n_events, reclean, hgcal, seed): 
+def inference(ctx, debug, config, generated, data_folder, checkpoint_folder, layer_only, job_idx, n_events, reclean, hgcal, seed): 
     ctx.ensure_object(dotdict)
     
     ctx.obj.config = LoadJson(config) if config is not None else {}
@@ -43,6 +44,7 @@ def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, jo
     ctx.obj.layer_only = layer_only
     ctx.obj.reclean = reclean
     ctx.obj.hgcal = hgcal
+    ctx.obj.generated = generated
 
     if seed is None: 
         seed = int(np.random.default_rng().integers(low=100, high=10**5))
@@ -98,7 +100,6 @@ def hgcal(ctx):
     pass
 
 @inference.command()
-@click.option("-g", "--generated", help="Generated showers")
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
 @click.option("--plot-reshape/--no-plot-reshape", default=False, help="Plot the embedded space")
@@ -302,7 +303,10 @@ def run_inference(flags, config, model):
     sample_steps = flags.sample_steps if flags.sample_steps is not None else config.get("SAMPLE_STEPS", 400)
 
     generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset)
-    fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}_{datetime.now().timestamp()}.h5"
+    if(flags.generated == ""):
+        fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}_{datetime.now().timestamp()}.h5"
+    else: 
+        fout = flags.generated
     write_out(fout, flags, config, generated, energies, first_write=True)
 
 if __name__ == "__main__":

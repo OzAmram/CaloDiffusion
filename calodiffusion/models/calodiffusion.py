@@ -22,8 +22,11 @@ class CaloDiffusion(Diffusion):
         self.phi_image = utils.create_phi_image(self.device, shape=self.config["SHAPE_FINAL"][1:])
         self.training_objective = self.config.get("TRAINING_OBJ", "noise_pred")
         self.layer_cond = "layer" in config.get("SHOWERMAP", "")
+
+        self.model = self.init_model()
         self.NN_embed = self.init_embedding_model()
         self.do_embed = self.NN_embed is not None and (not self.pre_embed)
+
 
     def load_state_dict(self, state_dict, strict = True):
         base_model_name = list(state_dict.keys())[10].split('.')[0]

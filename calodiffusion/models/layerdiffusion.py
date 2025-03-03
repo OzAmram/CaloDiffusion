@@ -16,7 +16,8 @@ class LayerDiffusion(CaloDiffusion):
         self.base_forward = self.forward
 
     def init_model(self):
-        self.layer_model = ResNet(dim_in = self.config['SHAPE_PAD'][2] + 1, num_layers = 5).to(device = self.device)
+        cond_size = 3 if self.hgcal else 1
+        self.layer_model = ResNet(dim_in = self.config['SHAPE_PAD'][2] + 1, num_layers = 5, cond_size = cond_size).to(device = self.device)
         model = super().init_model().to(device = self.device)
         self.base_model = model
         return model

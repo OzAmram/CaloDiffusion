@@ -4,8 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.9"
 description = ""
 authors =[
-    {name="voetberg", email="maggiev@fnal.gov"}, 
-    {name="oz amram", email="oz.amram@gmail.com"}
+    {name="oz amram", email="oz.amram@gmail.com"}, 
+    {name="voetberg", email="maggiev@fnal.gov"}
+
 ]
 readme = "README.md"
 
@@ -20,7 +21,13 @@ dependencies = [
   "h5py>=3.11.0",
   "einops>=0.8.0",
   "scikit-learn>=1.5.2", 
-  "torchinfo>=1.8.0"
+  "torchinfo>=1.8.0", 
+  "optuna>=4.0.0", 
+  "fvcore>=0.1.5", 
+  "torchsde>=0.2.6",
+  "click>=8.0.1", 
+  "torchsde>=0.2.6",
+  "mplhep>=0.3.57"
 ]
 
 [build-system]
@@ -31,5 +38,5 @@ build-backend = "setuptools.build_meta"
 include = ["calodiffusion"]
 
 [project.scripts]
-calodif-inference = "inference.py"
-calodif-train = "train.py"
+calodif-inference = "calodiffusion.inference:inference"
+calodif-train = "calodiffusion.training:train"

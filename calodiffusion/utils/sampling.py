@@ -1267,4 +1267,24 @@ def sample_dd(
         x0s.append(x0_pred)
         xs.append(x)
 
-    return x, xs, x0s
+    return x,xs,x0s
+
+
+class PIDStepSizeControl: 
+    def __init__(self, h_init, order, eta, accept_safety):
+        self.order = order
+        self.eta = eta
+        self.accept_safety = accept_safety
+
+        self.h = h_init
+    
+    def update_h(self, error, lambda_0, lambda_s):
+        return torch.min(self.accept_safety * self.h * torch.float_power(error, -1. / self.order).float(), lambda_0 - lambda_s) 
+
+    def propose_step(self, error, lambda_0, lambda_s):
+        accept = False
+        if torch.all(error <= 1.):
+            accept = True
+        
+        self.update_h(error, lambda_0, lambda_s)
+        return accept

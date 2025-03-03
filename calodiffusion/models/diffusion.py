@@ -13,7 +13,6 @@ import torch
 
 from calodiffusion.utils import utils
 from calodiffusion.utils import plots as plot
-from calodiffusion.models import sample, loss
 
 
 class Diffusion(torch.nn.Module, ABC):
@@ -30,22 +29,10 @@ class Diffusion(torch.nn.Module, ABC):
         self.hgcal = self.pre_embed = False
 
         loss_algo = self.config.get('TRAINING_OBJ', "noise_pred")
-        try: 
-            self.loss_function = getattr(
-                loss, loss_algo
-            )(self.config, self.nsteps, self.loss_type)
-
-        except AttributeError: 
-            raise ValueError("Loss '%s' is not supported" % loss_algo)
+        self.loss_function = utils.load_attr("loss", loss_algo)(self.config, self.nsteps, self.loss_type)
 
         sampler_algo = self.config.get("SAMPLER", "DDim")
-        try: 
-            self.sampler_algorithm = getattr(
-                sample, sampler_algo
-            )(self.config, sampler_algo.lower())
-            
-        except AttributeError: 
-            raise ValueError("Sampler '%s' is not supported" % sampler_algo)
+        self.sampler_algorithm = utils.load_attr("sampler", sampler_algo)(self.config)
 
         self.model = self.init_model()
         self.NN_embed = None
@@ -94,7 +81,7 @@ class Diffusion(torch.nn.Module, ABC):
         layers: list,
         num_steps: int = 400,
         debug: bool = False,
-        sample_offset: Optional[int] = None,
+        sample_offset: Optional[int] = 0,
     ) -> torch.Tensor:
         
         generated_shape = list(copy.copy(self._data_shape))
@@ -117,23 +104,24 @@ class Diffusion(torch.nn.Module, ABC):
         else:
             return x.detach().cpu().numpy()
         
-    def compute_loss(self, data, energy, noise, layers, rnd_normal=None):
+    def compute_loss(self, data, energy, noise, layers, time=None, rnd_normal=None):
         """
         Compute loss for a single model step
         """
-        return self.loss_function(self, data, energy, noise=noise, layers=layers, rnd_normal=None)
+        return self.loss_function(self, data, energy, noise=noise, layers=layers, rnd_normal=rnd_normal)
 
     def load_state_dict(
         self, state_dict: OrderedDict[str, torch.Tensor], strict: bool = True
     ):
         return super().load_state_dict(state_dict, strict)
 
+
     def generate(
         self,
         data_loader: utils.DataLoader,
         sample_steps: int,
         debug: bool = False,
-        sample_offset: Optional[int] = None,
+        sample_offset: Optional[int] = 0,
     ):
         """
         Generate samples for a whole dataloader
@@ -159,13 +147,11 @@ class Diffusion(torch.nn.Module, ABC):
                 sample_offset=sample_offset,
             )
 
-
             if debug:
                 data.append(d_batch.detach().cpu().numpy())
 
             E = E.detach().cpu().numpy()
             energies.append(E)
-
             if "layer" in self.config["SHOWERMAP"]:
                 layers.append(layers_.detach().cpu().numpy())
 

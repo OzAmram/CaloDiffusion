@@ -1,25 +1,28 @@
-from calodiffusion.utils.common import *
-
 from calodiffusion.utils.XMLHandler import XMLHandler
 from calodiffusion.utils.dataset import Dataset
 import calodiffusion.utils.HGCal_utils as HGCal_utils
 import calodiffusion.utils.consts as constants
 
-
+import os
+from typing import Literal
+import h5py as h5
+import numpy as np
+import torch
+import torch.nn as nn
 import sys
+import joblib
+import matplotlib.pyplot as plt
+import torch.utils.data as torchdata
 
 
-def import_tqdm():
+def import_tqdm(): 
     if sys.stderr.isatty():
         from tqdm import tqdm
     else:
-
         def tqdm(iterable, **kwargs):
             return iterable
-
     return tqdm
-
-
+        
 def split_data_np(data, frac=0.8):
     np.random.shuffle(data)
     split = int(frac * data.shape[0])
@@ -37,8 +40,8 @@ def create_phi_image(device, shape=(1, 45, 16, 9)):
     return phi_image
 
 
-def create_R_Z_image(device, dataset_num=0, scaled=True, shape=(1, 45, 16, 9)):
-    if dataset_num == 0:  # dataset 1, photons
+def create_R_Z_image(device, dataset_num=1, scaled=True, shape=(1, 45, 16, 9)):
+    if dataset_num == 1:  # dataset 1, photons
         r_bins = [
             0.0,
             2.0,
@@ -72,7 +75,7 @@ def create_R_Z_image(device, dataset_num=0, scaled=True, shape=(1, 45, 16, 9)):
             1000.0,
             2000.0,
         ]
-    elif dataset_num == 1:  # dataset 1, pions
+    elif dataset_num == 2:  # dataset 1, pions
         r_bins = [
             0.00,
             1.00,
@@ -99,9 +102,9 @@ def create_R_Z_image(device, dataset_num=0, scaled=True, shape=(1, 45, 16, 9)):
             1000.00,
             2000.00,
         ]
-    elif dataset_num == 2:  # dataset 2
-        r_bins = [0, 4.65, 9.3, 13.95, 18.6, 23.25, 27.9, 32.55, 37.2, 41.85]
     elif dataset_num == 3:  # dataset 2
+        r_bins = [0, 4.65, 9.3, 13.95, 18.6, 23.25, 27.9, 32.55, 37.2, 41.85]
+    elif dataset_num == 4:  # dataset 2
         r_bins = [
             0,
             2.325,
@@ -129,7 +132,9 @@ def create_R_Z_image(device, dataset_num=0, scaled=True, shape=(1, 45, 16, 9)):
         print("RZ binning missing for dataset num %i ? " % (dataset_num))
 
     r_avgs = [(r_bins[i] + r_bins[i + 1]) / 2.0 for i in range(len(r_bins) - 1)]
-    assert len(r_avgs) == shape[-1]
+
+    if len(r_avgs) != shape[-1]: 
+        raise ValueError(f"Mismatch for dataset size {shape} and dataset num {dataset_num} - expecting dataset with final dim {len(r_avgs)}")
     Z_image = torch.zeros(shape, device=device)
     R_image = torch.zeros(shape, device=device)
     for z in range(shape[1]):
@@ -152,10 +157,8 @@ def split_data(data, nevts, frac=0.8):
     return train_data, test_data
 
 
-name_translate = {
-    "diffusion": "CaloDiffusion",
-    "Avg": "Avg Shower",
-}
+def name_translate(generated_file_path:str): 
+    return generated_file_path.split('/')[-2].split('_')[-1]
 
 
 def _separation_power(hist1, hist2, bins):
@@ -223,7 +226,6 @@ def make_histogram(
         print("saving fig %s" % fname)
     # else: plt.show(block=False)
     return fig
-
 
 def reverse_logit(x, alpha=1e-6):
     exp = np.exp(x)
@@ -369,7 +371,6 @@ def preprocess_shower(
             )
 
             totalE = np.sum(shower, 1, keepdims=True)
-            print(totalE)
             for idx in range(boundaries.shape[0] - 1):
                 layers[:, idx] = np.sum(
                     shower[:, boundaries[idx] : boundaries[idx + 1]], 1
@@ -380,7 +381,6 @@ def preprocess_shower(
                         layers[:, idx : idx + 1],
                     )
 
-        print(layerE)
         # only logit transform for layers
         layer_alpha = 1e-6
         layers = np.ma.divide(layers, totalE)
@@ -604,9 +604,6 @@ class NNConverter(nn.Module):
 
             self.decs.append(inv_lay)
 
-    def init(self):
-        return
-
     def enc(self, x):
         n_shower = x.shape[0]
         x = self.gc.reshape(x)
@@ -812,9 +809,8 @@ class EarlyStopper:
                     return True
             return False
 
-
 def draw_shower(shower, dataset_num, fout, title=None):
-    from CaloChallenge.code.HighLevelFeatures import HighLevelFeatures
+    from calodiffusion.utils.HighLevelFeatures import HighLevelFeatures
 
     binning_file = "../CaloChallenge/code/binning_dataset_2.xml"
     hf = HighLevelFeatures("electron", binning_file)
@@ -878,12 +874,15 @@ def load_data(args, config, eval=False, NN_embed=None):
             tag = ".n%i.npz" % args.nevts
         # path of pre-processed data files
         path_clean = os.path.join(args.data_folder, dataset + tag)
+        shape = config.get("SHAPE_PAD")
+        if shape is None:
+            shape = config.get("SHAPE_FINAL")
 
         if not os.path.exists(path_clean) or args.reclean:
             # process this dataset
             showers, E, layers = DataLoader(
                 os.path.join(args.data_folder, dataset),
-                shape=config["SHAPE_PAD"],
+                shape=shape,
                 emax=config["EMAX"],
                 emin=config["EMIN"],
                 hgcal=hgcal,
@@ -930,7 +929,6 @@ def load_data(args, config, eval=False, NN_embed=None):
         if do_break:
             break
 
-    print(train_files)
     dataset_train = Dataset(train_files)
     loader_train = torchdata.DataLoader(
         dataset_train, batch_size=batch_size, pin_memory=True
@@ -985,3 +983,32 @@ def apply_mask_conserveE(generated, mask):
     generated *= rescale
 
     return generated
+
+def get_device():
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    return device
+
+def subsample_alphas(alpha, time, x_shape):
+    batch_size = time.shape[0]
+    out = alpha.gather(-1, time.cpu())
+    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(time.device)
+
+
+def load_attr(type_: Literal["sampler", "loss"], algo_name: str): 
+    if type_ == "sampler": 
+        from calodiffusion.models import sample as module
+    else: 
+        from calodiffusion.models import loss as module
+
+    try: 
+        algo = getattr(
+            module, algo_name
+        )
+        
+    except AttributeError as e: 
+        raise ValueError("%s '%s' is not supported: %s" % (type_, algo_name, e))
+    
+    return algo

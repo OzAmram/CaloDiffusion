@@ -151,7 +151,10 @@ class Block(nn.Module):
             self.proj = nn.Conv3d(dim, dim_out, kernel_size=3, padding=1)
         else:
             self.proj = CylindricalConv(dim, dim_out, kernel_size=3, padding=1)
-        self.norm = nn.GroupNorm(groups, dim_out)
+        try: 
+            self.norm = nn.GroupNorm(groups, dim_out)
+        except ValueError: 
+            raise ValueError(f"Failed it init groupnorm with {groups} groups and {dim_out} out dims")
         self.act = nn.SiLU()
 
     def forward(self, x, scale_shift=None):
@@ -168,7 +171,6 @@ class Block(nn.Module):
 
 class ResnetBlock(nn.Module):
     """https://arxiv.org/abs/1512.03385"""
-
     def __init__(self, dim, dim_out, *, cond_emb_dim=None, groups=8, cylindrical=False):
         super().__init__()
         self.mlp = (
@@ -413,7 +415,7 @@ class ResNet(nn.Module):
             nn.GELU(),
             nn.Linear(half_cond_dim, half_cond_dim),
         ]
-
+        
         cond_layers = []
         # if(cond_embed): cond_layers = [SinusoidalPositionEmbeddings(half_cond_dim//2)]
         cond_layers = [nn.Linear(cond_size, half_cond_dim // 2), nn.GELU()]

@@ -2,9 +2,11 @@ from abc import abstractmethod, ABC
 import copy
 import math
 import numpy as np
+import os
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 import matplotlib.ticker as mtick
+import mplhep as hep
 
 from calodiffusion.utils import utils
 import calodiffusion.utils.HGCal_utils as HGCal_utils
@@ -51,7 +53,7 @@ class Plot(ABC):
         self.flags = flags
         self.config = config
 
-        self.plt_exts = ["png", "pdf"]
+        self.plt_exts = flags.plot_extensions
         self.axis_scales = ["", "_logy"]
 
         self.line_style = {
@@ -80,9 +82,12 @@ class Plot(ABC):
         else:
             self.shape_plot = config["SHAPE_PAD"]
 
-    def save_names(self, plot_name) -> list[str]:
+    def save_names(self, plot_name) -> list[str]: 
+        plot_dir = os.path.join(self.flags.plot_folder, self.config['CHECKPOINT_NAME'])
+        os.makedirs(plot_dir, exist_ok=True)
+
         return [
-            f"{self.flags.plot_folder}/{plot_name}_{self.config['CHECKPOINT_NAME']}_{self.flags.model}{axis_scale}.{extension}"
+            os.path.join(plot_dir, f"{plot_name}_{utils.name_translate(self.flags.generated)}{axis_scale}.{extension}")
             for extension in self.plt_exts
             for axis_scale in self.axis_scales
         ]
@@ -108,9 +113,7 @@ class Plot(ABC):
         rc("ytick", labelsize=15)
         rc("legend", fontsize=24)
 
-        # #
         mpl.rcParams.update({"font.size": 26})
-        # mpl.rcParams.update({'legend.fontsize': 18})
         mpl.rcParams["text.usetex"] = False
         mpl.rcParams.update({"xtick.major.size": 8})
         mpl.rcParams.update({"xtick.major.width": 1.5})
@@ -263,9 +266,8 @@ class Plot(ABC):
         reference_name="Geant4",
         no_mean=False,
     ):
-        assert (
-            reference_name in feed_dict.keys()
-        ), "ERROR: Don't know the reference distribution"
+        if reference_name not in feed_dict.keys(): 
+            raise NotImplementedError("Reference distribution %s not included, choice from %s", (reference_name, feed_dict.keys()))
 
         fig, gs = self.SetGrid()
         ax0 = plt.subplot(gs[0])
@@ -394,7 +396,6 @@ class Plot(ABC):
     @abstractmethod
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         raise NotImplementedError
-
 
 class HistERatio(Plot):
     def __init__(self, flags, config) -> None:
@@ -881,7 +882,6 @@ class HistEtot(Plot):
 class HistNhits(Plot):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
-
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         def _preprocess(data):
             min_voxel = 1e-3  # 1 Mev

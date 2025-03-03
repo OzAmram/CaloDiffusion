@@ -1,32 +1,45 @@
 from abc import ABC, abstractmethod
+import json
 import os
 
 import numpy as np
 import torch
 
-
 from calodiffusion.utils import utils
+
 tqdm = utils.import_tqdm()
 
 class Train(ABC): 
-    def __init__(self, flags, config, load_data:bool=True) -> None:
+    def __init__(self, flags, config, load_data:bool=True, save_model: bool = True) -> None:
         self.device = utils.get_device()
+        self.save_model = save_model
+
         if load_data: 
             self.loader_train, self.loader_val = utils.load_data(flags, config)
+        
         self.config = config
         self.flags = flags
-
         self.batch_size = self.config.get("BATCH", 256)
+        if self.save_model: 
+            self.checkpoint_folder = f"{flags.checkpoint_folder.strip('/')}/{config['CHECKPOINT_NAME']}_{flags.model}/"
+            if not os.path.exists(self.checkpoint_folder):
+                os.makedirs(self.checkpoint_folder)
 
-        self.checkpoint_folder = f"{flags.checkpoint_folder.strip('/')}/{config['CHECKPOINT_NAME']}_{flags.model}/"
+        self.checkpoint_folder = os.path.join(flags.checkpoint_folder, f"{config['CHECKPOINT_NAME']}_{self.__class__.__name__.removeprefix('Train')}")
         
+        if hasattr(flags, "sample_algo"): 
+            if flags.sample_algo is not None: 
+                self.config['SAMPLER'] == flags.sample_algo
+
+        if hasattr(flags, "model_loc"): 
+            if flags.model_loc is not None: 
+                self.checkpoint_folder = os.path.dirname(flags.model_loc)
+
         if not os.path.exists(self.checkpoint_folder):
             os.makedirs(self.checkpoint_folder)
 
-        os.system(
-            "cp {} {}/config.json".format(flags.config, self.checkpoint_folder)
-        )  # bkp of config file
-
+        with open(os.path.join(self.checkpoint_folder, "config.json"), "w") as config_file:
+            json.dump(flags.config, config_file) 
 
     @abstractmethod
     def init_model(self): 
@@ -54,13 +67,17 @@ class Train(ABC):
         n_epochs,
         restart_training,
     ):
-        checkpoint_path = os.path.join(self.checkpoint_folder, "checkpoint.pth")
+        
+        if not hasattr(self.flags, "model_loc"):
+            checkpoint_path = os.path.join(self.checkpoint_folder, "checkpoint.pth")
 
-        if os.path.exists(checkpoint_path):
-            print("Loading training checkpoint from %s" % checkpoint_path, flush=True)
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
-        else:
-            raise ValueError("No checkpoint at %s" % checkpoint_path)
+            if os.path.exists(checkpoint_path):
+                print("Loading training checkpoint from %s" % checkpoint_path, flush=True)
+                checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            else:
+                raise ValueError("No checkpoint at %s" % checkpoint_path)
+        else: 
+            checkpoint = torch.load(self.flags.model_loc, map_location=self.device, weights_only=False)
 
         if "model_state_dict" in checkpoint.keys():
             model.load_state_dict(checkpoint["model_state_dict"])
@@ -96,24 +113,25 @@ class Train(ABC):
         scheduler,
         early_stopper,
     ):
-        final_path = os.path.join(self.checkpoint_folder, f"{name}.pth")
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": model_state,
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
-                "train_loss_hist": training_losses,
-                "val_loss_hist": validation_losses,
-                "early_stop_dict": early_stopper.__dict__,
-            },
-            final_path,
-        )
+        if self.save_model: 
+            final_path = os.path.join(self.checkpoint_folder, f"{name}.pth")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model_state,
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "train_loss_hist": training_losses,
+                    "val_loss_hist": validation_losses,
+                    "early_stop_dict": early_stopper.__dict__,
+                },
+                final_path,
+            )
 
         with open(self.checkpoint_folder + f"/{name}_training_losses.txt", "w") as tfileout:
-            tfileout.write("\n".join("{}".format(tl) for tl in training_losses.values()) + "\n")
+            tfileout.write("\n".join(str(loss) for loss in training_losses.values()) + "\n")
         with open(self.checkpoint_folder + f"/{name}_validation_losses.txt", "w") as vfileout:
-            vfileout.write("\n".join("{}".format(vl) for vl in validation_losses.values()) + "\n")
+            vfileout.write("\n".join(str(vl) for vl in validation_losses.values()) + "\n")
 
 
     def train(self): 
@@ -154,7 +172,6 @@ class Train(ABC):
             training_losses, 
             val_losses
         )
-        
         # Also save at the end of training
         self.save(
             model.state_dict(),

@@ -6,6 +6,7 @@ import os
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 import matplotlib.ticker as mtick
+import mplhep as hep
 
 from calodiffusion.utils import utils
 import calodiffusion.utils.HGCal_utils as HGCal_utils
@@ -53,7 +54,7 @@ class Plot(ABC):
         self.config = config
 
         self.plt_exts = flags.plot_extensions
-
+        self.axis_scales = ["", "_logy"]
 
         self.line_style = {
             "Geant4": "dotted",
@@ -112,9 +113,7 @@ class Plot(ABC):
         rc("ytick", labelsize=15)
         rc("legend", fontsize=24)
 
-        # #
         mpl.rcParams.update({"font.size": 26})
-        # mpl.rcParams.update({'legend.fontsize': 18})
         mpl.rcParams["text.usetex"] = False
         mpl.rcParams.update({"xtick.major.size": 8})
         mpl.rcParams.update({"xtick.major.width": 1.5})

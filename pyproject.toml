@@ -24,10 +24,10 @@ dependencies = [
   "torchinfo>=1.8.0", 
   "optuna>=4.0.0", 
   "fvcore>=0.1.5", 
-  "torchsde>=0.2.6"
-  "click>=8.0.1"
+  "torchsde>=0.2.6",
   "click>=8.0.1", 
-  "torchsde>=0.2.6"
+  "torchsde>=0.2.6",
+  "mplhep>=0.3.57"
 ]
 
 [build-system]
@@ -38,5 +38,5 @@ build-backend = "setuptools.build_meta"
 include = ["calodiffusion"]
 
 [project.scripts]
-calodif-inference = "calodiffusion.inference:inference_parser"
+calodif-inference = "calodiffusion.inference:inference"
 calodif-train = "calodiffusion.train:train"

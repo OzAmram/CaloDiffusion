@@ -4,10 +4,19 @@ Implemented with Pytorch 2.0.
 Dependencies listed in the pyproject.yaml
 
 Install with 
-```
+```bash
 git clone https://github.com/[fork]/CaloDiffusion.git
 pip install -e .
 ```
+
+Installation can be tested with 
+
+```bash
+pip install pytest pytest-dependency
+python3 -m pytest tests/test_execution.py
+```
+These tests assume a "CaloChallenge" dir with binning files and a "data" dir with the dataset 1 photon data present. 
+
 
 # Data
 

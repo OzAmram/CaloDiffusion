@@ -46,8 +46,9 @@ class dotdict(dict):
 @click.option(
     "--reset_training", is_flag=True, default=False, help="Retrain"
 )
+@click.option("--hgcal/--no-hgcal", default=False, help="Use HGCal settings (overwrites config)")
 @click.pass_context
-def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, reclean, reset_training): 
+def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, reclean, reset_training, hgcal): 
     ctx.ensure_object(dotdict)
 
     ctx.obj.config = utils.LoadJson(config)
@@ -60,6 +61,8 @@ def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, 
     ctx.obj.seed = seed
     ctx.obj.reclean = reclean
     ctx.obj.reset_training = reset_training
+    ctx.obj.hgcal = hgcal
+    ctx.obj.config['HGCAL'] = hgcal
 
 
 @train.command()

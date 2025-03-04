@@ -41,7 +41,34 @@ def create_phi_image(device, shape=(1, 45, 16, 9)):
 
 
 def create_R_Z_image(device, dataset_num=1, scaled=True, shape=(1, 45, 16, 9)):
-    if dataset_num == 1:  # dataset 1, photons
+    if dataset_num == 0:  # dataset 1, pions
+        r_bins = [
+            0.00,
+            1.00,
+            4.00,
+            5.00,
+            7.00,
+            10.00,
+            15.00,
+            20.00,
+            30.00,
+            50.00,
+            80.00,
+            90.00,
+            100.00,
+            130.00,
+            150.00,
+            160.00,
+            200.00,
+            250.00,
+            300.00,
+            350.00,
+            400.00,
+            600.00,
+            1000.00,
+            2000.00,
+        ]
+    elif dataset_num == 1:  # dataset 1, photons
         r_bins = [
             0.0,
             2.0,
@@ -75,36 +102,9 @@ def create_R_Z_image(device, dataset_num=1, scaled=True, shape=(1, 45, 16, 9)):
             1000.0,
             2000.0,
         ]
-    elif dataset_num == 2:  # dataset 1, pions
-        r_bins = [
-            0.00,
-            1.00,
-            4.00,
-            5.00,
-            7.00,
-            10.00,
-            15.00,
-            20.00,
-            30.00,
-            50.00,
-            80.00,
-            90.00,
-            100.00,
-            130.00,
-            150.00,
-            160.00,
-            200.00,
-            250.00,
-            300.00,
-            350.00,
-            400.00,
-            600.00,
-            1000.00,
-            2000.00,
-        ]
-    elif dataset_num == 3:  # dataset 2
+    elif dataset_num == 2:  # dataset 2
         r_bins = [0, 4.65, 9.3, 13.95, 18.6, 23.25, 27.9, 32.55, 37.2, 41.85]
-    elif dataset_num == 4:  # dataset 2
+    elif dataset_num == 3:  # dataset 3
         r_bins = [
             0,
             2.325,

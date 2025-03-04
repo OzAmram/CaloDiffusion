@@ -22,7 +22,7 @@
     'LR':5e-4,
     'MAXEPOCH':1000,
     'NLAYERS':3,
-    'EARLYSTOP':20,
+    'EARLYSTOP':30,
     'LAYER_SIZE_UNET' : [32, 32, 64, 96],
     'COND_SIZE_UNET' : 128,
     'KERNEL':[3,3,3],

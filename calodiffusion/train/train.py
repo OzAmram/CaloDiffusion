@@ -68,7 +68,7 @@ class Train(ABC):
         restart_training,
     ):
         
-        if not hasattr(self.flags, "model_loc"):
+        if not hasattr(self.flags, "model_loc") or (self.flags.model_loc is None)  :
             checkpoint_path = os.path.join(self.checkpoint_folder, "checkpoint.pth")
 
             if os.path.exists(checkpoint_path):
@@ -140,7 +140,7 @@ class Train(ABC):
 
         num_epochs = self.config.get("MAXEPOCH", 30)
         early_stopper = utils.EarlyStopper(
-            patience=self.config["EARLYSTOP"], mode="diff", min_delta=1e-5
+            patience=self.config["EARLYSTOP"], mode="val_loss", min_delta=1e-5
         )
         optimizer = torch.optim.Adam(self.model.parameters(), lr=float(self.config["LR"]))
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

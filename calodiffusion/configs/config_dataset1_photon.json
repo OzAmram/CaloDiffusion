@@ -2,7 +2,7 @@
 {
     'FILES':['dataset_1_photons_1.hdf5'],
     'EVAL':['dataset_1_photons_2.hdf5'],
-    'BIN_FILE': "../CaloChallenge/code/binning_dataset_1_photons.xml",
+    'BIN_FILE': "/home/oamram/CaloDiffusion/CaloChallenge/code/binning_dataset_1_photons.xml",
     'PART_TYPE' : 'photon',
     'AVG_SHOWER_LOC' : "dataset_1_photons_avg_showers.h5",
     'DATASET_NUM' : 1,
@@ -42,7 +42,7 @@
     'CONSIS_NSTEPS': 30,
     'COLD_DIFFU' : False,
     'COLD_NOISE' : 1.0,
-    'TRAINING_OBJ' : 'hybrid_weight_minsnr',
+    'TRAINING_OBJ' : 'hybrid_weight',
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',

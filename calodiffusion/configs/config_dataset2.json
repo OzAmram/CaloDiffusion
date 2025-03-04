@@ -43,6 +43,7 @@
     'LOSS_TYPE' : 'l2',
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
+    'SHOWER_EMBED' : '',
     'CHECKPOINT_NAME':'dataset2_dec14_vlarge_test',
 
 

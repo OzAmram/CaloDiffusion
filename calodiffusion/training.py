@@ -1,6 +1,7 @@
 import click
 from calodiffusion.utils import utils
-from calodiffusion.train import Diffusion, TrainLayerModel
+from calodiffusion.train.train_diffusion import TrainDiffusion
+from calodiffusion.train.train_layer_model import TrainLayerModel
 
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
@@ -70,7 +71,7 @@ def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, 
 @train.command()
 @click.pass_context
 def diffusion(ctx): 
-    Diffusion(ctx.obj, ctx.obj.config).train()
+    TrainDiffusion(ctx.obj, ctx.obj.config).train()
 
 @train.command()
 @click.pass_context

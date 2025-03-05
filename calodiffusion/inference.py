@@ -11,7 +11,9 @@ from calodiffusion.utils import HGCal_utils as hgcal_utils
 import calodiffusion.utils.plots as plots
 from calodiffusion.utils.utils import LoadJson
 
-from calodiffusion.train import Diffusion, TrainLayerModel
+from calodiffusion.train.train_diffusion import TrainDiffusion
+from calodiffusion.train.train_layer_model import TrainLayerModel
+
 
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
@@ -91,7 +93,7 @@ def layer(ctx, layer_model):
 def diffusion(ctx):
     non_config = dotdict({key: value for key, value in ctx.obj.items() if key!='config'})
     ctx.obj.config['flags'] = non_config
-    run_inference(ctx.obj, ctx.obj.config, model=Diffusion)
+    run_inference(ctx.obj, ctx.obj.config, model=TrainDiffusion)
 
 # TODO Clear separation 
 #@sample.command()

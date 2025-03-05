@@ -100,6 +100,7 @@ def hgcal(ctx):
     pass
 
 @inference.command()
+@click.option("-g", "--generated", default="", help="Path to existing generated results")
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
 @click.option("--plot-reshape/--no-plot-reshape", default=False, help="Plot the embedded space")

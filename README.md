@@ -15,7 +15,8 @@ Installation can be tested with
 pip install pytest pytest-dependency
 python3 -m pytest tests/test_execution.py
 ```
-These tests assume a "CaloChallenge" dir with binning files and a "data" dir with the dataset 1 photon data present. 
+
+Locations of data used for testing can be set with the `--data-dir` option during execution, and there are additional options for setting the location of the HGCalShowers and CaloChallenge directories with the options `--hgcalshowers` and `--calochallenge` options respectively. 
 
 
 # Data

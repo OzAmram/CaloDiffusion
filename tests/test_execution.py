@@ -125,8 +125,10 @@ def test_train_layer(config, pytestconfig):
 def test_train_hgcal(config, pytestconfig): 
     data_dir = pytestconfig.getoption("data_dir")
     config = config({
+        "FILES":['HGCal_showers1.h5'],
+        "EVAL":['HGCal_showers1.h5'],
         "CHECKPOINT_NAME": "hgcal", 
-        "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom.pkl", 
+        "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
         'SHAPE_ORIG': [-1,28,1988],
         'DATASET_NUM' : 111,
         'SHAPE_PAD':[-1,1,28,12,21],
@@ -185,13 +187,15 @@ def test_inference_layer(config, pytestconfig):
 @pytest.mark.dependency(depends=["test_train_hgcal"]) 
 def test_inference_hgcal(config, pytestconfig): 
     config = config({
+        "FILES":['HGCal_showers1.h5'],
+        "EVAL":['HGCal_showers1.h5'],
         "CHECKPOINT_NAME": "hgcal", 
-        "BIN_FILE": "./HGCalShowers/geom.pkl", 
+        "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
         'SHAPE_ORIG': [-1,28,1988],
         'DATASET_NUM' : 111,
         'SHAPE_PAD':[-1,1,28,12,21],
         'SHAPE_FINAL':[-1,1,28,12,21],
-        'MAX_CELLS': 1988, 
+        'MAX_CELLS': 1988,
         'LAYER_SIZE_UNET' : [32, 32, 64, 96],
         'SHOWER_EMBED' : 'NN-pre-embed',
     })

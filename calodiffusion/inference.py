@@ -142,31 +142,24 @@ def process_data_dict(flags, config):
         bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
         geom_conv = utils.GeomConverter(bins)
 
-    generated, energies = LoadSamples(flags, config, geom_conv, NN_embed=NN_embed)
+    generated, energies = LoadSamples(flags.generated, flags, config, geom_conv, NN_embed=NN_embed)
 
     # TODO Sub for geant_only version
     total_evts = energies.shape[0]
 
     data = []
     for dataset in config["EVAL"]:
-        with h5py.File(os.path.join(flags.data_folder, dataset), "r") as h5f:
-            if flags.from_end:
-                start = -int(total_evts)
-                end = None
-            else:
-                start = evt_start
-                end = start + total_evts
-            show = h5f["showers"][start:end] / 1000.0
-            if dataset_num <= 1:
-                show = geom_conv.convert(geom_conv.reshape(show)).detach().numpy()
-            data.append(show)
-
-        if len(data) == 0: 
-            raise ValueError("No Evaluation Data passed, please change the `EVAL` field of the config")
+        showers, energies = LoadSamples(dataset, flags, config, geom_conv, NN_embed)
+        data.append(showers)
+        if data[-1].shape[0] == total_evts: 
+            break
         
-        data_dict = {
-            "Geant4": np.reshape(data, config["SHAPE"]),
-        }
+    if len(data) == 0: 
+        raise ValueError("No Evaluation Data passed, please change the `EVAL` field of the config")
+    
+    data_dict = {
+        "Geant4": np.reshape(data, config["SHAPE_FINAL"]),
+    }
 
     if not flags.geant_only: 
         data_dict[utils.name_translate(generated_file_path=flags.generated)] = generated
@@ -224,10 +217,10 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
                 utils.append_h5(h5f, 'gen_info', energies)
 
 
-def LoadSamples(flags, config, geom_conv, NN_embed=None):
+def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
     end = None if flags.nevts < 0 else flags.nevts
     shower_scale = config.get("SHOWERSCALE", 0.001)
-    with h5py.File(flags.generated, "r") as h5f:
+    with h5py.File(fp, "r") as h5f:
         if flags.hgcal:
             generated = h5f["showers"][:end, :, : config["MAX_CELLS"]] * shower_scale
             energies = h5f["gen_info"][:end, 0]
@@ -249,7 +242,6 @@ def LoadSamples(flags, config, geom_conv, NN_embed=None):
         mask = generated < flags.EMin
         generated = utils.apply_mask_conserveE(generated, mask)
 
-    #generated = np.reshape(generated, config["SHAPE"])
     return generated, energies
 
 

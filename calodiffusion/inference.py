@@ -161,9 +161,12 @@ def process_data_dict(flags, config):
                 show = geom_conv.convert(geom_conv.reshape(show)).detach().numpy()
             data.append(show)
 
-    data_dict = {
-        "Geant4": np.reshape(data, config["SHAPE"]),
-    }
+        if len(data) == 0: 
+            raise ValueError("No Evaluation Data passed, please change the `EVAL` field of the config")
+        
+        data_dict = {
+            "Geant4": np.reshape(data, config["SHAPE"]),
+        }
 
     if not flags.geant_only: 
         data_dict[utils.name_translate(generated_file_path=flags.generated)] = generated
@@ -236,17 +239,17 @@ def LoadSamples(flags, config, geom_conv, NN_embed=None):
 
     if config.get("DATASET_NUM", 2) <= 1:
         generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy()
-    if flags.hgcal: 
-        generated = torch.from_numpy(generated.astype(np.float32)).reshape(
-        config["SHAPE_PAD"]
-    )
+    if flags.hgcal:
+        generated = torch.from_numpy(generated.astype(np.float32))
+        if flags.plot_reshape: 
+            generated = generated.reshape(config["SHAPE_PAD"])
         generated = NN_embed.enc(generated).detach().numpy()
 
     if flags.EMin > 0.0:
         mask = generated < flags.EMin
         generated = utils.apply_mask_conserveE(generated, mask)
 
-    generated = np.reshape(generated, config["SHAPE"])
+    #generated = np.reshape(generated, config["SHAPE"])
     return generated, energies
 
 

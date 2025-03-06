@@ -200,7 +200,7 @@ def test_inference_hgcal(config, pytestconfig):
         'SHOWER_EMBED' : 'NN-pre-embed',
     })
     data_dir = pytestconfig.getoption("data_dir")
-    command = f"calodif-inference -c {config} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/\
+    command = f"calodif-inference -c {config} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/ --hgcal\
             sample --sample-steps 2 --model-loc ./testing_checkpoints/hgcal_Diffusion/final.pth\
                 diffusion"
     exit = execute(command)
@@ -230,9 +230,22 @@ def test_plotting_geant(config, pytestconfig):
 @pytest.mark.dependency(depends=["test_inference_hgcal"]) 
 def test_plotting_hgcal(config, pytestconfig): 
     data_dir = pytestconfig.getoption("data_dir")
+    config = config({
+        "FILES":['HGCal_showers1.h5'],
+        "EVAL":['HGCal_showers1.h5'],
+        "CHECKPOINT_NAME": "hgcal", 
+        "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
+        'SHAPE_ORIG': [-1,28,1988],
+        'DATASET_NUM' : 111,
+        'SHAPE_PAD':[-1,1,28,12,21],
+        'SHAPE_FINAL':[-1,1,28,12,21],
+        'MAX_CELLS': 1988,
+        'LAYER_SIZE_UNET' : [32, 32, 64, 96],
+        'SHOWER_EMBED' : 'NN-pre-embed',
+    })
     base_dir = "./testing_checkpoints/hgcal_Diffusion"
     generated = [f for f in os.listdir(base_dir) if "generated" in f][0]
-    command = f"calodif-inference -c {config()} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/\
-        plot --plot-folder ./testing_checkpoints/plots/ -g {base_dir}/{generated} --hgcal"
+    command = f"calodif-inference --hgcal -c {config} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/\
+        plot --plot-folder ./testing_checkpoints/plots/ -g {base_dir}/{generated}"
     exit = execute(command)
     assert exit == 0

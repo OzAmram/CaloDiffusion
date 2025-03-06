@@ -10,7 +10,7 @@ from calodiffusion.train.train import Train
 from calodiffusion.models.calodiffusion import CaloDiffusion
 
 
-class Diffusion(Train): 
+class TrainDiffusion(Train): 
     def __init__(self, flags, config, load_data=True, save_model:bool=True) -> None:
         super().__init__(flags, config, load_data=load_data, save_model=save_model)
 

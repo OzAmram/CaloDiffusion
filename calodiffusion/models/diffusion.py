@@ -179,7 +179,7 @@ class Diffusion(torch.nn.Module, ABC):
             showerMap=self.config["SHOWERMAP"],
             dataset_num=self.config.get("DATASET_NUM", 2),
             orig_shape=orig_shape,
-            ecut=self.config["ECUT"],
+            ecut=float(self.config["ECUT"]),
             hgcal=self.hgcal,
             embed=self.pre_embed,
             NN_embed=self.NN_embed,

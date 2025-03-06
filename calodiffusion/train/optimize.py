@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Iterable, Literal, Sequence, Union
+from typing import Any, Iterable, Literal, Sequence
 
 import numpy as np
 import torch
@@ -9,7 +9,6 @@ import json
 import os
 
 from datetime import datetime
-from calodiffusion.train import Train
 from calodiffusion.utils import utils
 from calodiffusion.train import evaluate
 

@@ -84,7 +84,6 @@ class CaloDiffusion(Diffusion):
         return super().noise_generation(shape)
 
     def forward(self, x, E, time, layers, layer_sample=False, controls=None):
-
         if (self.do_embed):
             x = self.NN_embed.enc(x.to(torch.float32)).to(x.device)
         if (self.layer_cond) and (layers is not None):

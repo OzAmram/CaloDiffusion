@@ -142,6 +142,7 @@ def process_data_dict(flags, config):
         bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
         geom_conv = utils.GeomConverter(bins)
 
+
     generated, energies = LoadSamples(flags.generated, flags, config, geom_conv, NN_embed=NN_embed)
 
     # TODO Sub for geant_only version
@@ -149,11 +150,11 @@ def process_data_dict(flags, config):
 
     data = []
     for dataset in config["EVAL"]:
-        showers, energies = LoadSamples(dataset, flags, config, geom_conv, NN_embed)
+        showers, energies = LoadSamples(f"{flags.data_folder}/{dataset}", flags, config, geom_conv, NN_embed)
         data.append(showers)
         if data[-1].shape[0] == total_evts: 
             break
-        
+
     if len(data) == 0: 
         raise ValueError("No Evaluation Data passed, please change the `EVAL` field of the config")
     
@@ -175,6 +176,7 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
 
     if not orig_shape: 
         generated = generated.reshape(config["SHAPE_ORIG"])
+
     energies = np.reshape(energies,(energies.shape[0],-1))
 
     hgcal = config.get("HGCAL", False)
@@ -231,11 +233,12 @@ def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
     energies = np.reshape(energies, (-1, 1))
 
     if config.get("DATASET_NUM", 2) <= 1:
-        generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy()
+        generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy().reshape(config['SHAPE_FINAL'])
     if flags.hgcal:
         generated = torch.from_numpy(generated.astype(np.float32))
         if flags.plot_reshape: 
-            generated = generated.reshape(config["SHAPE_PAD"])
+            generated = generated.reshape(config["SHAPE_FINAL"])
+        
         generated = NN_embed.enc(generated).detach().numpy()
 
     if flags.EMin > 0.0:

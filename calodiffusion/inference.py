@@ -86,7 +86,7 @@ def sample(ctx, sample_steps, sample_algo, sample_offset, train_sampler, model_l
 @click.pass_context
 def layer(ctx, layer_model): 
     ctx.obj.config['layer_model'] = layer_model
-    run_inference(ctx.obj, ctx.obj.config, model=TrainLayerModel)
+    run_inference(ctx.obj, ctx.obj.config, model=lambda flags, config, load_data: TrainLayerModel(flags, config, load_data, inference=True))
 
 @sample.command()
 @click.pass_context

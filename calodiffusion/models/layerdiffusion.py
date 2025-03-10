@@ -7,6 +7,14 @@ from calodiffusion.models.models import ResNet
 from calodiffusion.utils import utils
 
 class LayerDiffusion(CaloDiffusion):
+    """
+    Creates a model which has two steps, a layer model and a base model. 
+    The layer model takes the existing layers and encodes them in the same shape as the original layer, but as a pre-training step. 
+    Then during inference, a trained mode (base_model) uses those layer encodings to generate the final output.
+
+    During training, only the layer model is used. Both are used during inference. 
+    """
+
     def __init__(self, config, n_steps = 400, loss_type = 'l2'):
         super().__init__(config, n_steps, loss_type)
         self.layer_loss = False 
@@ -21,6 +29,23 @@ class LayerDiffusion(CaloDiffusion):
         model = super().init_model().to(device = self.device)
         self.base_model = model
         return model
+
+    def set_layer_state(self, is_layer=False): 
+        if is_layer: 
+            self.layer_loss = True
+            self.model = self.layer_model
+            self.forward = self.layer_forward
+        else: 
+            self.layer_loss = False
+            self.model = self.base_model
+            self.forward = self.base_forward
+
+    def compute_loss(self, data, energy, noise, layers, time=None, rnd_normal=None):
+        if self.layer_loss: 
+            noise = self.noise_generation(layers.shape).to(torch.float32)
+            return super().compute_loss(layers.to(torch.float32), energy, noise, layers, time, rnd_normal)
+        else: 
+            return super().compute_loss(data, energy, noise, layers, time, rnd_normal)
 
     def load_layer_model_state(self, strict = True): 
         layer_model_state_dict = torch.load(self.config['layer_model'], map_location=self.device, weights_only=False)
@@ -68,12 +93,9 @@ class LayerDiffusion(CaloDiffusion):
         return out
     
     def sample_layers(self, energy, layers, debug = False, sample_offset = None):
-        self.model = self.layer_model
-        self.layer_loss = True
-        self.forward = self.layer_forward
+        self.set_layer_state(is_layer=True)
         shape = (energy.shape[0], self.config['SHAPE_PAD'][2]+1)
         start = self.noise_generation(shape).to(torch.float32)
-
         x, _, _ = self.layer_sampler(
             self,
             start, 
@@ -83,9 +105,7 @@ class LayerDiffusion(CaloDiffusion):
             sample_offset,
             debug
         )
-        self.layer_loss = False
-        self.model = self.base_model
-        self.forward = self.base_forward
+        self.set_layer_state(is_layer=False)
         return x
 
     def sample(

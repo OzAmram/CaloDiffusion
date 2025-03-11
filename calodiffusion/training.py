@@ -1,6 +1,7 @@
 import click
 from calodiffusion.utils import utils
-from calodiffusion.train import Diffusion, TrainLayerModel
+from calodiffusion.train.train_diffusion import TrainDiffusion
+from calodiffusion.train.train_layer_model import TrainLayerModel
 
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
@@ -46,9 +47,10 @@ class dotdict(dict):
 @click.option(
     "--reset_training", is_flag=True, default=False, help="Retrain"
 )
+@click.option("--hgcal/--no-hgcal", default=False, help="Use HGCal settings (overwrites config)")
 @click.option("--model-loc", default=None, help="Specify existing model to load")
 @click.pass_context
-def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, reclean, reset_training, model_loc): 
+def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, reclean, reset_training, model_loc, hgcal): 
     ctx.ensure_object(dotdict)
 
     ctx.obj.config = utils.LoadJson(config)
@@ -61,13 +63,15 @@ def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, 
     ctx.obj.seed = seed
     ctx.obj.reclean = reclean
     ctx.obj.reset_training = reset_training
+    ctx.obj.hgcal = hgcal
+    ctx.obj.config['HGCAL'] = hgcal
     ctx.obj.model_loc = model_loc
 
 
 @train.command()
 @click.pass_context
 def diffusion(ctx): 
-    Diffusion(ctx.obj, ctx.obj.config).train()
+    TrainDiffusion(ctx.obj, ctx.obj.config).train()
 
 @train.command()
 @click.pass_context

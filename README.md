@@ -4,10 +4,21 @@ Implemented with Pytorch 2.0.
 Dependencies listed in the pyproject.yaml
 
 Install with 
-```
+```bash
 git clone https://github.com/[fork]/CaloDiffusion.git
 pip install -e .
 ```
+
+Installation can be tested with 
+
+```bash
+pip install pytest pytest-dependency
+python3 -m pytest tests/test_execution.py
+```
+
+Locations of data used for testing can be set with the `--data-dir` option during execution, and there are additional options for setting the location of the HGCalShowers and CaloChallenge directories with the options `--hgcalshowers` and `--calochallenge` options respectively. 
+
+If the hgcal tests fail because their data is in a different location from the photon and pion tests, use `-k "_hgcal" --data-dir [hgcal data]` to run those tests independently. 
 
 # Data
 

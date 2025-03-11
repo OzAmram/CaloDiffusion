@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 import json
 import os
 
-import numpy as np
 import torch
 
 from calodiffusion.utils import utils

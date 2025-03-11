@@ -11,7 +11,9 @@ from calodiffusion.utils import HGCal_utils as hgcal_utils
 import calodiffusion.utils.plots as plots
 from calodiffusion.utils.utils import LoadJson
 
-from calodiffusion.train import Diffusion, TrainLayerModel
+from calodiffusion.train.train_diffusion import TrainDiffusion
+from calodiffusion.train.train_layer_model import TrainLayerModel
+
 
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
@@ -84,14 +86,14 @@ def sample(ctx, sample_steps, sample_algo, sample_offset, train_sampler, model_l
 @click.pass_context
 def layer(ctx, layer_model): 
     ctx.obj.config['layer_model'] = layer_model
-    run_inference(ctx.obj, ctx.obj.config, model=TrainLayerModel)
+    run_inference(ctx.obj, ctx.obj.config, model=lambda flags, config, load_data: TrainLayerModel(flags, config, load_data, inference=True))
 
 @sample.command()
 @click.pass_context
 def diffusion(ctx):
     non_config = dotdict({key: value for key, value in ctx.obj.items() if key!='config'})
     ctx.obj.config['flags'] = non_config
-    run_inference(ctx.obj, ctx.obj.config, model=Diffusion)
+    run_inference(ctx.obj, ctx.obj.config, model=TrainDiffusion)
 
 # TODO Clear separation 
 #@sample.command()
@@ -100,6 +102,7 @@ def hgcal(ctx):
     pass
 
 @inference.command()
+@click.option("-g", "--generated", default="", help="Path to existing generated results")
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
 @click.option("--plot-reshape/--no-plot-reshape", default=False, help="Plot the embedded space")
@@ -139,27 +142,24 @@ def process_data_dict(flags, config):
         bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
         geom_conv = utils.GeomConverter(bins)
 
-    generated, energies = LoadSamples(flags, config, geom_conv, NN_embed=NN_embed)
+
+    generated, energies = LoadSamples(flags.generated, flags, config, geom_conv, NN_embed=NN_embed)
 
     # TODO Sub for geant_only version
     total_evts = energies.shape[0]
 
     data = []
     for dataset in config["EVAL"]:
-        with h5py.File(os.path.join(flags.data_folder, dataset), "r") as h5f:
-            if flags.from_end:
-                start = -int(total_evts)
-                end = None
-            else:
-                start = evt_start
-                end = start + total_evts
-            show = h5f["showers"][start:end] / 1000.0
-            if dataset_num <= 1:
-                show = geom_conv.convert(geom_conv.reshape(show)).detach().numpy()
-            data.append(show)
+        showers, energies = LoadSamples(f"{flags.data_folder}/{dataset}", flags, config, geom_conv, NN_embed)
+        data.append(showers)
+        if data[-1].shape[0] == total_evts: 
+            break
 
+    if len(data) == 0: 
+        raise ValueError("No Evaluation Data passed, please change the `EVAL` field of the config")
+    
     data_dict = {
-        "Geant4": np.reshape(data, config["SHAPE"]),
+        "Geant4": np.reshape(data, config["SHAPE_FINAL"]),
     }
 
     if not flags.geant_only: 
@@ -176,6 +176,7 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
 
     if not orig_shape: 
         generated = generated.reshape(config["SHAPE_ORIG"])
+
     energies = np.reshape(energies,(energies.shape[0],-1))
 
     hgcal = config.get("HGCAL", False)
@@ -218,10 +219,10 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
                 utils.append_h5(h5f, 'gen_info', energies)
 
 
-def LoadSamples(flags, config, geom_conv, NN_embed=None):
+def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
     end = None if flags.nevts < 0 else flags.nevts
     shower_scale = config.get("SHOWERSCALE", 0.001)
-    with h5py.File(flags.generated, "r") as h5f:
+    with h5py.File(fp, "r") as h5f:
         if flags.hgcal:
             generated = h5f["showers"][:end, :, : config["MAX_CELLS"]] * shower_scale
             energies = h5f["gen_info"][:end, 0]
@@ -232,18 +233,18 @@ def LoadSamples(flags, config, geom_conv, NN_embed=None):
     energies = np.reshape(energies, (-1, 1))
 
     if config.get("DATASET_NUM", 2) <= 1:
-        generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy()
-    if flags.hgcal: 
-        generated = torch.from_numpy(generated.astype(np.float32)).reshape(
-        config["SHAPE_PAD"]
-    )
+        generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy().reshape(config['SHAPE_FINAL'])
+    if flags.hgcal:
+        generated = torch.from_numpy(generated.astype(np.float32))
+        if flags.plot_reshape: 
+            generated = generated.reshape(config["SHAPE_FINAL"])
+        
         generated = NN_embed.enc(generated).detach().numpy()
 
     if flags.EMin > 0.0:
         mask = generated < flags.EMin
         generated = utils.apply_mask_conserveE(generated, mask)
 
-    generated = np.reshape(generated, config["SHAPE"])
     return generated, energies
 
 

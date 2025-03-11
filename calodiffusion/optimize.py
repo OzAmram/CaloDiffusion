@@ -1,9 +1,7 @@
 from calodiffusion.train.optimize import Optimize
-from calodiffusion.train import Diffusion
 from argparse import ArgumentParser, SUPPRESS
 from datetime import datetime
 
-models = {model.__name__: model for model in [Diffusion]}
 
 def argparse(): 
     parser = ArgumentParser()

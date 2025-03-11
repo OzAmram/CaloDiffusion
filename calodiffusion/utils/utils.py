@@ -158,7 +158,10 @@ def split_data(data, nevts, frac=0.8):
 
 
 def name_translate(generated_file_path:str): 
-    return generated_file_path.split('/')[-2].split('_')[-1]
+    try: 
+        return generated_file_path.split('/')[-2].split('_')[-1]
+    except IndexError: 
+        return "generated"
 
 
 def _separation_power(hist1, hist2, bins):

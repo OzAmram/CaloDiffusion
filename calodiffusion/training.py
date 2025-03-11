@@ -47,7 +47,7 @@ class dotdict(dict):
 @click.option(
     "--reset_training", is_flag=True, default=False, help="Retrain"
 )
-@click.option("--hgcal/--no-hgcal", default=False, help="Use HGCal settings (overwrites config)")
+@click.option("--hgcal/--no-hgcal", default=None, is_flag=True, help="Use HGCal settings (overwrites config)")
 @click.option("--model-loc", default=None, help="Specify existing model to load")
 @click.pass_context
 def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, reclean, reset_training, model_loc, hgcal): 
@@ -64,8 +64,13 @@ def train(ctx, config, data_folder, checkpoint_folder, nevts, frac, load, seed, 
     ctx.obj.reclean = reclean
     ctx.obj.reset_training = reset_training
     ctx.obj.hgcal = hgcal
-    ctx.obj.config['HGCAL'] = hgcal
     ctx.obj.model_loc = model_loc
+
+    if hgcal is not None: 
+        ctx.obj.config['HGCAL'] = hgcal
+        ctx.obj.hgcal = hgcal
+    else: 
+        ctx.obj.hgcal = ctx.obj.config.get("HGCAL", False)
 
 
 @train.command()

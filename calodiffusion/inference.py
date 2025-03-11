@@ -31,7 +31,7 @@ class dotdict(dict):
 @click.option("--layer-only/--no-layer", default=False, help="Only sample layer energies")
 @click.option("--reclean/--no-reclean", default=False, help="Redo preprocessing on loaded sample")
 @click.option("--debug/--no-debug", default=False, help="Debugging options")
-@click.option("--hgcal/--no-hgcal", default=False, help="Use HGCal settings (overwrites config)")
+@click.option("--hgcal/--no-hgcal", default=None, is_flag=True, help="Use HGCal settings (overwrites config)")
 @click.option("--seed", default=None, help='Set a manual seed (saved in config)')
 @click.pass_context
 def inference(ctx, debug, config, generated, data_folder, checkpoint_folder, layer_only, job_idx, n_events, reclean, hgcal, seed): 
@@ -45,7 +45,6 @@ def inference(ctx, debug, config, generated, data_folder, checkpoint_folder, lay
     ctx.obj.nevts = n_events 
     ctx.obj.layer_only = layer_only
     ctx.obj.reclean = reclean
-    ctx.obj.hgcal = hgcal
     ctx.obj.generated = generated
 
     if seed is None: 
@@ -53,7 +52,12 @@ def inference(ctx, debug, config, generated, data_folder, checkpoint_folder, lay
 
     ctx.obj.seed = seed
     ctx.obj.config['SEED'] = seed
-    ctx.obj.config['HGCAL'] = hgcal
+    if hgcal is not None: 
+        ctx.obj.config['HGCAL'] = hgcal
+        ctx.obj.hgcal = hgcal
+    else: 
+        ctx.obj.hgcal = ctx.obj.config.get("HGCAL", False)
+
 
 
 @inference.group()

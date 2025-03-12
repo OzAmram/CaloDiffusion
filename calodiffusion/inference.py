@@ -163,7 +163,7 @@ def process_data_dict(flags, config):
         raise ValueError("No Evaluation Data passed, please change the `EVAL` field of the config")
     
     data_dict = {
-        "Geant4": np.reshape(data, config["SHAPE_FINAL"]),
+        "Geant4": np.concatenate(data),
     }
 
     if not flags.geant_only: 
@@ -226,6 +226,13 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
 def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
     end = None if flags.nevts < 0 else flags.nevts
     shower_scale = config.get("SHOWERSCALE", 0.001)
+
+
+    if (not flags.hgcal) or flags.plot_reshape:
+        shape_plot = config["SHAPE_FINAL"]
+    else:
+        shape_plot = config["SHAPE_PAD"]
+
     with h5py.File(fp, "r") as h5f:
         if flags.hgcal:
             generated = h5f["showers"][:end, :, : config["MAX_CELLS"]] * shower_scale
@@ -235,15 +242,16 @@ def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
             energies = h5f["incident_energies"][:end] * shower_scale
 
     energies = np.reshape(energies, (-1, 1))
+    if flags.plot_reshape:
+        if config.get("DATASET_NUM", 2) <= 1:
+            generated = NN_embed.convert(NN_embed.reshape(generated)).detach().numpy()
+        elif flags.hgcal:
+            generated = torch.from_numpy(generated.astype(np.float32)).reshape(
+                config["SHAPE_PAD"]
+            )
+            generated = NN_embed.enc(generated).detach().numpy()
 
-    if config.get("DATASET_NUM", 2) <= 1:
-        generated = geom_conv.convert(geom_conv.reshape(generated)).detach().numpy().reshape(config['SHAPE_FINAL'])
-    if flags.hgcal:
-        generated = torch.from_numpy(generated.astype(np.float32))
-        if flags.plot_reshape: 
-            generated = generated.reshape(config["SHAPE_FINAL"])
-        
-        generated = NN_embed.enc(generated).detach().numpy()
+        generated = np.reshape(generated, shape_plot)
 
     if flags.EMin > 0.0:
         mask = generated < flags.EMin
@@ -258,24 +266,10 @@ def plot_results(flags, config, data_dict, energies):
         "Energy": plots.HistEtot(flags, config),
         "2D Energy scatter split": plots.ScatterESplit(flags, config),
         "Energy Ratio split": plots.HistERatio(flags, config),
+        "Layer Sparsity": plots.SparsityLayer(flags, config),
     }
-    if not flags.layer_only:
-        plot_routines.update(
-            {
-                "Nhits": plots.HistNhits(flags, config),
-                "VoxelE": plots.HistVoxelE(flags, config),
-                "Shower width": plots.AverageShowerWidth(flags, config),
-                "Max voxel": plots.HistMaxELayer(flags, config),
-                "Energy per radius": plots.AverageER(flags, config),
-                "Energy per phi": plots.AverageEPhi(flags, config),
-            }
-        )
-    if (not config["CYLINDRICAL"]) and (
-        config["SHAPE_PAD"][-1] == config["SHAPE_PAD"][-2]
-    ):
-        plot_routines["2D average shower"] = plots.Plot_Shower_2D(flags, config)
 
-    if flags.hgcal and flags.plot_reshape: 
+    if hgcal and not flags.plot_reshape:
         plot_routines.update(
             {
                 "Energy R": plots.RadialEnergyHGCal(flags, config),
@@ -287,6 +281,22 @@ def plot_results(flags, config, data_dict, energies):
             }
         )
 
+    elif not flags.layer_only:
+        plot_routines.update(
+            {
+                "Nhits": plots.HistNhits(flags, config),
+                "VoxelE": plots.HistVoxelE(flags, config),
+                "Shower width": plots.AverageShowerWidth(flags, config),
+                "Max voxel": plots.HistMaxELayer(flags, config),
+                "Energy per radius": plots.AverageER(flags, config),
+                "Energy per phi": plots.AverageEPhi(flags, config),
+            }
+        )
+
+    if (not config["CYLINDRICAL"]) and (
+        config["SHAPE_PAD"][-1] == config["SHAPE_PAD"][-2]
+    ):
+        plot_routines["2D average shower"] = plots.Plot_Shower_2D(flags, config)
 
     for plotting_method in plot_routines.values():
         plotting_method(data_dict, energies)

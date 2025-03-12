@@ -1017,7 +1017,6 @@ def subsample_alphas(alpha, time, x_shape):
     out = alpha.gather(-1, time.cpu())
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(time.device)
 
-
 def load_attr(type_: Literal["sampler", "loss"], algo_name: str): 
     if type_ == "sampler": 
         from calodiffusion.models import sample as module
@@ -1033,3 +1032,9 @@ def load_attr(type_: Literal["sampler", "loss"], algo_name: str):
         raise ValueError("%s '%s' is not supported: %s" % (type_, algo_name, e))
     
     return algo
+
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__

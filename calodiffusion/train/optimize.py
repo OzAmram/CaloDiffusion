@@ -46,7 +46,7 @@ class Optimize:
             "RESTART_T": Range allowed for T_MIN_{i}. T_MAX_{i} is decided by taking t_min_i as the bottom of the range and t_min_i + {top of the restart_t range} as the top
         }
     """
-    def __init__(self, flags, trainer: type[Train], objectives: Literal["COUNT", "FPD", "CNN"]) -> None:
+    def __init__(self, flags, trainer, objectives: Literal["COUNT", "FPD", "CNN"]) -> None:
 
         implemented_objectives: dict[str, type[Objective]] = {
             "COUNT": Count(), 
@@ -68,6 +68,11 @@ class Optimize:
         model, _, _ = train_model.train()
         eval_data = train_model.loader_val
         return model, eval_data, config
+
+    def inference(self, trial_config): 
+        config = self.suggest_config(trial_config)
+        trained_model = self.trainer(flags=self.flags, config=config, save_model=False)
+        return trained_model, trained_model.loader_val, config
 
     def suggest_config(self, trial_config): 
         if isinstance(self.flags.config, str): 
@@ -183,7 +188,11 @@ class Optimize:
         config['flags'] = self.flags
         return [obj(model, eval_data, config) for obj in self.objectives]
 
-    def objective(self, trial) -> tuple: 
+
+    def objective_inference(self, trial) -> tuple:
+        pass
+
+    def objective_training(self, trial) -> tuple: 
         try: 
             model, eval_data, config = self.train(trial)
         except RuntimeError as err:
@@ -240,7 +249,6 @@ class Objective(ABC):
     @staticmethod
     def __call__(trained_model, eval_data, kwargs) -> float:
         raise NotImplementedError
-    
 
 class Count(Objective): 
     @staticmethod

@@ -6,13 +6,16 @@ General evaluation metrics for a fully trained model (not losses)
 from typing import Literal
 from calodiffusion.utils import utils
 import numpy as np
-import jetnet
 import torch 
 
 from torchvision.models.resnet import ResNet, BasicBlock
 
 import calodiffusion.utils.HighLevelFeatures as HLF
 
+try: 
+    import jetnet
+except ImportError:
+    jetnet = None
 
 class FDPCalculationError(Exception): 
     def __init__(self, *args):
@@ -20,6 +23,9 @@ class FDPCalculationError(Exception):
 
 class FDP: 
     def _init__(self, binning_dataset, particle): 
+        if jetnet is None: 
+            raise ImportError("jetnet is not installed. Please install it to use FDP evaluation.")
+        
         self.hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
         self.reference_hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
 

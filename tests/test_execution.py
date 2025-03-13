@@ -81,6 +81,29 @@ def config(pytestconfig):
     shutil.rmtree(checkpoint_dir)
 
 
+@pytest.fixture(scope="session")
+def pion_config(config): 
+    def pion_config(checkpoint_name): 
+        return config({
+        'FILES':['dataset_1_pions_1.hdf5'],
+        'EVAL':['dataset_1_pions_1.hdf5'],
+        'BIN_FILE': "./CaloChallenge/code/binning_dataset_1_pions.xml",
+        'PART_TYPE' : 'pion',
+        'AVG_SHOWER_LOC' : "./CaloChallenge/dataset_2_avg_showers.hdf5",
+        'DATASET_NUM' : 0,
+        'SHAPE_ORIG':[-1,533],
+        'SHAPE_PAD':[-1,1, 533],
+        'SHAPE_FINAL':[-1,1,7,10,23],
+        'BATCH':128,
+        'NLAYERS':3,
+        'LAYER_SIZE_AE':[32,64, 64,32],
+        'DIM_RED_AE':[0,2, 0, 2],
+        'LAYER_SIZE_UNET' : [16, 16, 16, 32],
+        'COND_SIZE_UNET' : 128, 
+        "CHECKPOINT_NAME": checkpoint_name})
+    
+    yield pion_config
+
 @pytest.mark.dependency() 
 def test_train_diffusion(config, pytestconfig): 
     config = config()
@@ -92,19 +115,8 @@ def test_train_diffusion(config, pytestconfig):
 
 
 @pytest.mark.dependency() 
-def test_train_diffusion_pion(config, pytestconfig): 
-    config = config({
-        'FILES':['dataset_1_pions_1.hdf5'],
-        'EVAL':['dataset_1_pions_2.hdf5'],
-        'BIN_FILE': "./CaloChallenge/code/binning_dataset_1_pions.xml",
-        'PART_TYPE' : 'pion',
-        'AVG_SHOWER_LOC' : "./CaloChallenge/dataset_2_avg_showers.hdf5",
-        'DATASET_NUM' : 0,
-        'SHAPE_ORIG':[-1,533],
-        'SHAPE_PAD':[-1,1, 533],
-        'SHAPE_FINAL':[-1,1,7,10,23],
-        "CHECKPOINT_NAME": "pion_test"
-    })
+def test_train_diffusion_pion(pion_config, pytestconfig): 
+    config = pion_config("pion_test")
     data_dir = pytestconfig.getoption("data_dir")
 
     command = f"calodif-train -c {config} -d {data_dir} -n 10 --checkpoint ./testing_checkpoints/ diffusion"
@@ -120,6 +132,13 @@ def test_train_layer(config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
+
+def test_train_layer_pion(pion_config, pytestconfig): 
+    config = pion_config("pion_test_layer")
+    data_dir = pytestconfig.getoption("data_dir")
+    command = f"calodif-train -c {config} -d {data_dir} -n 10 --checkpoint ./testing_checkpoints/ layer"
+    exit = execute(command)
+    assert exit == 0
 
 @pytest.mark.dependency() 
 def test_train_hgcal(config, pytestconfig): 
@@ -154,24 +173,14 @@ def test_inference_diffusion(config, pytestconfig):
 
 
 @pytest.mark.dependency(depends=["test_train_diffusion_pion"]) 
-def test_inference_diffusion_pion(config, pytestconfig): 
-    config = config({
-        'FILES':['dataset_1_pions_1.hdf5'],
-        'EVAL':['dataset_1_pions_1.hdf5'],
-        'BIN_FILE': f"{pytestconfig.getoption("calochallenge")}/CaloChallenge/code/binning_dataset_1_pions.xml",
-        'PART_TYPE' : 'pion',
-        'DATASET_NUM' : 0,
-        'SHAPE_ORIG':[-1,533],
-        'SHAPE_PAD':[-1,1, 533],
-        'SHAPE_FINAL':[-1,1,7,10,23]
-    })
+def test_inference_diffusion_pion(pion_config, pytestconfig): 
+    config = pion_config("pion_test")
     data_dir = pytestconfig.getoption("data_dir")
     command = f"calodif-inference -c {config} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/\
             sample --sample-steps 2 --model-loc ./testing_checkpoints/pion_test_Diffusion/final.pth\
                 diffusion"
     exit = execute(command)
     assert exit == 0
-
 
 @pytest.mark.dependency(depends=["test_train_diffusion", "test_train_layer"]) 
 def test_inference_layer(config, pytestconfig): 

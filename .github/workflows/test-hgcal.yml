@@ -20,8 +20,8 @@ jobs:
       run: |
         python -m ensurepip
         python -m pip install --upgrade pip
-        python pip install .
-        python pytest pytest-dependency
+        python -m pip install .
+        python -m pip install pytest pytest-dependency
 
     - name: Test with pytest
       run: |

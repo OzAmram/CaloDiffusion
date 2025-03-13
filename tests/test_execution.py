@@ -12,6 +12,22 @@ def execute(command:str):
     print(process.stderr.decode())
     return process.returncode
 
+@pytest.mark.hgcal
+@pytest.fixture(scope="session")
+def hgcal_data(pytestconfig): 
+    # make fake hgcal data
+    data_dir = pytestconfig.getoption("data_dir")
+    hgcal_dir = os.path.join(data_dir, "HGCal_showers/")
+    os.makedirs(hgcal_dir, exist_ok=True)
+
+    def hgcal_factory(name:str): 
+        ""
+
+    yield hgcal_factory
+
+    shutil.rmtree(hgcal_dir)
+
+
 @pytest.fixture(scope="session")
 def config(pytestconfig): 
     # setup
@@ -140,6 +156,7 @@ def test_train_layer_pion(pion_config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
+@pytest.mark.hgcal
 @pytest.mark.dependency() 
 def test_train_hgcal(config, pytestconfig): 
     data_dir = pytestconfig.getoption("data_dir")
@@ -192,7 +209,7 @@ def test_inference_layer(config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
-
+@pytest.mark.hgcal
 @pytest.mark.dependency(depends=["test_train_hgcal"]) 
 def test_inference_hgcal(config, pytestconfig): 
     config = config({
@@ -226,6 +243,7 @@ def test_plotting_diffusion(config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
+@pytest.mark.hgcal
 @pytest.mark.dependency(depends=["test_inference_diffusion"]) 
 def test_plotting_geant(config, pytestconfig):
     data_dir = pytestconfig.getoption("data_dir")
@@ -236,6 +254,7 @@ def test_plotting_geant(config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
+@pytest.mark.hgcal
 @pytest.mark.dependency(depends=["test_inference_hgcal"]) 
 def test_plotting_hgcal(config, pytestconfig): 
     data_dir = pytestconfig.getoption("data_dir")

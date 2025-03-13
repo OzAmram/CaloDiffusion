@@ -18,9 +18,11 @@ jobs:
 
     - name: Install dependencies
       run: |
+        git clone https://github.com/OzAmram/CaloChallenge.git
+        git clone https://github.com/OzAmram/HGCalShowers.git
         python -m ensurepip
         python -m pip install --upgrade pip
-        python -m pip install .
+        python -m pip install -e .
         python -m pip install pytest pytest-dependency
 
     - name: Test with pytest

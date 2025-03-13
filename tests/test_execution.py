@@ -97,6 +97,7 @@ def config(pytestconfig):
     shutil.rmtree(checkpoint_dir)
 
 
+@pytest.mark.pion
 @pytest.fixture(scope="session")
 def pion_config(config): 
     def pion_config(checkpoint_name): 
@@ -129,7 +130,7 @@ def test_train_diffusion(config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
-
+@pytest.mark.pion
 @pytest.mark.dependency() 
 def test_train_diffusion_pion(pion_config, pytestconfig): 
     config = pion_config("pion_test")
@@ -149,6 +150,7 @@ def test_train_layer(config, pytestconfig):
     assert exit == 0
 
 
+@pytest.mark.pion
 def test_train_layer_pion(pion_config, pytestconfig): 
     config = pion_config("pion_test_layer")
     data_dir = pytestconfig.getoption("data_dir")
@@ -189,6 +191,7 @@ def test_inference_diffusion(config, pytestconfig):
     assert exit == 0
 
 
+@pytest.mark.pion
 @pytest.mark.dependency(depends=["test_train_diffusion_pion"]) 
 def test_inference_diffusion_pion(pion_config, pytestconfig): 
     config = pion_config("pion_test")

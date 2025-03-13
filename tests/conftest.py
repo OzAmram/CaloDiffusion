@@ -9,3 +9,6 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "hgcal: Test only runs on hgcal data (deselect with -m 'not hgcal')"
     )
+    config.addinivalue_line(
+        "markers", "pion: Test only runs on pion dataset (deselect with -m 'not pion')"
+    )

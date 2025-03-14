@@ -144,7 +144,7 @@ def process_data_dict(flags, config):
     
     else: 
         bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
-        geom_conv = utils.GeomConverter(bins)
+        NN_embed = utils.GeomConverter(bins)
 
 
     generated, energies = LoadSamples(flags.generated, flags, config, geom_conv, NN_embed=NN_embed)
@@ -226,6 +226,10 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
 def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
     end = None if flags.nevts < 0 else flags.nevts
     shower_scale = config.get("SHOWERSCALE", 0.001)
+
+    if(config.get("DATASET_NUM", 2) <= 1): 
+        flags.plot_reshape = True
+
 
 
     if (not flags.hgcal) or flags.plot_reshape:

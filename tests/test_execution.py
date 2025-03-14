@@ -12,6 +12,35 @@ def execute(command:str):
     print(process.stderr.decode())
     return process.returncode
 
+@pytest.fixture(scope="function")
+def hgcal_data(pytestconfig): 
+    import h5py
+    import numpy as np
+    
+    # make fake hgcal data
+    data_dir = pytestconfig.getoption("data_dir")
+    hgcal_dir_name = "hgcal_data/"
+    hgcal_dir = os.path.join(data_dir, hgcal_dir_name)
+    os.makedirs(hgcal_dir, exist_ok=True)
+
+    def hgcal_factory(name:str): 
+        f_name = os.path.join(hgcal_dir, name)
+        if os.path.exists(f_name): 
+            os.remove(f_name)
+        with h5py.File(f_name, "w") as f:
+            f.create_dataset("gen_info", shape=(360, 3), dtype="<f4")
+            f['gen_info'][:] = np.random.rand(360, 3).astype("<f4")
+
+            f.create_dataset("showers", shape=(360, 28, 3000), dtype="<f4")
+            f['showers'][:] = np.random.rand(360, 28, 3000).astype("<f4")
+
+        return os.path.join(hgcal_dir_name, name)
+    
+    yield hgcal_factory
+
+    shutil.rmtree(hgcal_dir)
+
+
 @pytest.fixture(scope="session")
 def config(pytestconfig): 
     # setup
@@ -113,7 +142,7 @@ def test_train_diffusion(config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
-
+@pytest.mark.pion
 @pytest.mark.dependency() 
 def test_train_diffusion_pion(pion_config, pytestconfig): 
     config = pion_config("pion_test")
@@ -133,6 +162,7 @@ def test_train_layer(config, pytestconfig):
     assert exit == 0
 
 
+@pytest.mark.pion
 def test_train_layer_pion(pion_config, pytestconfig): 
     config = pion_config("pion_test_layer")
     data_dir = pytestconfig.getoption("data_dir")
@@ -140,12 +170,14 @@ def test_train_layer_pion(pion_config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
+@pytest.mark.hgcal
 @pytest.mark.dependency() 
-def test_train_hgcal(config, pytestconfig): 
+def test_train_hgcal(config, pytestconfig, hgcal_data): 
     data_dir = pytestconfig.getoption("data_dir")
+    data_file = hgcal_data("mock_hgcal.h5")
     config = config({
-        "FILES":['HGCal_showers1.h5'],
-        "EVAL":['HGCal_showers1.h5'],
+        "FILES":[data_file],
+        "EVAL":[data_file],
         "CHECKPOINT_NAME": "hgcal", 
         "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
         'SHAPE_ORIG': [-1,28,1988],
@@ -172,6 +204,7 @@ def test_inference_diffusion(config, pytestconfig):
     assert exit == 0
 
 
+@pytest.mark.pion
 @pytest.mark.dependency(depends=["test_train_diffusion_pion"]) 
 def test_inference_diffusion_pion(pion_config, pytestconfig): 
     config = pion_config("pion_test")
@@ -192,12 +225,13 @@ def test_inference_layer(config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
-
+@pytest.mark.hgcal
 @pytest.mark.dependency(depends=["test_train_hgcal"]) 
-def test_inference_hgcal(config, pytestconfig): 
+def test_inference_hgcal(config, pytestconfig, hgcal_data): 
+    data_file = hgcal_data("mock_hgcal.h5")
     config = config({
-        "FILES":['HGCal_showers1.h5'],
-        "EVAL":['HGCal_showers1.h5'],
+        "FILES":[data_file],
+        "EVAL":[data_file],
         "CHECKPOINT_NAME": "hgcal", 
         "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
         'SHAPE_ORIG': [-1,28,1988],
@@ -236,12 +270,14 @@ def test_plotting_geant(config, pytestconfig):
     exit = execute(command)
     assert exit == 0
 
+@pytest.mark.hgcal
 @pytest.mark.dependency(depends=["test_inference_hgcal"]) 
-def test_plotting_hgcal(config, pytestconfig): 
+def test_plotting_hgcal(config, pytestconfig, hgcal_data): 
     data_dir = pytestconfig.getoption("data_dir")
+    data_file = hgcal_data("mock_hgcal.h5")
     config = config({
-        "FILES":['HGCal_showers1.h5'],
-        "EVAL":['HGCal_showers1.h5'],
+        "FILES":[data_file],
+        "EVAL":[data_file],
         "CHECKPOINT_NAME": "hgcal", 
         "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
         'SHAPE_ORIG': [-1,28,1988],

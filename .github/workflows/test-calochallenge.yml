@@ -1,0 +1,35 @@
+name: test-calochallenge
+
+on: [push, pull_request]
+
+jobs:
+  test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        git clone https://github.com/OzAmram/CaloChallenge.git
+        git clone https://github.com/OzAmram/HGCalShowers.git
+        python -m ensurepip
+        python -m pip install --upgrade pip
+        python -m pip install -e .
+        python -m pip install pytest pytest-dependency
+
+    - name: Download calochallenge data 
+      run: |
+        mkdir ./test_data/
+        curl https://zenodo.org/records/8099322/files/dataset_1_photons_1.hdf5?download=1 -o ./test_data/dataset_1_photons_1.hdf5
+        curl https://zenodo.org/records/8099322/files/dataset_1_pions_1.hdf5?download=1 -o ./test_data/dataset_1_pions_1.hdf5
+
+    - name: Test with pytest
+      run: |
+        python3 -m pytest tests/test_execution.py -m "not hgcal" --data-dir ./test_data/

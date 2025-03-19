@@ -44,7 +44,6 @@ def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, jo
     ctx.obj.nevts = n_events 
     ctx.obj.layer_only = layer_only
     ctx.obj.reclean = reclean
-    ctx.obj.generated = generated
 
     if seed is None: 
         seed = int(np.random.default_rng().integers(low=100, high=10**5))

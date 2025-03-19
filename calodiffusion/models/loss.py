@@ -99,8 +99,7 @@ class Loss(ABC):
         """
 
         def l2_loss(target, prediction, weight): 
-            #return  (weight * ((prediction - target) ** 2)).sum() / (torch.mean(weight) * np.prod(target.shape))
-            return  100*(weight * ((prediction - target) ** 2)).sum() / (torch.mean(weight) * np.prod(target.shape))
+            return  (weight * ((prediction - target) ** 2)).sum() / (torch.mean(weight) * np.prod(target.shape))
 
         losses = {
             "l1": lambda y_hat, y, weight=1: torch.nn.functional.l1_loss(y_hat, y),

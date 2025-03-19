@@ -83,7 +83,7 @@ class CaloDiffusion(Diffusion):
     def noise_generation(self, shape):
         return super().noise_generation(shape)
 
-    def forward(self, x, E, time, layers, layer_sample=False, controls=None):
+    def forward(self, x, E, time, layers, controls=None):
         if (self.do_embed):
             x = self.NN_embed.enc(x.to(torch.float32)).to(x.device)
         if (self.layer_cond) and (layers is not None):
@@ -151,12 +151,12 @@ class CaloDiffusion(Diffusion):
         }
         return embed[self.time_embed](sigma)
     
-    def denoise(self, x, E=None, sigma=None, layers = None, layer_sample=False, controls=None):
+    def denoise(self, x, E=None, sigma=None, layers = None, controls=None):
         t_emb = self.do_time_embed(sigma = sigma.reshape(-1)).to(float)
         loss_function_name = type(self.loss_function).__name__
 
         c_skip, c_out, c_in = self.loss_function.get_scaling(sigma)
-        pred = self.forward(x * c_in, E, t_emb, layers = layers, layer_sample=layer_sample)
+        pred = self.forward(x * c_in, E, t_emb, layers = layers )
 
         if('noise_pred' in loss_function_name):
             return (x - sigma * pred)

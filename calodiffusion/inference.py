@@ -106,7 +106,6 @@ def hgcal(ctx):
     pass
 
 @inference.command()
-@click.option("-g", "--generated", default="", help="Path to existing generated results")
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
 @click.option("--plot-reshape/--no-plot-reshape", default=False, help="Plot the embedded space")
@@ -115,15 +114,14 @@ def hgcal(ctx):
 @click.option("--energy-min", default=-1.0, type=float, help="Min cell energy threshold")
 @click.option("--geant-only", default=False, is_flag=True, help="Plots only of geant distribution")
 @click.pass_context
-def plot(ctx, generated, plot_label, plot_folder, plot_reshape, extension, cms, energy_min, geant_only):
+def plot(ctx, plot_label, plot_folder, plot_reshape, extension, cms, energy_min, geant_only):
     ctx.obj.plot_label = plot_label
     ctx.obj.plot_folder = plot_folder
     ctx.obj.plot_reshape = plot_reshape
-    ctx.obj.generated = generated
     ctx.obj.plot_extensions = extension
     ctx.obj.cms = cms
     ctx.obj.EMin = energy_min
-    ctx.obj.gaent_only = geant_only
+    ctx.obj.geant_only = geant_only
 
     flags = ctx.obj
     data_dict, energies = process_data_dict(flags, config=ctx.obj.config)
@@ -142,7 +140,7 @@ def process_data_dict(flags, config):
         NN_embed = hgcal_utils.HGCalConverter(bins=shape_embed, geom_file=config["BIN_FILE"])
         NN_embed.init()
     
-    else: 
+    elif(flags.plot_reshape): 
         bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
         NN_embed = utils.GeomConverter(bins)
 
@@ -224,6 +222,7 @@ def write_out(fout, flags, config, generated, energies, first_write = True, do_m
 
 
 def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
+    print("Loading " + fp)
     end = None if flags.nevts < 0 else flags.nevts
     shower_scale = config.get("SHOWERSCALE", 0.001)
 
@@ -255,7 +254,7 @@ def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
             )
             generated = NN_embed.enc(generated).detach().numpy()
 
-        generated = np.reshape(generated, shape_plot)
+    generated = np.reshape(generated, shape_plot)
 
     if flags.EMin > 0.0:
         mask = generated < flags.EMin
@@ -273,7 +272,7 @@ def plot_results(flags, config, data_dict, energies):
         "Layer Sparsity": plots.SparsityLayer(flags, config),
     }
 
-    if hgcal and not flags.plot_reshape:
+    if flags.hgcal and not flags.plot_reshape:
         plot_routines.update(
             {
                 "Energy R": plots.RadialEnergyHGCal(flags, config),

@@ -3,6 +3,7 @@
     'FILES':['dataset_2_1.hdf5'],
     'EVAL':['dataset_2_2.hdf5'],
     'AVG_SHOWER_LOC' : "/wclustre/cms_mlsim/denoise/CaloChallenge/dataset_2_avg_showers.hdf5",
+    'BIN_FILE': "/home/oamram/CaloDiffusion/CaloChallenge/code/binning_dataset_2.xml",
     'DATASET_NUM' : 2,
     'HOLDOUT' : 0,
     'SHAPE_ORIG':[-1,6480],
@@ -15,7 +16,7 @@
     'EARLYSTOP':20,
     'LAYER_SIZE_AE':[32,64, 64,32],
     'DIM_RED_AE':[0,2, 0, 2],
-    'LAYER_SIZE_UNET' : [32, 32, 64, 96],
+    'LAYER_SIZE_UNET' : [32, 32, 64, 32],
     'COND_SIZE_UNET' : 128,
     'KERNEL':[3,3,3],
     'STRIDE':[3,2,2],
@@ -44,7 +45,7 @@
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : '',
-    'CHECKPOINT_NAME':'dataset2_dec14_vlarge_test',
+    'CHECKPOINT_NAME':'dataset2_mar14',
 
 
 }

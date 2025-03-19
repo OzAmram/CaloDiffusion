@@ -142,7 +142,7 @@ def process_data_dict(flags, config):
         NN_embed = hgcal_utils.HGCalConverter(bins=shape_embed, geom_file=config["BIN_FILE"])
         NN_embed.init()
     
-    elif(flags.plot_reshape): 
+    elif(dataset_num <= 1): 
         bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
         NN_embed = utils.GeomConverter(bins)
 
@@ -256,7 +256,8 @@ def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
             )
             generated = NN_embed.enc(generated).detach().numpy()
 
-    generated = np.reshape(generated, shape_plot)
+    if(flags.plot_reshape or (not flags.hgcal)):
+        generated = np.reshape(generated, shape_plot)
 
     if flags.EMin > 0.0:
         mask = generated < flags.EMin

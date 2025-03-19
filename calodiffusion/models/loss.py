@@ -30,13 +30,15 @@ class Loss(ABC):
         """
             Scale input to the forward model before prediction, as required by the loss function. 
         """
-        c_skip = self.sigma_data**2 / (sigma**2 + self.sigma_data**2)
-        c_out = sigma * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5
-        c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
+        out = {
+                'c_skip': self.sigma_data**2 / (sigma**2 + self.sigma_data**2),
+                'c_out': sigma * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5,
+                'c_in' : 1 / (sigma**2 + self.sigma_data**2) ** 0.5,
+            }
 
 
 
-        return c_in, c_skip, c_out
+        return out
 
     @abstractmethod
     def loss_function(self, model, data, E, time, sigma=None, noise=None, layers=None ): 
@@ -144,19 +146,16 @@ class minsnr(Loss):
         # From https://arxiv.org/pdf/2303.09556 
         super().__init__(config, n_steps)
 
-    def apply_scaling_skips(self, prediction, x,  c_in, c_skip, c_out): 
-        return c_skip * x + c_out * prediction
-
     def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
         # TODO TO CHECK...
         # Sigma0 or sigma?
         x_noisy = data + sigma * noise
         sigma0 = (noise * self.P_std + self.P_mean).exp()
-        c_skip, c_out, c_in = self.get_scaling(sigma)
-        pred = model.denoise(x_noisy * c_in, E, sigma, layers=layers)
+        scales = self.get_scaling(sigma)
+        pred = model.denoise(x_noisy * scales['c_in'], E, sigma, layers=layers)
         pred = data - sigma * pred
 
-        target = (data - c_skip * x_noisy) / c_out
+        target = (data - scales['c_skip'] * x_noisy) / scales['c_out']
 
         weight = torch.ones_like(pred)
         return self.loss(pred, target, weight)
@@ -165,8 +164,6 @@ class hybrid_weight(Loss):
     def __init__(self, config, n_steps, loss_type='l1') -> None:
         super().__init__(config, n_steps, loss_type)
 
-    def apply_scaling_skips(self, prediction, x,  c_in, c_skip, c_out): 
-        return c_skip * x + c_out * prediction
     
     def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
         x_noisy = data + sigma * noise

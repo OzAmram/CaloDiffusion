@@ -155,8 +155,8 @@ class CaloDiffusion(Diffusion):
         t_emb = self.do_time_embed(sigma = sigma.reshape(-1)).to(float)
         loss_function_name = type(self.loss_function).__name__
 
-        c_skip, c_out, c_in = self.loss_function.get_scaling(sigma)
-        pred = self.forward(x * c_in, E, t_emb, layers = layers )
+        scales = self.loss_function.get_scaling(sigma)
+        pred = self.forward(x * scales['c_in'], E, t_emb, layers = layers )
 
         if('noise_pred' in loss_function_name):
             return (x - sigma * pred)
@@ -164,7 +164,7 @@ class CaloDiffusion(Diffusion):
         elif('mean_pred' in loss_function_name):
             return pred
         elif ('hybrid' or 'minsnr') in loss_function_name:
-            return (c_skip * x + c_out * pred)
+            return (scales['c_skip'] * x + scales['c_out'] * pred)
         else:
             raise ValueError("??? Training obj %s" % loss_function_name)
 

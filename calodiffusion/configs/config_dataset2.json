@@ -45,7 +45,7 @@
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : '',
-    'CHECKPOINT_NAME':'dataset2_mar14',
+    'CHECKPOINT_NAME':'dataset2_mar19',
 
 
 }

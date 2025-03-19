@@ -23,7 +23,6 @@ class dotdict(dict):
 
 @click.group()
 @click.option("-c", "--config")
-@click.option("-g", "--generated", default="", help="File name for generated showers")
 @click.option("-d", "--data-folder", default="./data/", help="Folder containing data and MC files")
 @click.option("--checkpoint-folder", default="./trained_models/", help="Folder to save checkpoints")
 @click.option("-n", "--n-events", default=-1, type=int, help="Number of events to load")
@@ -34,7 +33,7 @@ class dotdict(dict):
 @click.option("--hgcal/--no-hgcal", default=None, is_flag=True, help="Use HGCal settings (overwrites config)")
 @click.option("--seed", default=None, help='Set a manual seed (saved in config)')
 @click.pass_context
-def inference(ctx, debug, config, generated, data_folder, checkpoint_folder, layer_only, job_idx, n_events, reclean, hgcal, seed): 
+def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, job_idx, n_events, reclean, hgcal, seed): 
     ctx.ensure_object(dotdict)
     
     ctx.obj.config = LoadJson(config) if config is not None else {}
@@ -61,13 +60,14 @@ def inference(ctx, debug, config, generated, data_folder, checkpoint_folder, lay
 
 
 @inference.group()
+@click.option("-g", "--generated", default="", help="Path for generated shower results")
 @click.option("--sample-steps", default=400, type=int, help="How many steps for sampling (override config)")
 @click.option("--sample-offset", default=0, type=int, help="Skip some iterations in the sampling (noisiest iters most unstable)")
 @click.option("--sample-algo", default="DDim", help="Algorithm for sampling the model output")
 @click.option("--train-sampler/--no-train-sampler", default=None, help="For samplers requiring pre-training, train them (overwrites config)")
 @click.option("--model-loc", default=None, help="Specific folder for loading existing model")
 @click.pass_context
-def sample(ctx, sample_steps, sample_algo, sample_offset, train_sampler, model_loc):
+def sample(ctx, generated, sample_steps, sample_algo, sample_offset, train_sampler, model_loc):
     ctx.obj.config['SAMPLER'] = sample_algo
     if "SAMPLER_OPTIONS" not in ctx.obj.config.keys(): 
         ctx.obj.config['SAMPLER_OPTIONS'] = {}
@@ -81,6 +81,7 @@ def sample(ctx, sample_steps, sample_algo, sample_offset, train_sampler, model_l
     ctx.obj.sample_steps = sample_steps
     ctx.obj.sample_algo = sample_algo 
     ctx.obj.sample_offset = sample_offset
+    ctx.obj.generated = generated
 
     non_config = dotdict({key: value for key, value in ctx.obj.items() if key!='config'})
     ctx.obj.config['flags'] = non_config
@@ -106,6 +107,7 @@ def hgcal(ctx):
     pass
 
 @inference.command()
+@click.option("-g", "--generated", default="", help="Path to existing generated results")
 @click.option("--plot-label", default="", help="Labels for the plot")
 @click.option("--plot-folder", default="./plots", help="Folder to save results")
 @click.option("--plot-reshape/--no-plot-reshape", default=False, help="Plot the embedded space")
@@ -114,11 +116,12 @@ def hgcal(ctx):
 @click.option("--energy-min", default=-1.0, type=float, help="Min cell energy threshold")
 @click.option("--geant-only", default=False, is_flag=True, help="Plots only of geant distribution")
 @click.pass_context
-def plot(ctx, plot_label, plot_folder, plot_reshape, extension, cms, energy_min, geant_only):
+def plot(ctx, generated, plot_label, plot_folder, plot_reshape, extension, cms, energy_min, geant_only):
     ctx.obj.plot_label = plot_label
     ctx.obj.plot_folder = plot_folder
     ctx.obj.plot_reshape = plot_reshape
     ctx.obj.plot_extensions = extension
+    ctx.obj.generated = generated
     ctx.obj.cms = cms
     ctx.obj.EMin = energy_min
     ctx.obj.geant_only = geant_only

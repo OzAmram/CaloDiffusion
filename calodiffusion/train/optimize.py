@@ -46,12 +46,13 @@ class Optimize:
             "RESTART_T": Range allowed for T_MIN_{i}. T_MAX_{i} is decided by taking t_min_i as the bottom of the range and t_min_i + {top of the restart_t range} as the top
         }
     """
-    def __init__(self, flags, trainer, objectives: Literal["COUNT", "FPD", "CNN"]) -> None:
+    def __init__(self, flags, trainer, objectives: Literal["COUNT", "FPD", "CNN"], inference: bool = False) -> None:
 
         implemented_objectives: dict[str, type[Objective]] = {
             "COUNT": Count(), 
             "FPD": FPD(), 
-            "CNN": CNNMetric()
+            "CNN": CNNMetric(), 
+            "MEAN_SEP": MeanSeparation()
         }
         self.flags = flags
         self.trainer = trainer
@@ -62,17 +63,7 @@ class Optimize:
         for objective in objectives: 
             self.objectives.append(implemented_objectives[objective])
 
-    def train(self, trial_config): 
-        config = self.suggest_config(trial_config)
-        train_model = self.trainer(flags=self.flags, config=config, save_model=False)
-        model, _, _ = train_model.train()
-        eval_data = train_model.loader_val
-        return model, eval_data, config
-
-    def inference(self, trial_config): 
-        config = self.suggest_config(trial_config)
-        trained_model = self.trainer(flags=self.flags, config=config, save_model=False)
-        return trained_model, trained_model.loader_val, config
+        self.objective = self.objective_inference if inference else self.objective_training
 
     def suggest_config(self, trial_config): 
         if isinstance(self.flags.config, str): 
@@ -188,13 +179,39 @@ class Optimize:
         config['flags'] = self.flags
         return [obj(model, eval_data, config) for obj in self.objectives]
 
-
     def objective_inference(self, trial) -> tuple:
-        pass
+        try:
+
+            config = self.suggest_config(trial)
+            eval_data, _ = utils.load_data(self.flags, config, eval=True)
+
+            model_instance = self.trainer(flags=self.flags, config=config, load_data=False, save_model=False, inference=True)
+            model, _, _, _, _, _  = model_instance.pickup_checkpoint(
+                model=model_instance.model,
+                optimizer=None,
+                scheduler=None,
+                early_stopper=None,
+                n_epochs=0,
+                restart_training=True,
+            )
+
+        except RuntimeError: 
+            # Uh. do something. 
+            objectives = [obj.failure() for obj in self.objectives]
+            return objectives
+
+        objectives = self.eval(model, eval_data, config)
+        return objectives
+
 
     def objective_training(self, trial) -> tuple: 
         try: 
-            model, eval_data, config = self.train(trial)
+            config = self.suggest_config(trial)
+            eval_data, _ = utils.load_data(self.flags, config, eval=True)
+            train_model = self.trainer(flags=self.flags, config=config, save_model=False, load_data=False)
+            train_model.init_model()
+            model, _, _ = train_model.train()
+
         except RuntimeError as err:
             if "Kernel size can't be greater than actual input size" in str(err): 
                 objectives = [obj.failure() for obj in self.objectives]
@@ -340,3 +357,16 @@ class CNNMetric(Objective):
             flags = kwargs['flags']
         )
         return cnn_method(eval_data)
+
+class MeanSeparation(Objective): 
+    @staticmethod
+    def failure(): 
+        return 1
+    
+    @staticmethod
+    def direction():
+        return "minimize"
+    
+    def __call__(self, *args, **kwds):
+        return super().__call__(*args, **kwds)
+    

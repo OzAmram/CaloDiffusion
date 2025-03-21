@@ -1,9 +1,5 @@
 import os
 import pytest 
-import subprocess
-import json 
-import shutil
-
 
 def execute(command:str): 
     command = [i for i in command.split(" ") if i not in ('', ' ')]  # Strip out the random spaces

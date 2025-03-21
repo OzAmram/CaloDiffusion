@@ -5,6 +5,7 @@ from calodiffusion.train.train_diffusion import TrainDiffusion
 from calodiffusion.train.train_layer_model import TrainLayerModel
 from calodiffusion.utils.utils import dotdict
 
+
 @click.group()
 @click.option('-c', '--config', help='Configuration file')
 @click.option('-o', '--objectives', default=["COUNT", "FPD"], multiple=True, help='Objectives to optimize')
@@ -14,8 +15,9 @@ from calodiffusion.utils.utils import dotdict
 @click.option('--results-folder', default='./optuna_reports', help='Folder to save results')
 @click.option('-n', '--nevts', type=int, default=-1, help='Number of events to load')
 @click.option('--frac', type=float, default=0.85, help='Fraction of total events used for training')
+@click.option('--hgcal/--no-hgcal', default=False, help='Use hgcal settings - overwrites config')
 @click.pass_context
-def optimize(ctx, config, objectives, study_name, n_trials, data_folder, results_folder, nevts, frac):
+def optimize(ctx, config, objectives, study_name, n_trials, data_folder, results_folder, hgcal, nevts, frac):
     args = dotdict({
         'config': config,
         'objectives': objectives,
@@ -27,7 +29,13 @@ def optimize(ctx, config, objectives, study_name, n_trials, data_folder, results
         'frac': frac,
     })
     ctx.ensure_object(dotdict)
-    ctx.obj['args'] = args
+    ctx.obj.args = args
+    if hgcal is not None: 
+        ctx.obj.config['HGCAL'] = hgcal
+        ctx.obj.hgcal = hgcal
+    else: 
+        ctx.obj.hgcal = ctx.obj.config.get("HGCAL", False)
+
 
 
 @optimize.group()
@@ -42,21 +50,21 @@ def layer(ctx):
 @training.group()
 @click.pass_context
 def diffusion(ctx): 
-    Optimize(flags=ctx.obj['args'], trainer=TrainDiffusion, objectives="")()
+    Optimize(flags=ctx.obj['args'], trainer=TrainDiffusion, objectives=ctx.obj.objectives)()
 
 @optimize.group()
 def inference():
     pass
 
-@inference.group("layer")
+@inference.command("layer")
 @click.pass_context
 def layer_inference(ctx):
-    Optimize(flags=ctx.obj['args'], trainer=TrainLayerModel, objectives=ctx.obj.objectives)()
+    Optimize(flags=ctx.obj['args'], trainer=TrainLayerModel, objectives=ctx.obj.objectives, inference=True)()
 
-@inference.group()
+@inference.command("diffusion")
 @click.pass_context
 def diffusion_inference(ctx): 
-    Optimize(flags=ctx.obj['args'], trainer=TrainDiffusion, objectives="")()
+    Optimize(flags=ctx.obj['args'], trainer=TrainDiffusion, objectives=ctx.obj.objectives, inference=True)()
 
 
 if __name__ == "__main__":

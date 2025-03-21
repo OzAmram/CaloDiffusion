@@ -2,7 +2,7 @@ from calodiffusion.models.layerdiffusion import LayerDiffusion
 from calodiffusion.train.train_diffusion import TrainDiffusion
 
 class TrainLayerModel(TrainDiffusion):
-    def __init__(self, flags, config, load_data = True, inference=False):
+    def __init__(self, flags, config, load_data = True, inference=False, *args, **kwargs):
         super().__init__(flags, config, load_data)
         self.init_model()
         if inference: 

@@ -4,6 +4,10 @@ import subprocess
 import json 
 import shutil
 
+from calodiffusion.train.train_diffusion import TrainDiffusion
+from calodiffusion.train.train_layer_model import TrainLayerModel
+from calodiffusion.utils import utils
+
 def pytest_addoption(parser):
     parser.addoption("--data-dir", default='./data/', help='Add a specific data dir to use during tests')
     parser.addoption("--calochallenge", default='.', help='Add a specific dir for the CaloChallenge dir is located')
@@ -16,6 +20,15 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "pion: Test only runs on pion dataset (deselect with -m 'not pion')"
     )
+
+class MockMethod(): 
+    def __init__(self):
+        pass
+
+    def state_dict(self): 
+        return []
+
+
 @pytest.fixture(scope='function')
 def execute(): 
     def run_execution(command:str): 
@@ -26,6 +39,7 @@ def execute():
         return process.returncode
     yield run_execution
     
+
 @pytest.fixture(scope="session")
 def config(pytestconfig): 
     # setup
@@ -93,3 +107,68 @@ def config(pytestconfig):
 
     # Teardown
     shutil.rmtree(checkpoint_dir)
+
+
+@pytest.fixture(scope="module")
+def diffusion_weights(config): 
+    checkpoint_folder = "./test_optimization/"
+    name = "diffusion_weights"
+
+    def diffusion_factory(hgcal:bool = False): 
+        mock_config = config({
+            "CHECKPOINT_NAME": "mock_weights" , 
+        })
+        args = utils.dotdict({
+            "checkpoint": checkpoint_folder, 
+            "data_folder": "", 
+            "hgcal": hgcal
+        })
+
+        t = TrainDiffusion(args, utils.LoadJson(mock_config), load_data=False, save_model=True)
+        t.save(
+            model_state=t.model.model.state_dict, 
+            epoch=0, 
+            name=name, 
+            training_losses=[], 
+            validation_losses=[], 
+            scheduler=MockMethod(),
+            optimizer=MockMethod(),
+            early_stopper=MockMethod()
+        )
+        return os.path.join(t.checkpoint_folder, f"{name}.pth")
+    
+    yield diffusion_factory
+
+    shutil.rmtree(checkpoint_folder)
+
+@pytest.fixture(scope="module")
+def layer_weights(config): 
+    checkpoint_folder = "./test_optimization/"
+    name = "layer_weights"
+
+    def diffusion_factory(hgcal:bool = False): 
+        mock_config = config({
+            "CHECKPOINT_NAME": "mock_weights" , 
+        })
+        args = utils.dotdict({
+            "checkpoint": checkpoint_folder, 
+            "data_folder": "", 
+            "hgcal": hgcal
+        })
+
+        t = TrainLayerModel(args, utils.LoadJson(mock_config), load_data=False, save_model=True)
+        t.save(
+            model_state=t.model.model.state_dict, 
+            epoch=0, 
+            name=name, 
+            training_losses=[], 
+            validation_losses=[], 
+            scheduler=MockMethod(),
+            optimizer=MockMethod(),
+            early_stopper=MockMethod()
+        )
+        return os.path.join(t.checkpoint_folder, f"{name}.pth")
+    
+    yield diffusion_factory
+
+    shutil.rmtree(checkpoint_folder)

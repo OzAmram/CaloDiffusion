@@ -3,7 +3,7 @@ from calodiffusion.train.optimize import Optimize
 from datetime import datetime
 from calodiffusion.train.train_diffusion import TrainDiffusion
 from calodiffusion.train.train_layer_model import TrainLayerModel
-from calodiffusion.utils.utils import dotdict
+from calodiffusion.utils import utils
 
 
 @click.group()
@@ -15,11 +15,10 @@ from calodiffusion.utils.utils import dotdict
 @click.option('--results-folder', default='./optuna_reports', help='Folder to save results')
 @click.option('-n', '--nevts', type=int, default=-1, help='Number of events to load')
 @click.option('--frac', type=float, default=0.85, help='Fraction of total events used for training')
-@click.option('--hgcal/--no-hgcal', default=False, help='Use hgcal settings - overwrites config')
+@click.option('--hgcal/--no-hgcal', default=None, help='Use hgcal settings - overwrites config')
 @click.pass_context
 def optimize(ctx, config, objectives, study_name, n_trials, data_folder, results_folder, hgcal, nevts, frac):
-    args = dotdict({
-        'config': config,
+    args = utils.dotdict({
         'objectives': objectives,
         'study_name': study_name,
         'n_trials': n_trials,
@@ -28,43 +27,51 @@ def optimize(ctx, config, objectives, study_name, n_trials, data_folder, results
         'nevts': nevts,
         'frac': frac,
     })
-    ctx.ensure_object(dotdict)
-    ctx.obj.args = args
-    if hgcal is not None: 
-        ctx.obj.config['HGCAL'] = hgcal
-        ctx.obj.hgcal = hgcal
-    else: 
-        ctx.obj.hgcal = ctx.obj.config.get("HGCAL", False)
+    ctx.ensure_object(utils.dotdict)
+    ctx.obj = args
+    # Ensure the help menu still works
+    if config is not None: 
+        ctx.obj.config = utils.LoadJson(config)
 
+        if hgcal is not None: 
+            ctx.obj.config['HGCAL'] = hgcal
+            ctx.obj.hgcal = hgcal
+        else: 
+            ctx.obj.hgcal = ctx.obj.config.get("HGCAL", False)
 
 
 @optimize.group()
-def training():
+def train():
     pass 
 
-@training.group()
+@train.command()
 @click.pass_context
 def layer(ctx):
-    Optimize(flags=ctx.obj['args'], trainer=TrainLayerModel, objectives=ctx.obj.objectives)()
+    Optimize(flags=ctx.obj, trainer=TrainLayerModel, objectives=ctx.obj.objectives)()
 
-@training.group()
+@train.command()
 @click.pass_context
 def diffusion(ctx): 
-    Optimize(flags=ctx.obj['args'], trainer=TrainDiffusion, objectives=ctx.obj.objectives)()
+    Optimize(flags=ctx.obj, trainer=TrainDiffusion, objectives=ctx.obj.objectives)()
+
 
 @optimize.group()
-def inference():
-    pass
-
-@inference.command("layer")
+@click.option("--model-loc", help='Path to the trained model weights')
 @click.pass_context
-def layer_inference(ctx):
-    Optimize(flags=ctx.obj['args'], trainer=TrainLayerModel, objectives=ctx.obj.objectives, inference=True)()
+def sample(ctx, model_loc):
+    ctx.obj.model_loc = model_loc
 
-@inference.command("diffusion")
+@sample.command("layer")
+@click.option("--layer-model", help='Path to trained layer model weights')
+@click.pass_context
+def layer_inference(ctx, layer_model):
+    ctx.obj.config['layer_model'] = layer_model
+    Optimize(flags=ctx.obj, trainer=TrainLayerModel, objectives=ctx.obj.objectives, inference=True)()
+
+@sample.command("diffusion")
 @click.pass_context
 def diffusion_inference(ctx): 
-    Optimize(flags=ctx.obj['args'], trainer=TrainDiffusion, objectives=ctx.obj.objectives, inference=True)()
+    Optimize(flags=ctx.obj, trainer=TrainDiffusion, objectives=ctx.obj.objectives, inference=True)()
 
 
 if __name__ == "__main__":

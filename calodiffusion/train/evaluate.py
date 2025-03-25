@@ -22,7 +22,7 @@ class FDPCalculationError(Exception):
         super().__init__(*args)
 
 class FDP: 
-    def _init__(self, binning_dataset, particle): 
+    def __init__(self, binning_dataset, particle): 
         if jetnet is None: 
             raise ImportError("jetnet is not installed. Please install it to use FDP evaluation.")
         

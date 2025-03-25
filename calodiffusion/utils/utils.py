@@ -869,7 +869,7 @@ def load_data(args, config, eval=False, NN_embed=None):
         files = get_files(config["EVAL"], folder=args.data_folder)
         val_file_list = []
     else:
-        if hasattr(args, "seed"):
+        if hasattr(args, "seed") and (args.seed is not None):
             torch.manual_seed(args.seed)
         files = get_files(config["FILES"], folder=args.data_folder)
         val_file_list = get_files(config.get("VAL_FILES", []), folder=args.data_folder)

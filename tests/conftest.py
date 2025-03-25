@@ -1,3 +1,4 @@
+from datetime import datetime
 import pytest 
 import os
 import subprocess
@@ -21,12 +22,22 @@ def pytest_configure(config):
         "markers", "pion: Test only runs on pion dataset (deselect with -m 'not pion')"
     )
 
+
 class MockMethod(): 
     def __init__(self):
         pass
 
     def state_dict(self): 
         return []
+
+
+@pytest.fixture(scope='session')
+def checkpoint_folder(): 
+
+    checkpoint_dir = "./tests/checkpoints/"
+    yield checkpoint_dir
+
+    shutil.rmtree(checkpoint_dir)
 
 
 @pytest.fixture(scope='function')
@@ -38,16 +49,43 @@ def execute():
         print(process.stderr.decode())
         return process.returncode
     yield run_execution
+
+
+@pytest.fixture(scope="function")
+def hgcal_data(pytestconfig): 
+    import h5py
+    import numpy as np
     
+    # make fake hgcal data
+    data_dir = pytestconfig.getoption("data_dir")
+    hgcal_dir_name = "hgcal_data/"
+    hgcal_dir = os.path.join(data_dir, hgcal_dir_name)
+    os.makedirs(hgcal_dir, exist_ok=True)
+
+    def hgcal_factory(name:str): 
+        f_name = os.path.join(hgcal_dir, name)
+        if os.path.exists(f_name): 
+            os.remove(f_name)
+        with h5py.File(f_name, "w") as f:
+            f.create_dataset("gen_info", shape=(360, 3), dtype="<f4")
+            f['gen_info'][:] = np.random.rand(360, 3).astype("<f4")
+
+            f.create_dataset("showers", shape=(360, 28, 3000), dtype="<f4")
+            f['showers'][:] = np.random.rand(360, 28, 3000).astype("<f4")
+
+        return os.path.join(hgcal_dir_name, name)
+    
+    yield hgcal_factory
+
+    shutil.rmtree(hgcal_dir)
 
 @pytest.fixture(scope="session")
-def config(pytestconfig): 
+def config(pytestconfig, checkpoint_folder): 
     # setup
-    checkpoint_dir = "./testing_checkpoints/"
-    os.makedirs(checkpoint_dir, exist_ok=True) # Okay to overwrite if there was a failure that caused teardown not to be triggered
+    os.makedirs(checkpoint_folder, exist_ok=True) # Okay to overwrite if there was a failure that caused teardown not to be triggered
     
     def config_factory(extra_settings:dict={}): 
-        fp = f"{checkpoint_dir}test_config.json"
+        fp = f"{checkpoint_folder}test_config_{datetime.now().timestamp()}.json"
         config = {
             "FILES":["dataset_1_photons_1.hdf5"],
             "EVAL":["dataset_1_photons_1.hdf5"],
@@ -99,38 +137,49 @@ def config(pytestconfig):
             "COLD_DIFFU" : False
         }
         config.update(extra_settings)
+
         with open(fp, "w") as f: 
             json.dump(config, f)
 
         return fp 
+    
     yield config_factory
-
-    # Teardown
-    shutil.rmtree(checkpoint_dir)
 
 
 @pytest.fixture(scope="module")
-def diffusion_weights(config): 
-    checkpoint_folder = "./test_optimization/"
+def diffusion_weights(config, checkpoint_folder, pytestconfig): 
     name = "diffusion_weights"
 
     def diffusion_factory(hgcal:bool = False): 
-        mock_config = config({
+        config_settings = {
             "CHECKPOINT_NAME": "mock_weights" , 
-        })
+        }
+        if hgcal:
+            config_settings.update({
+                "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
+                'SHAPE_ORIG': [-1,28,1988],
+                'DATASET_NUM' : 111,
+                'SHAPE_PAD':[-1,1,28,12,21],
+                'SHAPE_FINAL':[-1,1,28,12,21],
+                'MAX_CELLS': 1988,
+                'LAYER_SIZE_UNET' : [32, 32, 64, 96],
+                'SHOWER_EMBED' : 'NN-pre-embed',
+                'HGCAL': True
+            })
+        mock_config = config(config_settings)
         args = utils.dotdict({
-            "checkpoint": checkpoint_folder, 
+            "checkpoint_folder": checkpoint_folder, 
             "data_folder": "", 
             "hgcal": hgcal
         })
-
         t = TrainDiffusion(args, utils.LoadJson(mock_config), load_data=False, save_model=True)
+        t.init_model()
         t.save(
-            model_state=t.model.model.state_dict, 
+            model_state=t.model.state_dict(), 
             epoch=0, 
             name=name, 
-            training_losses=[], 
-            validation_losses=[], 
+            training_losses={}, 
+            validation_losses={}, 
             scheduler=MockMethod(),
             optimizer=MockMethod(),
             early_stopper=MockMethod()
@@ -139,30 +188,43 @@ def diffusion_weights(config):
     
     yield diffusion_factory
 
-    shutil.rmtree(checkpoint_folder)
 
 @pytest.fixture(scope="module")
-def layer_weights(config): 
-    checkpoint_folder = "./test_optimization/"
+def layer_weights(config, checkpoint_folder, pytestconfig): 
     name = "layer_weights"
 
     def diffusion_factory(hgcal:bool = False): 
-        mock_config = config({
+        config_settings = {
             "CHECKPOINT_NAME": "mock_weights" , 
-        })
+        }
+        if hgcal:
+            config_settings.update({
+                "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
+                'SHAPE_ORIG': [-1,28,1988],
+                'DATASET_NUM' : 111,
+                'SHAPE_PAD':[-1,1,28,12,21],
+                'SHAPE_FINAL':[-1,1,28,12,21],
+                'MAX_CELLS': 1988,
+                'LAYER_SIZE_UNET' : [32, 32, 64, 96],
+                'SHOWER_EMBED' : 'NN-pre-embed',
+            })
+
+        mock_config = config(config_settings)
+
         args = utils.dotdict({
-            "checkpoint": checkpoint_folder, 
+            "checkpoint_folder": checkpoint_folder, 
             "data_folder": "", 
             "hgcal": hgcal
         })
 
         t = TrainLayerModel(args, utils.LoadJson(mock_config), load_data=False, save_model=True)
+        t.init_model()
         t.save(
-            model_state=t.model.model.state_dict, 
+            model_state=t.model.state_dict(), 
             epoch=0, 
             name=name, 
-            training_losses=[], 
-            validation_losses=[], 
+            training_losses={}, 
+            validation_losses={}, 
             scheduler=MockMethod(),
             optimizer=MockMethod(),
             early_stopper=MockMethod()
@@ -170,5 +232,3 @@ def layer_weights(config):
         return os.path.join(t.checkpoint_folder, f"{name}.pth")
     
     yield diffusion_factory
-
-    shutil.rmtree(checkpoint_folder)

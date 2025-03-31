@@ -46,14 +46,19 @@ class Optimize:
             "RESTART_T": Range allowed for T_MIN_{i}. T_MAX_{i} is decided by taking t_min_i as the bottom of the range and t_min_i + {top of the restart_t range} as the top
         }
     """
-    def __init__(self, flags, trainer: type[Train], objectives: Literal["COUNT", "FPD", "CNN"]) -> None:
+    def __init__(self, flags, trainer, objectives: Literal["COUNT", "FPD", "CNN"], inference: bool = False) -> None:
 
         implemented_objectives: dict[str, type[Objective]] = {
-            "COUNT": Count(), 
-            "FPD": FPD(), 
-            "CNN": CNNMetric()
+            "COUNT": EvalCount(), 
+            "FPD": EvalFPD(), 
+            "CNN": EvalCNNMetric(), 
+            "MEAN_SEP": EvalMeanSeparation()
         }
+
         self.flags = flags
+        if self.flags.checkpoint_folder is None: 
+            self.flags.checkpoint_folder = os.path.join(self.flags.results_folder, self.flags.study_name, "checkpoints")
+
         self.trainer = trainer
 
         self.objectives = []
@@ -62,12 +67,7 @@ class Optimize:
         for objective in objectives: 
             self.objectives.append(implemented_objectives[objective])
 
-    def train(self, trial_config): 
-        config = self.suggest_config(trial_config)
-        train_model = self.trainer(flags=self.flags, config=config, save_model=False)
-        model, _, _ = train_model.train()
-        eval_data = train_model.loader_val
-        return model, eval_data, config
+        self.objective = self.objective_inference if inference else self.objective_training
 
     def suggest_config(self, trial_config): 
         if isinstance(self.flags.config, str): 
@@ -116,8 +116,8 @@ class Optimize:
     
     def suggest_sampler_config(self, config, trial_config): 
         optimized_section = config.get("OPTIMIZE", {})
-        sampler = config.get('SAMPLER')
-        if not sampler: 
+        suggest_sampler = ("SAMPLER" in optimized_section) or ("SAMPLER" not in config)
+        if suggest_sampler: 
             sampler = trial_config.suggest_categorical("SAMPLER", optimized_section.get("SAMPLER", []))
             config["SAMPLER"] = sampler
 
@@ -183,9 +183,34 @@ class Optimize:
         config['flags'] = self.flags
         return [obj(model, eval_data, config) for obj in self.objectives]
 
-    def objective(self, trial) -> tuple: 
+    def objective_inference(self, trial) -> tuple:
+        config = self.suggest_config(trial)
+        eval_data, _ = utils.load_data(self.flags, config, eval=True)
+
+        model_instance = self.trainer(flags=self.flags, config=config, load_data=False, inference=True)
+        model_instance.init_model()
+
+        model, _, _, _, _, _  = model_instance.pickup_checkpoint(
+            model=model_instance.model,
+            optimizer=None,
+            scheduler=None,
+            early_stopper=None,
+            n_epochs=0,
+            restart_training=True,
+        )
+
+        objectives = self.eval(model, eval_data, config)
+        return objectives
+
+    def objective_training(self, trial) -> tuple: 
         try: 
-            model, eval_data, config = self.train(trial)
+            config = self.suggest_config(trial)
+            eval_data, _ = utils.load_data(self.flags, config, eval=True)
+            train_model = self.trainer(flags=self.flags, config=config, save_model=False, load_data=True)
+            train_model.init_model()
+            train_model.train()
+            model = train_model.model
+
         except RuntimeError as err:
             if "Kernel size can't be greater than actual input size" in str(err): 
                 objectives = [obj.failure() for obj in self.objectives]
@@ -206,7 +231,7 @@ class Optimize:
         if not os.path.exists(save_loc): 
             os.makedirs(save_loc)
 
-        report_path = f"{save_loc.rstrip('/')}/{self.flags.study_name}_report.json"
+        report_path = f"{save_loc.rstrip('/')}/{self.flags.study_name}/report.json"
         with open(report_path, 'a') as f: 
             json.dump(study_results, f, default=str)
 
@@ -240,9 +265,8 @@ class Objective(ABC):
     @staticmethod
     def __call__(trained_model, eval_data, kwargs) -> float:
         raise NotImplementedError
-    
 
-class Count(Objective): 
+class EvalCount(Objective): 
     @staticmethod
     def direction() -> Literal['minimize', 'maximize']:
         return "minimize"
@@ -277,7 +301,7 @@ class Count(Objective):
         weight_matrix = random.random((24, 24))
         weight_matrix_compare = random.random((24, 24))
 
-        forward = Count.get_forward()(
+        forward = EvalCount.get_forward()(
             model=trained_model, 
             eval_data=eval_data, 
             sample_steps=trial_config['NSTEPS'], 
@@ -293,7 +317,7 @@ class Count(Objective):
         return inference_time/reference_time
 
 
-class FPD(Objective): 
+class EvalFPD(Objective): 
     @staticmethod
     def direction() -> Literal['minimize', 'maximize']:
         return "minimize"
@@ -309,13 +333,12 @@ class FPD(Objective):
         particle = trained_model.config.get("PART_TYPE", "photon")
 
         fpd_calc = evaluate.FDP(binning_dataset, particle)
-        
         try: 
             return fpd_calc(trained_model, eval_data, kwargs)
         except evaluate.FDPCalculationError:
-            return FPD.failure()
+            return EvalFPD.failure()
         
-class CNNMetric(Objective):
+class EvalCNNMetric(Objective):
     @staticmethod
     def failure(): 
         return 1 
@@ -332,3 +355,16 @@ class CNNMetric(Objective):
             flags = kwargs['flags']
         )
         return cnn_method(eval_data)
+
+class EvalMeanSeparation(Objective): 
+    @staticmethod
+    def failure(): 
+        return 1
+    
+    @staticmethod
+    def direction():
+        return "minimize"
+    
+    def __call__(self, *args, **kwds):
+        return super().__call__(*args, **kwds)
+    

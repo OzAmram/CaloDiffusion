@@ -147,9 +147,16 @@ class CaloDiffusion(Diffusion):
     ):
         embed: dict[str, callable] = {
             "sigma": lambda sigma: sigma / (1 + sigma**2).sqrt(), 
-            "log": lambda sigma:  0.5 * torch.log(sigma)
+            "log": lambda sigma:  0.5 * torch.log(sigma), 
+            "sin": lambda sigma: torch.sin(sigma),
+            "id": lambda sigma: sigma
         }
-        return embed[self.time_embed](sigma)
+        embed_type = embed.get(self.time_embed)
+        if embed_type is None:
+            msg = f"{self.time_embed} is not a supported time embedding type - choose from {set(embed.keys())}" 
+            raise ValueError(msg)
+        
+        return embed_type(sigma)
     
     def denoise(self, x, E=None, sigma=None, layers = None, controls=None):
         t_emb = self.do_time_embed(sigma = sigma.reshape(-1)).to(float)

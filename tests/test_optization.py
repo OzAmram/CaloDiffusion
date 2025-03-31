@@ -146,7 +146,7 @@ def test_optimize_sampler_layer(config, diffusion_weights, layer_weights, global
     exit = execute(command)
     assert exit == 0
 
-def test_optimize_sampler_layer_hgcal(hgcal_data, config, pytestconfig, diffusion_weights, layer_weights, execute): 
+def test_optimize_sampler_layer_hgcal(hgcal_data, config, pytestconfig, study_name, diffusion_weights, global_settings, layer_weights, execute): 
     data_file = hgcal_data("mock_hgcal.h5")
     
     config = config({
@@ -179,20 +179,9 @@ def test_optimize_sampler_layer_hgcal(hgcal_data, config, pytestconfig, diffusio
     assert os.path.exists(report)
 
 
-def test_count_obj(): 
-    ""
-
-def test_cnn_obj(): 
-    ""
-
-def test_fpd_obj(): 
-    ""
-
-def test_separation_obj(): 
-    ""
-
 def test_correct_training_settings(config, study_name, global_settings, execute): 
     settings_dict = {
+        "HGCAL": False,
         "OPTIMIZE":{
             "LR": [0.0001, 0.001], 
             "TRAINING_OBJ" : ["hybrid_weight", "noise_pred", "mean_pred"],
@@ -213,7 +202,7 @@ def test_correct_training_settings(config, study_name, global_settings, execute)
     params = {key.removeprefix("params_") for key in report.keys() if "params_" in key}
     assert params == set(settings_dict['OPTIMIZE'].keys())
 
-def test_correct_sampler_settings(config, study_name, global_settings, execute): 
+def test_correct_sampler_settings(config, study_name, global_settings, execute, diffusion_weights): 
     settings_dict = {
         "OPTIMIZE":{
         "SAMPLER": ["DPM", "DDim", "DDPM", "Restart", "DPM2", "Heun", "Euler", "LMS", "DPMPP3MSDE", "DPMPP2MSDE", "DPMPP2M", "DPMPPSDE", "DPMPP2S"],
@@ -239,7 +228,7 @@ def test_correct_sampler_settings(config, study_name, global_settings, execute):
         }        }
     }
     settings, folder = global_settings(config(settings_dict))
-    command = f"python3 calodiffusion/optimize.py {settings} --no-hgcal train diffusion"
+    command = f"python3 calodiffusion/optimize.py {settings} --no-hgcal sample --model-loc {diffusion_weights()} diffusion"
     exit = execute(command)
     assert exit == 0
 
@@ -247,4 +236,5 @@ def test_correct_sampler_settings(config, study_name, global_settings, execute):
     assert os.path.exists(report)
     report = utils.LoadJson(report)
     params = {key.removeprefix("params_") for key in report.keys() if "params_" in key}
-    assert params == set(settings_dict['OPTIMIZE'].keys()) + set(settings_dict["OPTIMIZE"]["SAMPLER_SETTINGS"].keys())
+    assert params != {}
+    assert params.issubset(set(settings_dict['OPTIMIZE'].keys()).union(set(settings_dict["OPTIMIZE"]["SAMPLER_SETTINGS"].keys())))

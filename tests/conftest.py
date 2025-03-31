@@ -193,7 +193,7 @@ def diffusion_weights(config, checkpoint_folder, pytestconfig):
 def layer_weights(config, checkpoint_folder, pytestconfig): 
     name = "layer_weights"
 
-    def diffusion_factory(hgcal:bool = False): 
+    def layer_factory(hgcal:bool = False): 
         config_settings = {
             "CHECKPOINT_NAME": "mock_weights" , 
         }
@@ -207,6 +207,7 @@ def layer_weights(config, checkpoint_folder, pytestconfig):
                 'MAX_CELLS': 1988,
                 'LAYER_SIZE_UNET' : [32, 32, 64, 96],
                 'SHOWER_EMBED' : 'NN-pre-embed',
+                "HGCAL": True
             })
 
         mock_config = config(config_settings)
@@ -231,4 +232,4 @@ def layer_weights(config, checkpoint_folder, pytestconfig):
         )
         return os.path.join(t.checkpoint_folder, f"{name}.pth")
     
-    yield diffusion_factory
+    yield layer_factory

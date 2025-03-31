@@ -116,8 +116,8 @@ class Optimize:
     
     def suggest_sampler_config(self, config, trial_config): 
         optimized_section = config.get("OPTIMIZE", {})
-        sampler = config.get('SAMPLER')
-        if not sampler: 
+        suggest_sampler = ("SAMPLER" in optimized_section) or ("SAMPLER" not in config)
+        if suggest_sampler: 
             sampler = trial_config.suggest_categorical("SAMPLER", optimized_section.get("SAMPLER", []))
             config["SAMPLER"] = sampler
 

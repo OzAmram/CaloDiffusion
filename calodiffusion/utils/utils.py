@@ -1017,12 +1017,13 @@ def subsample_alphas(alpha, time, x_shape):
     out = alpha.gather(-1, time.cpu())
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(time.device)
 
-def load_attr(type_: Literal["sampler", "loss"], algo_name: str): 
+def load_attr(type_: Literal["sampler", "loss", "plots"], algo_name: str): 
     if type_ == "sampler": 
         from calodiffusion.models import sample as module
-    else: 
+    elif type_ == 'loss': 
         from calodiffusion.models import loss as module
-
+    else: 
+        from calodiffusion.utils import plots as module
     try: 
         algo = getattr(
             module, algo_name

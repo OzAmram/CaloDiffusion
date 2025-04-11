@@ -73,6 +73,9 @@ def hgcal_data(pytestconfig):
             f.create_dataset("showers", shape=(360, 28, 3000), dtype="<f4")
             f['showers'][:] = np.random.rand(360, 28, 3000).astype("<f4")
 
+            f.create_dataset("incident_energies", shape=(840000, 1, 1), dtype="<f4")
+            f['incident_energies'][:] = np.random.rand(840000, 1, 1).astype("<f4")
+
         return os.path.join(hgcal_dir_name, name)
     
     yield hgcal_factory

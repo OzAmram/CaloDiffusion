@@ -5,6 +5,7 @@ General evaluation metrics for a fully trained model (not losses)
 """
 from typing import Literal
 from calodiffusion.utils import utils
+from calodiffusion.utils import plots
 import numpy as np
 import torch 
 
@@ -86,39 +87,54 @@ class FDP:
 
 
 class ComparisonNetwork(ResNet): 
-    def __init__(self, dataset_num: Literal[2, 3]):
+    def __init__(self, dataset_num: Literal[2, 3, 111]):
         super().__init__(BasicBlock, [2, 2, 2, 2])
         self.inplanes = 15
+
         dataset_size = {
             2: (-1, 45, 16, 9), 
-            3: (-1, 45, 50, 18)
-        }
+            3: (-1, 45, 50, 18), 
+            111: (-1, 49, 16, 9), 
+        }  
         if dataset_num not in dataset_size.keys(): 
             raise ValueError(f"Only datasets {dataset_size.keys()} can be evaluated with CNNCompare.")
 
+        self.dataset_num = dataset_num
         self.dataset_size = dataset_size[dataset_num]
 
-        self.input_conv = torch.nn.Conv2d(45, 32,
-            kernel_size=3, 
-            stride=2) # kernel 7, stride 2
-        self.local_pool = torch.nn.MaxPool3d(kernel_size=3, stride=2)
+        if dataset_num in [2, 3]: 
+            self.input_conv = torch.nn.Sequential(
+                torch.nn.Conv2d(45, 32, kernel_size=3, stride=2),
+                torch.nn.MaxPool3d(kernel_size=3, stride=2),
+            )
 
-        # ResNet18
+        else: # dataset_num == 111
+            self.input_conv = torch.nn.Sequential(
+                torch.nn.Conv2d(49, 32, kernel_size=3, stride=2), 
+                torch.nn.MaxPool3d(kernel_size=3, stride=2),
+            )
+
         self.layer1 = self._make_layer(BasicBlock, 32, blocks=2, stride=2)
         self.layer2 = self._make_layer(BasicBlock, 64, blocks=2, stride=2)
         self.layer3 = self._make_layer(BasicBlock, 96, blocks=2, stride=1)
         self.layer4 = self._make_layer(BasicBlock, 128, blocks=2, stride=1)
 
         # concat with energy, apply a batch normalization layer 
-        self.batch_norm = torch.nn.BatchNorm1d(3)
-        self.fcl = torch.nn.Linear(258, 1)
+        if dataset_num in [2, 3]:
+            self.fcl = torch.nn.Sequential(
+                torch.nn.BatchNorm1d(3),
+                torch.nn.Linear(258, 1)
+            )
+        else: 
+            self.fcl = torch.nn.Sequential(
+                torch.nn.Linear(131, 1)
+            )
 
     def forward(self, x, E): 
         # Reshape into the input shape
         x = x.reshape(self.dataset_size)
 
         x = self.input_conv(x)
-        x = self.local_pool(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
@@ -129,10 +145,9 @@ class ComparisonNetwork(ResNet):
 
         # Append Energy
         x = torch.cat([x, E], axis=-1)
-
-        reshape = 3
-        x = x.reshape((-1, reshape,  int(x.shape[1]/reshape)))
-        x = self.batch_norm(x).flatten()
+        if not self.dataset_num == 111:
+            reshape = 3 
+            x = x.reshape((-1, reshape,  int(x.shape[1]/reshape)))
         x = self.fcl(x)
 
         return x
@@ -146,7 +161,7 @@ class CNNCompare:
         self.device = self.trained_model.device
         self.tqdm = utils.import_tqdm()
 
-        if hasattr(self.config["flags"], "sample_offset"): 
+        if hasattr(self.config["flags"], "sample_offset") and (self.config['flags'].get("sample_offset") is not None): 
             self.sample_offset = self.config["flags"].sample_offset,
         else: 
             self.sample_offset = 0 
@@ -182,6 +197,10 @@ class CNNCompare:
             3: {
                 "epochs": 12, 
                 "lr": 5e-5
+            }, 
+            111: {  # TODO Verify these are fine numbers - nothing in the og paper
+                "epochs": 32, 
+                "lr": 1e-4
             }
         }
         if num not in config.keys(): 
@@ -223,7 +242,7 @@ class CNNCompare:
 
     def __call__(self, eval_data):
         probabilities = []
-        for _, (E, layers, data) in self.tqdm(enumerate(eval_data), "Evaluating..."):
+        for E, layers, data in self.tqdm(eval_data):
             E = E.to(device=self.device)
             data = data.to(device=self.device)
 
@@ -238,3 +257,59 @@ class CNNCompare:
             probabilities.append(self.cnn.forward(torch.tensor(batch_generated), E).detach())
 
         return (1/len(probabilities))*np.sum(np.log(np.array(probabilities)))
+
+
+class HistogramSeparation: 
+    """Make a histogram of a given metric given data and prediction, and then calculate the difference"""
+    def __init__(self, metric, bin_file=None, data_shape=[], config_settings={}):
+        self.plotter = []        
+        if isinstance(metric, str):
+            metric = [metric]
+
+        for m in metric:
+            plotter = utils.load_attr("plot", m)(
+                utils.dotdict(), 
+                dict(SHAPE_FINAL=data_shape, BIN_FILE=bin_file, **config_settings))
+            if not hasattr(plotter, "_separation_power"):
+                raise TypeError(f"The loaded plotter must be a subclass of 'Histogram', but got {type(plotter).__name__}.")
+            
+            self.plotter.append(plotter)
+
+    def _single_metric(self, plotter_engine, original, generated, energies): 
+        if isinstance(original, torch.Tensor):
+            original = original.detach().numpy()
+        if isinstance(generated, torch.Tensor):
+            generated = generated.detach().numpy()
+        if isinstance(energies, torch.Tensor):
+            energies = energies.detach().numpy()
+
+        feed_dict = plotter_engine.transform_data(
+            {"Geant4": original, "gen": generated}, energies
+        )
+
+        def calc_separation(feed_dict):
+            original = feed_dict["Geant4"]
+            generated = feed_dict["gen"]
+            binning = plotter_engine.produce_binning(original)
+
+            histogram_og, _ = np.histogram(original, bins=binning, density=True)
+            histogram_generated, _ = np.histogram(generated, bins=binning, density=True)
+
+            return plotter_engine._separation_power(histogram_generated, histogram_og, binning)
+        
+        if isinstance(feed_dict, dict): 
+            metrics = []
+            histograms = {key: value for key, value in feed_dict.items() if "hist" in key}
+            for key, value in histograms.items(): 
+                metrics.append(calc_separation(value))
+            return np.mean(metrics)
+        
+        else: 
+            return calc_separation(feed_dict)
+    
+    def __call__(self, original, generated, energies, *args, **kwds):
+        metrics = []
+        for plot in self.plotter: 
+            metrics.append(self._single_metric(plot, original, generated, energies))
+        
+        return np.mean(metrics)

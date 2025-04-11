@@ -808,7 +808,7 @@ class RCenterHGCal(Histogram):
         }
 
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
-        processed = self.transform_data(data_dict)
+        processed = self.transform_data(data_dict, energies)
 
         fig, ax0 = self._hist(
             processed['C_hist'], xlabel="Shower R Center", normalize=True

@@ -43,7 +43,7 @@ def test_cnn_obj(checkpoint_folder, config, pytestconfig, hgcal_data):
     c = config({
                 "FILES": [hgcal_data("hgcal_test.hdf5")],
                 "CHECKPOINT_NAME": "test_cnn_obj_hgcal",
-                "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
+                "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl", 
                 'SHAPE_ORIG': [-1,28,1988],
                 'DATASET_NUM' : 111,
                 'SHAPE_PAD':[-1,1,28,12,21],
@@ -164,7 +164,7 @@ def test_histogram_metric(pytestconfig, checkpoint_folder, config, hgcal_data):
     for metric_name in ["RCenterHGCal","PhiCenterHGCal"]: 
         metric = HistogramSeparation(
             metric=metric_name, 
-            bin_file=f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl")
+            bin_file=f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl")
         config['FILES'] = [hgcal_data("histogram_test.hdf5")]
         config.update({
             'SHAPE_ORIG': [-1,28,1988],

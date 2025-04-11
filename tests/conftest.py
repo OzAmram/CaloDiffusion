@@ -159,7 +159,7 @@ def diffusion_weights(config, checkpoint_folder, pytestconfig):
         }
         if hgcal:
             config_settings.update({
-                "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
+                "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl", 
                 'SHAPE_ORIG': [-1,28,1988],
                 'DATASET_NUM' : 111,
                 'SHAPE_PAD':[-1,1,28,12,21],
@@ -202,7 +202,7 @@ def layer_weights(config, checkpoint_folder, pytestconfig):
         }
         if hgcal:
             config_settings.update({
-                "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geom_william.pkl", 
+                "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl", 
                 'SHAPE_ORIG': [-1,28,1988],
                 'DATASET_NUM' : 111,
                 'SHAPE_PAD':[-1,1,28,12,21],

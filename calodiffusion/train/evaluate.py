@@ -18,14 +18,14 @@ try:
 except ImportError:
     jetnet = None
 
-class FDPCalculationError(Exception): 
+class FPDCalculationError(Exception): 
     def __init__(self, *args):
         super().__init__(*args)
 
-class FDP: 
+class FPD: 
     def __init__(self, binning_dataset, particle): 
         if jetnet is None: 
-            raise ImportError("jetnet is not installed. Please install it to use FDP evaluation.")
+            raise ImportError("jetnet is not installed. Please install it to use FPD evaluation.")
         
         self.hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
         self.reference_hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
@@ -81,7 +81,7 @@ class FDP:
                 np.nan_to_num(source_array), np.nan_to_num(reference_array)
             )
         except ValueError as err:
-            raise FDPCalculationError(err)
+            raise FPDCalculationError(err)
 
         return fpd
 
@@ -162,7 +162,7 @@ class CNNCompare:
         self.tqdm = utils.import_tqdm()
 
         if hasattr(self.config["flags"], "sample_offset") and (self.config['flags'].get("sample_offset") is not None): 
-            self.sample_offset = self.config["flags"].sample_offset,
+            self.sample_offset = self.config["flags"].sample_offset
         else: 
             self.sample_offset = 0 
 
@@ -173,12 +173,12 @@ class CNNCompare:
 
 
     def load_network(self): 
-        base_path =  self.config['flags'].results_folder
+        base_path =  self.config.get("EVAL_NETWORK_PATH", "./calodiffusion/utils")
         pretrained_weights = f"{base_path.rstrip('/')}/{self.config.get('EVAL_NETWORK', 'eval_cnn')}.pt"
-        network = ComparisonNetwork(self.config.get("DATASET_NUM"))
+        network = ComparisonNetwork(self.config.get("DATASET_NUM")).to(device=self.device)
 
         try: 
-            state_dict = torch.load(pretrained_weights, weights_only=True)
+            state_dict = torch.load(pretrained_weights, weights_only=True, map_location=self.device)
             network.load_state_dict(state_dict)
         except FileNotFoundError: 
             print(f"WARNING: Cannot find weights at path {pretrained_weights}")
@@ -266,10 +266,12 @@ class HistogramSeparation:
         if isinstance(metric, str):
             metric = [metric]
 
+        config_settings.update(dict(SHAPE_FINAL=data_shape, BIN_FILE=bin_file))
         for m in metric:
             plotter = utils.load_attr("plot", m)(
                 utils.dotdict(), 
-                dict(SHAPE_FINAL=data_shape, BIN_FILE=bin_file, **config_settings))
+                config_settings
+            )
             if not hasattr(plotter, "_separation_power"):
                 raise TypeError(f"The loaded plotter must be a subclass of 'Histogram', but got {type(plotter).__name__}.")
             

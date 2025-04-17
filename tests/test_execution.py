@@ -1,3 +1,4 @@
+import json
 import os
 import pytest 
 
@@ -252,6 +253,26 @@ def test_inference_hgcal(config, execute, pytestconfig, hgcal_data):
                 diffusion"
     exit = execute(command)
     assert exit == 0
+
+    # Test metrics
+    command = f"calodif-inference --hgcal -c {config} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/\
+        sample --sample-steps 2 --model-loc ./testing_checkpoints/hgcal_Diffusion/final.pth --run-metrics diffusion"
+    exit = execute(command)
+    assert exit == 0
+    assert os.path.exists("./testing_checkpoints/hgcal_Diffusion/metrics.json")
+
+    # Check the metrics
+    with open("./testing_checkpoints/hgcal_Diffusion/metrics.json") as f:
+        metrics = json.load(f)
+    assert "CNN" in metrics.keys()
+    # Problem getting jetnet installed, FDP not always there
+
+    try: 
+        import jetnet
+        assert "FPD" in metrics
+
+    except ImportError: 
+        pass
 
 
 @pytest.mark.dependency(depends=["test_inference_diffusion"]) 

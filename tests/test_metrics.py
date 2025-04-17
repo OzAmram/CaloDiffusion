@@ -70,8 +70,8 @@ def test_fpd_obj(checkpoint_folder, config, pytestconfig):
     
     c = config({"CHECKPOINT_NAME": "test_fpd_obj_photon"})
     model = TrainDiffusion(args, utils.LoadJson(c), load_data=True, save_model=False)
-    fdp = metric(model.model, eval_data=model.loader_train, config=config)
-    assert fdp
+    fpd = metric(model.model, eval_data=model.loader_train, config=config)
+    assert fpd
 
     # TODO Fix the import error - figure out installation 
     

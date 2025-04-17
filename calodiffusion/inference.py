@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import os
 import click 
 
@@ -10,6 +11,7 @@ from calodiffusion.utils import utils
 from calodiffusion.utils import HGCal_utils as hgcal_utils
 import calodiffusion.utils.plots as plots
 from calodiffusion.utils.utils import LoadJson
+from calodiffusion.train.evaluate import FPD, CNNCompare, HistogramSeparation
 
 from calodiffusion.train.train_diffusion import TrainDiffusion
 from calodiffusion.train.train_layer_model import TrainLayerModel
@@ -56,8 +58,6 @@ def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, jo
     else: 
         ctx.obj.hgcal = ctx.obj.config.get("HGCAL", False)
 
-
-
 @inference.group()
 @click.option("-g", "--generated", default="", help="Path for generated shower results")
 @click.option("--sample-steps", default=400, type=int, help="How many steps for sampling (override config)")
@@ -66,8 +66,9 @@ def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, jo
 @click.option("--sparse-decoding", default=False, is_flag=True, help="Sampling during HGCal decoding step to reduce sparsity")
 @click.option("--train-sampler/--no-train-sampler", default=None, help="For samplers requiring pre-training, train them (overwrites config)")
 @click.option("--model-loc", default=None, help="Specific folder for loading existing model")
+@click.option("--run-metrics", default=False, is_flag=True, help="Run metrics after sampling")
 @click.pass_context
-def sample(ctx, generated, sample_steps, sample_algo, sample_offset, sparse_decoding, train_sampler, model_loc):
+def sample(ctx, generated, sample_steps, sample_algo, sample_offset, sparse_decoding, train_sampler, model_loc, run_metrics):
     ctx.obj.config['SAMPLER'] = sample_algo
     if "SAMPLER_OPTIONS" not in ctx.obj.config.keys(): 
         ctx.obj.config['SAMPLER_OPTIONS'] = {}
@@ -83,6 +84,7 @@ def sample(ctx, generated, sample_steps, sample_algo, sample_offset, sparse_deco
     ctx.obj.sample_offset = sample_offset
     ctx.obj.sparse_decoding = sparse_decoding
     ctx.obj.generated = generated
+    ctx.obj.run_metrics = run_metrics
 
     non_config = dotdict({key: value for key, value in ctx.obj.items() if key!='config'})
     ctx.obj.config['flags'] = non_config
@@ -238,8 +240,6 @@ def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
     if(config.get("DATASET_NUM", 2) <= 1): 
         flags.plot_reshape = True
 
-
-
     if (not flags.hgcal) or flags.plot_reshape:
         shape_plot = config["SHAPE_FINAL"]
     else:
@@ -314,6 +314,31 @@ def plot_results(flags, config, data_dict, energies):
     for plotting_method in plot_routines.values():
         plotting_method(data_dict, energies)
 
+def run_metrics(flags, model, generated, eval_data): 
+    results = {}
+
+    # Run FDP (if installed)
+    try: 
+        metric = FPD(
+            binning_dataset=flags.config.get("BIN_FILE", "binning_dataset.xml"), 
+            particle=flags.config.get("PART_TYPE", "photon")
+        )
+        fpd = metric(trained_model=model, eval_data=eval_data)
+        results["FPD"] = float(fpd)
+    except ImportError: 
+        print("WARNING: Jetnet not installed, cannot run FPD")
+
+    # Run CNN Compare (if model is here/correctly trained for the network)
+    try: 
+        metric = CNNCompare(trained_model=model, config=flags.config, flags=flags)
+        cnn_sep = metric(eval_data=eval_data)
+        results["CNN"] = float(cnn_sep)
+    except Exception as e:
+        print(f"WARNING: Unable to run CNN evaluation metric: {e}")
+        raise Exception(e)
+
+    return results
+
 
 def run_inference(flags, config, model):
     data_loader, _ = utils.load_data(flags, config, eval=True)
@@ -330,7 +355,7 @@ def run_inference(flags, config, model):
     )
     sample_steps = flags.sample_steps if flags.sample_steps is not None else config.get("SAMPLE_STEPS", 400)
 
-    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset, sparse_decoding=flags.sparse_decoding)
+    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset)
     if(flags.generated == ""):
         fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}_{datetime.now().timestamp()}.h5"
     else: 

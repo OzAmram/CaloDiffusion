@@ -95,10 +95,10 @@ class EvalFPD(Objective):
         binning_dataset = trained_model.config.get("BIN_FILE", "binning_dataset.xml")
         particle = trained_model.config.get("PART_TYPE", "photon")
 
-        fpd_calc = evaluate.FDP(binning_dataset, particle)
+        fpd_calc = evaluate.FPD(binning_dataset, particle)
         try: 
             return fpd_calc(trained_model, eval_data, config)
-        except evaluate.FDPCalculationError:
+        except evaluate.FPDCalculationError:
             return EvalFPD.failure()
         
 class EvalCNNMetric(Objective):

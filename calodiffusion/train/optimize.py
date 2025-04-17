@@ -221,7 +221,14 @@ class Optimize:
 
         self.objective = self.objective_inference if inference else self.objective_training
 
-        self.spectators = {name: objective for name, objective in self.objectives.items() if objective not in self.objectives}
+        default_specators = [
+            EvalCount, 
+            EvalFPD, 
+            EvalCNNMetric, 
+            EvalLoss,
+            lambda trained_model, eval_data, config: EvalMeanSeparation()(trained_model, eval_data, config, "HistERatio")
+        ]
+        self.spectators = [objective for objective in default_specators if objective not in self.objectives]
         self.spectator_history = {}
 
     def suggest_config(self, trial_config): 

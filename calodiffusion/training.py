@@ -80,11 +80,8 @@ def diffusion(ctx):
 
 @train.command()
 @click.pass_context
-def layer(ctx, ): 
-
-    #self.layer_steps = self.config.get("LAYER_STEPS")
-    #sampler_algo = self.config.get("LAYER_SAMPLER", "DDim")
-
+def layer(ctx): 
+    print(ctx.obj.config)
     TrainLayerModel(ctx.obj, ctx.obj.config).train()
 
 

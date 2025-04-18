@@ -849,7 +849,7 @@ def load_data(args, config, eval=False, NN_embed=None):
         files = config["EVAL"]
         val_file_list = []
     else:
-        if hasattr(args, "seed"):
+        if hasattr(args, "seed") and (args.seed is not None):
             torch.manual_seed(args.seed)
         files = config["FILES"]
         val_file_list = config.get("VAL_FILES", [])
@@ -997,13 +997,13 @@ def subsample_alphas(alpha, time, x_shape):
     out = alpha.gather(-1, time.cpu())
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(time.device)
 
-
-def load_attr(type_: Literal["sampler", "loss"], algo_name: str): 
+def load_attr(type_: Literal["sampler", "loss", "plots"], algo_name: str): 
     if type_ == "sampler": 
         from calodiffusion.models import sample as module
-    else: 
+    elif type_ == 'loss': 
         from calodiffusion.models import loss as module
-
+    else: 
+        from calodiffusion.utils import plots as module
     try: 
         algo = getattr(
             module, algo_name
@@ -1013,3 +1013,9 @@ def load_attr(type_: Literal["sampler", "loss"], algo_name: str):
         raise ValueError("%s '%s' is not supported: %s" % (type_, algo_name, e))
     
     return algo
+
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__

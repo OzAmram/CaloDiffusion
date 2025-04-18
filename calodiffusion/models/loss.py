@@ -35,9 +35,6 @@ class Loss(ABC):
                 'c_out': sigma * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5,
                 'c_in' : 1 / (sigma**2 + self.sigma_data**2) ** 0.5,
             }
-
-
-
         return out
 
     @abstractmethod

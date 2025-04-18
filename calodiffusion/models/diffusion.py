@@ -87,7 +87,6 @@ class Diffusion(torch.nn.Module, ABC):
         generated_shape.insert(0,  energy.shape[0])
 
         start = self.noise_generation(generated_shape)
-
         x, xs, x0s = self.sampler_algorithm(
             self,
             start, 

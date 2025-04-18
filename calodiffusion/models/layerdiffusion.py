@@ -134,7 +134,6 @@ class LayerDiffusion(CaloDiffusion):
 
         start = self.noise_generation(generated_shape).to(torch.float32)
         layers = self.sample_layers(energy, layers=None, debug=debug, sample_offset=sample_offset)
-
         x, xs, x0s = self.sampler_algorithm(
             self,
             start, 

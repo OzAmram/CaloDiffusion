@@ -402,6 +402,7 @@ class DPMSolver(nn.Module):
         if key in eps_cache:
             return eps_cache[key], eps_cache
         sigma = self.sigma(t) * x.new_ones([x.shape[0]])
+        sigma = sigma.reshape(-1, *[1 for _ in x.shape[1:]])
         eps = (
             x - self.model(x, sigma=sigma, *args, **self.extra_args, **kwargs)
         ) / self.sigma(t)
@@ -502,7 +503,6 @@ class DPMSolver(nn.Module):
                 )
 
             x = x + su * s_noise * noise_sampler(self.sigma(t), self.sigma(t_next))
-
         return x
 
     def dpm_solver_adaptive(

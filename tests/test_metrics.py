@@ -1,6 +1,6 @@
 import numpy as np
 from calodiffusion.train.optimize import EvalCNNMetric, EvalCount, EvalMeanSeparation, EvalFPD, EvalLoss
-from calodiffusion.train.evaluate import CNNCompare, HistogramSeparation
+from calodiffusion.train.evaluate import HistogramSeparation, DNNCompare
 from calodiffusion.train.train_diffusion import TrainDiffusion
 from calodiffusion.utils import utils
 import pytest 
@@ -206,4 +206,37 @@ def test_average_histogram_metrics(pytestconfig, checkpoint_folder, config, hgca
     sep = metric(original, generated=original, energies=energy)
     assert isinstance(sep, float)
 
+@pytest.mark.parametrize("data_type,", ["hgcal", "photon"])
+def test_dnn_compare(pytestconfig, config, checkpoint_folder, data_type, hgcal_data):
+    if data_type == "hgcal":
+        data_path = hgcal_data("hgcal_test.hdf5")
+        c = config({
+            "FILES": [data_path],
+            "BIN_FILE": f"{pytestconfig.getoption('hgcalshowers')}/HGCalShowers/geoms/geom_william.pkl", 
+            'SHAPE_ORIG': [-1,28,1988],
+            'DATASET_NUM' : 111,
+            'SHAPE_PAD':[-1,1,28,12,21],
+            'SHAPE_FINAL':[-1,1,28,12,21],
+            'MAX_CELLS': 1988,
+            'LAYER_SIZE_UNET' : [32, 32, 64, 96],
+            'SHOWER_EMBED' : 'NN-pre-embed',
+            'HGCAL': True
+    })
+    else:
+        c = config({})
+    
+    args = utils.dotdict({
+        "data_folder": pytestconfig.getoption("data_dir"), 
+        "checkpoint_folder": checkpoint_folder, 
+        "results_folder": checkpoint_folder, 
+        "nevts": 10})
+    data, _ = utils.load_data(args, config=utils.LoadJson(c), eval=False)
+    _, _, original = next(iter(data))
 
+    in_shape = 368 if not data_type == "hgcal" else 7056
+    dnn = DNNCompare(input_shape=in_shape, n_training_iters=1, n_epochs=3)
+    metrics = dnn(original=original, generated=original)
+    assert isinstance(metrics, dict)
+    assert len(metrics) == 3
+    for key in metrics.keys():
+        assert isinstance(metrics[key], float)

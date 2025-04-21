@@ -5,13 +5,16 @@ General evaluation metrics for a fully trained model (not losses)
 """
 from typing import Literal
 from calodiffusion.utils import utils
-from calodiffusion.utils import plots
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 import torch 
+from torch.utils import data as torchdata
 
 from torchvision.models.resnet import ResNet, BasicBlock
 
 import calodiffusion.utils.HighLevelFeatures as HLF
+from calodiffusion.utils.HGCal_utils import HighLevelFeatures as HGCAL_HLF
+from calodiffusion.utils import HGCal_utils as hgcal_utils
 
 try: 
     import jetnet
@@ -22,16 +25,38 @@ class FPDCalculationError(Exception):
     def __init__(self, *args):
         super().__init__(*args)
 
-class FPD: 
-    def __init__(self, binning_dataset, particle): 
-        if jetnet is None: 
-            raise ImportError("jetnet is not installed. Please install it to use FPD evaluation.")
-        
-        self.hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
-        self.reference_hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
 
-    def pre_process(self, energies, hlf_class, label): 
-        """ takes hdf5_file, extracts high-level features, appends label, returns array """
+class _FPD_HGCAL():
+    def __init__(self, binning_dataset):
+        self.hlf = HGCAL_HLF(binning_dataset)  # Hgcal HLF is stateless(ish), we don't need one for reference 
+
+    def __call__(self, eval_data, trained_model, *args, **kwds):
+        reference_shower = []
+        reference_energy = []
+        for energy, _, data in eval_data: 
+            reference_shower.append(data)
+            reference_energy.append(energy)
+
+        reference_shower = np.concatenate(reference_shower)
+        reference_energy = np.concatenate(reference_energy)
+
+        generated, energies = trained_model.generate(
+            data_loader=eval_data, 
+            sample_steps=trained_model.config.get("NSTEPS"), 
+            sample_offset=0
+        )
+        source = self.hlf(generated, energies)
+        reference = self.hlf(reference_shower, reference_energy)
+
+        return {"source": source, "reference": reference}
+
+
+class _FPD(): 
+    def __init__(self, particle, binning_dataset):
+        self.hlf = HLF.HighLevelFeatures(particle, binning_dataset)
+        self.reference_hlf = HLF.HighLevelFeatures(particle, binning_dataset)
+    
+    def pre_process(self, energies, hlf_class, label):
         E_layer = []
         for layer_id in hlf_class.GetElayers():
             E_layer.append(hlf_class.GetElayers()[layer_id].reshape(-1, 1))
@@ -52,9 +77,8 @@ class FPD:
         ret = np.concatenate([np.log10(energies), np.log10(E_layer+1e-8), EC_etas/1e2, EC_phis/1e2,
                             Width_etas/1e2, Width_phis/1e2, label*np.ones_like(energies)], axis=1)
         return ret
-
-    def __call__(self, trained_model, eval_data, kwargs) -> float:
-
+    
+    def __call__(self, eval_data, trained_model, *args, **kwds):
         reference_shower = []
         reference_energy = []
         for energy, _, data in eval_data: 
@@ -75,7 +99,23 @@ class FPD:
         
         source_array = self.pre_process(energies, self.hlf, 0.)[:, :-1]
         reference_array = self.pre_process(reference_energy, self.reference_hlf, 1.)[:, :-1]
-        
+
+        return {"source": source_array, "reference": reference_array}
+
+class FPD: 
+    def __init__(self, binning_dataset, particle, hgcal=False): 
+        if jetnet is None: 
+            raise ImportError("jetnet is not installed. Please install it to use FPD evaluation.")
+        if hgcal:
+            self.fpd = _FPD_HGCAL(binning_dataset)
+        else: 
+            self.fpd = _FPD(particle, binning_dataset)
+
+    def __call__(self, trained_model, eval_data, kwargs) -> float:
+        out = self.fpd(eval_data, trained_model, **kwargs)
+        source_array = out["source"]
+        reference_array = out["reference"]
+
         try: 
             fpd, _ = jetnet.evaluation.fpd(
                 np.nan_to_num(source_array), np.nan_to_num(reference_array)
@@ -315,3 +355,109 @@ class HistogramSeparation:
             metrics.append(self._single_metric(plot, original, generated, energies))
         
         return np.mean(metrics)
+
+
+class GenericHistogramSeparation(HistogramSeparation): 
+    def __init__(self, bin_file=None, data_shape=[], config_settings={}):
+        super().__init__("HistERatio", bin_file, data_shape, config_settings)
+
+    def calc_separation(self, original, generated, energies, binning=None, normalize=True): 
+        
+        if binning is None: 
+            binning = np.linspace( np.quantile(original,0.0),np.quantile(original,1),50)
+
+        histogram_og, _ = np.histogram(original, bins=binning, density=normalize)
+        histogram_generated, _ = np.histogram(generated, bins=binning, density=normalize)
+
+        return self.plotter[0]._separation_power(histogram_generated, histogram_og, binning)
+
+    def __call__(self, original, generated, energies, *args, **kwds):
+        return self.calc_separation(original, generated, energies, *args, **kwds)
+    
+
+class DNN(torch.nn.Module):
+    """ NN for vanilla classifier. Does not have sigmoid activation in last layer, should
+        be used with torch.nn.BCEWithLogitsLoss()
+    """
+    def __init__(self, num_layer, num_hidden, input_dim, dropout_probability=0.):
+        super(DNN, self).__init__()
+
+        self.dpo = dropout_probability
+
+        self.inputlayer = torch.nn.Linear(input_dim, num_hidden)
+        self.outputlayer = torch.nn.Linear(num_hidden, 1)
+
+        all_layers = [self.inputlayer, torch.nn.LeakyReLU(), torch.nn.Dropout(self.dpo)]
+        for _ in range(num_layer):
+            all_layers.append(torch.nn.Linear(num_hidden, num_hidden))
+            all_layers.append(torch.nn.LeakyReLU())
+            all_layers.append(torch.nn.Dropout(self.dpo))
+
+        all_layers.append(self.outputlayer)
+        self.layers = torch.nn.Sequential(*all_layers)
+
+    def forward(self, x):
+        """ Forward pass through the DNN """
+        x = self.layers(x)
+        return x
+
+class DNNCompare: 
+    def __init__(self, input_shape, num_layers=2, num_hidden=2024, dropout_probability=0.2, batch_size=32, n_training_iters=5, n_epochs=10):
+
+    
+        self.classifier = DNN(input_dim = input_shape, num_layer= num_layers, num_hidden = num_hidden, dropout_probability = dropout_probability)
+        self.classifier.to(utils.get_device())
+
+        self.device = utils.get_device()
+        self.optimizer = hgcal_utils.TrainDNNCompare()
+        self.batch_size = batch_size
+        self.n_iters = n_training_iters
+        self.n_epochs = n_epochs
+
+    def __call__(self, original, generated, *args, **kwds):
+        ""
+        # Train the DNN from utils
+
+        original = original.reshape(original.shape[0], -1)
+        generated = generated.reshape(generated.shape[0], -1)
+        labels_generated = np.ones((generated.shape[0], 1), dtype=np.float32)
+        labels_original = np.zeros((original.shape[0], 1), dtype=np.float32)
+
+        labels_all = np.concatenate((labels_generated, labels_original), axis = 0)
+        feats_all = np.concatenate((generated, original), axis = 0)
+
+        scaler = StandardScaler()
+        feats_all = scaler.fit_transform(feats_all)
+        inputs_all = np.concatenate((feats_all, labels_all), axis = 1, dtype=np.float32)
+
+        train_data, placeholder = utils.split_data_np(inputs_all, 0.7)
+        test_data, val_data = utils.split_data_np(placeholder, 0.4)
+
+        cls_lr = 1e-4
+        optimizer = torch.optim.Adam(self.classifier.parameters(), lr= cls_lr)
+
+        train_data = torchdata.TensorDataset(torch.tensor(train_data).to(self.device))
+        test_data = torchdata.TensorDataset(torch.tensor(test_data).to(self.device))
+        val_data = torchdata.TensorDataset(torch.tensor(val_data).to(self.device))
+
+        train_dataloader = torchdata.DataLoader(train_data, batch_size=self.batch_size, shuffle=True)
+        test_dataloader = torchdata.DataLoader(test_data, batch_size=self.batch_size, shuffle=False)
+        val_dataloader = torchdata.DataLoader(val_data, batch_size=self.batch_size, shuffle=False)
+
+        acc, auc, JSD = [], [], []
+        for _ in range(self.n_iters):
+            classifier = self.optimizer.train_and_evaluate_cls(self.classifier, train_dataloader, val_dataloader, optimizer, self.n_epochs)
+
+            with torch.no_grad():
+                print("Now looking at independent dataset:")
+                eval_acc, eval_auc, eval_JSD = self.optimizer.evaluate_cls(
+                    classifier, 
+                    test_dataloader,
+                    final_eval=True,
+                    calibration_data=val_dataloader
+                )
+            acc.append(eval_acc)
+            auc.append(eval_auc)
+            JSD.append(eval_JSD)
+
+        return {"ACC": np.mean(acc), "AUC": np.mean(auc), "JSD": np.mean(JSD)}

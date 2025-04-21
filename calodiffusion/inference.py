@@ -321,7 +321,8 @@ def run_metrics(flags, model, generated, eval_data):
     try: 
         metric = FPD(
             binning_dataset=flags.config.get("BIN_FILE", "binning_dataset.xml"), 
-            particle=flags.config.get("PART_TYPE", "photon")
+            particle=flags.config.get("PART_TYPE", "photon"), 
+            hgcal=flags.config.get("HGCAL", False)
         )
         fpd = metric(trained_model=model, eval_data=eval_data)
         results["FPD"] = float(fpd)
@@ -336,6 +337,11 @@ def run_metrics(flags, model, generated, eval_data):
     except Exception as e:
         print(f"WARNING: Unable to run CNN evaluation metric: {e}")
         raise Exception(e)
+
+    try: 
+        ""
+    except: 
+        ""
 
     return results
 

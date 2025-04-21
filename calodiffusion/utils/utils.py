@@ -30,6 +30,31 @@ def split_data_np(data, frac=0.8):
     test_data = data[split:]
     return train_data, test_data
 
+def WeightedMean(coord, energies, power=1, axis=-1):
+    ec = np.sum(energies * np.power(coord, power), axis=axis)
+    sum_energies = np.sum(energies, axis=axis)
+    ec = np.ma.divide(ec, sum_energies).filled(0)
+    return ec
+
+def GetWidth(mean,mean2):
+    width = np.ma.sqrt(mean2-mean**2).filled(0)
+    return width
+
+def ang_center_spread(matrix, energies, axis=-1):
+    # weighted average over periodic variabel (angle)
+    # https://github.com/scipy/scipy/blob/v1.11.1/scipy/stats/_morestats.py#L4614
+    # https://en.wikipedia.org/wiki/Directional_statistics#The_fundamental_difference_between_linear_and_circular_statistics
+    cos_matrix = np.cos(matrix)
+    sin_matrix = np.sin(matrix)
+    cos_ec = WeightedMean(cos_matrix, energies, axis=axis)
+    sin_ec = WeightedMean(sin_matrix, energies, axis=axis)
+    ang_mean = np.arctan2(sin_ec, cos_ec)
+    R = np.sqrt(sin_ec**2 + cos_ec**2)
+    eps = 1e-8
+    R = np.clip(R, eps, 1.0)
+
+    ang_std = np.sqrt(-np.log(R))
+    return ang_mean, ang_std
 
 def create_phi_image(device, shape=(1, 45, 16, 9)):
     n_phi = shape[-2]

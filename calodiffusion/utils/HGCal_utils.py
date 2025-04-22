@@ -30,15 +30,15 @@ def reverse_logit(x, alpha=1e-8):
 
 class HighLevelFeatures: 
     def __init__(self, binning, *args, **kwargs):
-        self.geom =  ""
+        self.geom =  load_geom(binning)
 
     def calculate_cartesian_features(self, showers): 
-        x_vals = self.geom.geom.xmap[:, :self.geom.geom.max_ncell]
+        x_vals = self.geom.xmap[:, :self.geom.max_ncell]
         E_x_center = utils.WeightedMean(x_vals, showers, axis=(2))
         E_x2_center = utils.WeightedMean(x_vals, showers, power=2, axis=(2))
         E_x_width = utils.GetWidth(E_x_center, E_x2_center)
 
-        y_vals = self.geom.geom.ymap[:, :self.geom.geom.max_ncell]
+        y_vals = self.geom.ymap[:, :self.geom.max_ncell]
         E_y_center = utils.WeightedMean(y_vals, showers, axis=(2))
         E_y2_center = utils.WeightedMean(y_vals, showers, power=2, axis=(2))
         E_y_width = utils.GetWidth(E_y_center, E_y2_center)
@@ -46,12 +46,12 @@ class HighLevelFeatures:
         return np.concatenate((E_x_center, E_x_width, E_y_center, E_y_width), axis = -1)
 
     def calculate_angular_features(self, showers): 
-        r_vals = self.geom.geom.ring_map[:, :self.geom.geom.max_ncell]
+        r_vals = self.geom.ring_map[:, :self.geom.max_ncell]
         E_R_center = utils.WeightedMean(r_vals, showers, axis=(2))
         E_R2_center = utils.WeightedMean(r_vals, showers, power=2, axis=(2))
         E_R_width = utils.GetWidth(E_R_center, E_R2_center)
 
-        phi_vals = self.geom.geom.theta_map[:, :self.geom.geom.max_ncell]
+        phi_vals = self.geom.theta_map[:, :self.geom.max_ncell]
         E_phi_center, E_phi_width = utils.ang_center_spread(phi_vals, showers, axis=(2))
 
         return np.concatenate((E_R_center, E_R_width, E_phi_center, E_phi_width), axis = -1)

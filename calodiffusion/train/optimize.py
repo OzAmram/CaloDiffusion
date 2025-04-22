@@ -95,7 +95,10 @@ class EvalFPD(Objective):
         binning_dataset = trained_model.config.get("BIN_FILE", "binning_dataset.xml")
         particle = trained_model.config.get("PART_TYPE", "photon")
 
-        fpd_calc = evaluate.FPD(binning_dataset, particle)
+        fpd_calc = evaluate.FPD(
+            binning_dataset, 
+            particle, 
+            hgcal=utils.LoadJson(os.environ.get("CONFIG", {})).get("HGCAL", False))
         try: 
             return fpd_calc(trained_model, eval_data, config)
         except evaluate.FPDCalculationError:
@@ -267,11 +270,12 @@ class Optimize:
         return config
 
     def suggest_hyperparam(self, setting_name, config, hyparam_settings, trial_config, type_=float): 
+    
         if setting_name in hyparam_settings.keys(): 
             if type_ is float: 
-                config[setting_name] = trial_config.suggest_float(setting_name, *hyparam_settings[setting_name])
+                config[setting_name] = trial_config.suggest_float(setting_name, *[float(i) for i in hyparam_settings[setting_name]])
             elif type_ is int: 
-                config[setting_name] = trial_config.suggest_int(setting_name, *hyparam_settings[setting_name])
+                config[setting_name] = trial_config.suggest_int(setting_name, *[int(i) for i in hyparam_settings[setting_name]])
             else: 
                 config[setting_name] = trial_config.suggest_categorical(setting_name, hyparam_settings[setting_name])
         return config 

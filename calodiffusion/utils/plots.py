@@ -501,7 +501,7 @@ class AverageShowerWidth(Plot):
             )
             r_proj = preprocessed = np.sum(r_preprocessed, axis=-1)
 
-            feed_dict_phi[key], feed_dict_phi2[key] = ang_center_spread(
+            feed_dict_phi[key], feed_dict_phi2[key] = utils.ang_center_spread(
                 phi_matrix, phi_proj
             )
             feed_dict_r[key] = GetCenter(r_matrix, r_proj)
@@ -809,7 +809,7 @@ class PhiCenterHGCal(Histogram):
         feed_dict_W_avg = {}
         for key in data_dict:
             # center
-            phi_centers, phi_widths = ang_center_spread(
+            phi_centers, phi_widths = utils.ang_center_spread(
                 phi_vals, np.squeeze(data_dict[key])
             )
             feed_dict_C_hist[key] = np.reshape(phi_centers, (-1))

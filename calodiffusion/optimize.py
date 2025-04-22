@@ -1,4 +1,5 @@
 import click
+import os
 from calodiffusion.train.optimize import Optimize
 from datetime import datetime
 from calodiffusion.train.train_diffusion import TrainDiffusion
@@ -32,13 +33,14 @@ def optimize(ctx, config, objectives, study_name, n_trials, data_folder, results
     # Ensure the help menu still works
     if config is not None: 
         ctx.obj.config = utils.LoadJson(config)
-
+        
         if hgcal is not None: 
             ctx.obj.config['HGCAL'] = hgcal
             ctx.obj.hgcal = hgcal
         else: 
             ctx.obj.hgcal = ctx.obj.config.get("HGCAL", False)
 
+        os.environ["CONFIG"] = config 
 
 @optimize.group()
 def train():

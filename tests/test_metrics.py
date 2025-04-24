@@ -1,8 +1,12 @@
+import os
+import h5py
 import numpy as np
 from calodiffusion.train.optimize import EvalCNNMetric, EvalCount, EvalMeanSeparation, EvalFPD, EvalLoss
-from calodiffusion.train.evaluate import HistogramSeparation, DNNCompare
+from calodiffusion.train.evaluate import HistogramSeparation, DNNCompare, _FPD_HGCAL
 from calodiffusion.train.train_diffusion import TrainDiffusion
 from calodiffusion.utils import utils
+from calodiffusion.utils.HGCal_utils import HighLevelFeatures
+
 import pytest 
 import time
 
@@ -63,7 +67,7 @@ def test_cnn_obj(checkpoint_folder, config, pytestconfig, hgcal_data):
 
     assert cnn_result is not None # TODO what's the range?
 
-@pytest.mark.xfail    
+@pytest.mark.xfail  # Fail due to jetnet not installing on some local machines - just annoying to tests tbh
 def test_fpd_obj(checkpoint_folder, config, pytestconfig): 
     metric = EvalFPD()
     args = utils.dotdict({"data_folder": pytestconfig.getoption("data_dir"), "checkpoint_folder": checkpoint_folder, 'nevts': 10})
@@ -72,8 +76,6 @@ def test_fpd_obj(checkpoint_folder, config, pytestconfig):
     model = TrainDiffusion(args, utils.LoadJson(c), load_data=True, save_model=False)
     fpd = metric(model.model, eval_data=model.loader_train, config=config)
     assert fpd
-
-    # TODO Fix the import error - figure out installation 
     
 
 def test_separation_obj(checkpoint_folder, config, pytestconfig): 
@@ -240,3 +242,61 @@ def test_dnn_compare(pytestconfig, config, checkpoint_folder, data_type, hgcal_d
     assert len(metrics) == 3
     for key in metrics.keys():
         assert isinstance(metrics[key], float)
+
+def test_calculate_features(pytestconfig, hgcal_data, config, checkpoint_folder):
+    file = os.path.join(pytestconfig.getoption("data_dir"), hgcal_data("hgcal_test.hdf5"))
+    binning = f"{pytestconfig.getoption('hgcalshowers')}/HGCalShowers/geoms/geom_william.pkl"
+
+    def load_data(fp):
+        shower_scale = 0.0001
+
+        with h5py.File(fp, "r") as h5f:
+            showers = h5f["showers"][:, :, : 1988] * shower_scale
+            energies = h5f["gen_info"][:, 0]
+
+        showers = np.reshape(showers, (-1, 28, 1988))
+        energies = np.reshape(energies, (-1, 1))
+
+        return showers, energies
+
+
+    showers, energy = load_data(file)
+
+    hlf = HighLevelFeatures(binning=binning) 
+    assert hlf(showers, energy) is not None
+
+    flags = utils.dotdict({
+        "data_folder": pytestconfig.getoption("data_dir"), 
+        "checkpoint_folder": checkpoint_folder, 
+        "nevts": 10, 
+        "hgcal": True,
+        "results_folder": checkpoint_folder})
+    
+    c = utils.LoadJson(config({
+        "FILES": [file.lstrip(pytestconfig.getoption("data_dir"))],
+        "BIN_FILE": f"{pytestconfig.getoption('hgcalshowers')}/HGCalShowers/geoms/geom_william.pkl", 
+        'DATASET_NUM' : 111,
+        'HOLDOUT' : 0,
+        "SHAPE_ORIG": [-1, 28, 1988], 
+        "SHAPE_PAD": [-1, 1, 28, 12, 21], 
+        "SHAPE_FINAL": [-1, 1, 28, 12, 21], 
+        "MAX_CELLS": 1988, 
+        "BATCH": 256, 
+        "LR": 0.0005, 
+        "MAXEPOCH": 1, 
+        "NLAYERS": 3, 
+        "EARLYSTOP": 30, 
+        "LAYER_SIZE_UNET": [32, 32, 64, 96], 
+        "COND_SIZE_UNET": 128, 
+        "KERNEL": [3, 3, 3], 
+        "STRIDE": [3, 2, 2], 
+        'SHOWER_EMBED' : 'NN-pre-embed',
+        'HGCAL': True}
+    ))
+
+    train_model = TrainDiffusion(flags=flags, config=c, save_model=False, load_data=True)
+    train_model.init_model()
+
+    fpd = _FPD_HGCAL(binning)
+    assert fpd(train_model.loader_train, train_model.model) is not None
+

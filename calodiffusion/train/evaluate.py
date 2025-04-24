@@ -29,7 +29,7 @@ class FPDCalculationError(Exception):
 class _FPD_HGCAL():
     def __init__(self, binning_dataset, embed_shape=(-1, 1, 28, 12, 21)):
         self.hlf = HGCAL_HLF(binning_dataset)  # Hgcal HLF is stateless(ish), we don't need one for reference 
-        self.encoder = hgcal_utils.HGCalConverter(bins=embed_shape, geom_file=binning_dataset).to(device=utils.get_device())
+        self.encoder = hgcal_utils.HGCalConverter(bins=embed_shape, geom_file=binning_dataset)
 
     def __call__(self, eval_data, trained_model, *args, **kwds):
         reference_shower = []
@@ -52,7 +52,7 @@ class _FPD_HGCAL():
         energies = np.squeeze(energies)
         reference_shower = np.squeeze(reference_shower)
         reference_shower = self.encoder.dec(
-            torch.tensor(reference_shower, dtype=torch.float32).to(trained_model.device)
+            torch.tensor(reference_shower, dtype=torch.float32)
         ).detach().numpy()
 
         source = self.hlf(generated, energies)
@@ -264,6 +264,7 @@ class CNNCompare:
             for _, (E, layers, data) in enumerate(training_data):
                 E = E.to(device=self.device)
                 data = data.to(device=self.device)
+                layers = layers.to(device=self.device)
 
                 self.cnn.zero_grad()
                 optimizer.zero_grad()
@@ -295,6 +296,7 @@ class CNNCompare:
         for E, layers, data in self.tqdm(eval_data):
             E = E.to(device=self.device)
             data = data.to(device=self.device)
+            layers = layers.to(device=self.device)
 
             batch_generated = self.trained_model.sample(
                 E,
@@ -303,8 +305,10 @@ class CNNCompare:
                 debug=False,
                 sample_offset=self.sample_offset,
             )
+            batch_generated = torch.tensor(batch_generated, dtype=torch.float32).to(device=self.device)  # Sample automatically removes the batch from the device to cpu
 
-            probabilities.append(self.cnn.forward(torch.tensor(batch_generated), E).detach())
+            batch_prob = self.cnn.forward(torch.tensor(batch_generated), E).cpu().detach().numpy()
+            probabilities.append(batch_prob)
 
         return (1/len(probabilities))*np.sum(np.log(np.array(probabilities)))
 

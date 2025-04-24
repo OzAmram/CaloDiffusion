@@ -152,9 +152,13 @@ class EvalLoss(Objective):
     def __call__(self, trained_model, eval_data, config, *args, **kwds):
         loss = []
         for energy, layers, data in eval_data: 
-            noise = torch.randn_like(data)
+            noise = torch.randn_like(data).to(device=trained_model.device)
+            data = data.to(device=trained_model.device)
+            energy = energy.to(device=trained_model.device)
+            layers = layers.to(device=trained_model.device)
+
             loss.append(trained_model.compute_loss(data=data, energy=energy, noise=noise, layers=layers))
-        return torch.mean(torch.tensor(loss))
+        return torch.mean(torch.tensor(loss)).detach().cpu().numpy()
 
 
 OBJECTIVES: dict[str, type[Objective]] = {
@@ -224,14 +228,14 @@ class Optimize:
 
         self.objective = self.objective_inference if inference else self.objective_training
 
-        default_specators = [
+        default_spectators = [
             EvalCount, 
             EvalFPD, 
             EvalCNNMetric, 
             EvalLoss,
-            lambda trained_model, eval_data, config: EvalMeanSeparation()(trained_model, eval_data, config, "HistERatio")
+            EvalMeanSeparation  # HistERatio is the default metric
         ]
-        self.spectators = [objective for objective in default_specators if objective not in self.objectives]
+        self.spectators = [objective for objective in default_spectators if objective not in self.objectives]
         self.spectator_history = {}
 
     def suggest_config(self, trial_config): 

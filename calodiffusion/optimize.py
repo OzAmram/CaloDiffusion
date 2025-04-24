@@ -40,6 +40,7 @@ def optimize(ctx, config, objectives, study_name, n_trials, data_folder, results
         else: 
             ctx.obj.hgcal = ctx.obj.config.get("HGCAL", False)
 
+        ctx.obj.config['flags'] = args # Ensure flags are passed to the config
         os.environ["CONFIG"] = config 
 
 @optimize.group()

@@ -11,7 +11,7 @@ from calodiffusion.utils import utils
 from calodiffusion.utils import HGCal_utils as hgcal_utils
 import calodiffusion.utils.plots as plots
 from calodiffusion.utils.utils import LoadJson
-from calodiffusion.train.evaluate import FPD, CNNCompare, HistogramSeparation
+from calodiffusion.train.evaluate import FPD, CNNCompare
 
 from calodiffusion.train.train_diffusion import TrainDiffusion
 from calodiffusion.train.train_layer_model import TrainLayerModel

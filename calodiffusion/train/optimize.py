@@ -357,16 +357,21 @@ class Optimize:
         model_instance = self.trainer(flags=self.flags, config=config, load_data=False, inference=True)
         model_instance.init_model()
 
-        model, _, _, _, _, _  = model_instance.pickup_checkpoint(
-            model=model_instance.model,
-            optimizer=None,
-            scheduler=None,
-            early_stopper=None,
-            n_epochs=0,
-            restart_training=True,
-        )
+        try: 
+            model, _, _, _, _, _  = model_instance.pickup_checkpoint(
+                model=model_instance.model,
+                optimizer=None,
+                scheduler=None,
+                early_stopper=None,
+                n_epochs=0,
+                restart_training=True,
+            )
 
-        objectives = self.eval(model, eval_data, config)
+            objectives = self.eval(model, eval_data, config)
+        except RuntimeError as err:
+            print(f"Error in loading checkpoint: {err}")
+            objectives = [obj.failure() for obj in self.objectives]
+        
         return objectives
 
     def objective_training(self, trial) -> tuple: 
@@ -413,7 +418,11 @@ class Optimize:
         trial_index = len(self.spectator_history.keys()) + 1
         self.spectator_history[trial_index] = {}
         for metric in self.spectators: 
-            m = metric()(model, eval_data, config)
+            try: 
+                m = metric()(model, eval_data, config)
+            except Exception as err:
+                print(f"Spectator {metric.__name__} failed with error: {err}")
+                m = metric.failure()
             self.spectator_history[trial_index][metric.__name__] = m
 
     def __call__(self) -> None:

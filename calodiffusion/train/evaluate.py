@@ -27,8 +27,9 @@ class FPDCalculationError(Exception):
 
 
 class _FPD_HGCAL():
-    def __init__(self, binning_dataset):
+    def __init__(self, binning_dataset, embed_shape=(-1, 1, 28, 12, 21)):
         self.hlf = HGCAL_HLF(binning_dataset)  # Hgcal HLF is stateless(ish), we don't need one for reference 
+        self.encoder = hgcal_utils.HGCalConverter(bins=embed_shape, geom_file=binning_dataset).to(device=utils.get_device())
 
     def __call__(self, eval_data, trained_model, *args, **kwds):
         reference_shower = []
@@ -45,6 +46,15 @@ class _FPD_HGCAL():
             sample_steps=trained_model.config.get("NSTEPS"), 
             sample_offset=0
         )
+
+        generated = np.squeeze(generated)
+
+        energies = np.squeeze(energies)
+        reference_shower = np.squeeze(reference_shower)
+        reference_shower = self.encoder.dec(
+            torch.tensor(reference_shower, dtype=torch.float32).to(trained_model.device)
+        ).detach().numpy()
+
         source = self.hlf(generated, energies)
         reference = self.hlf(reference_shower, reference_energy)
 

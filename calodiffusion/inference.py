@@ -99,12 +99,6 @@ def diffusion(ctx):
     ctx.obj.config['flags'] = non_config
     run_inference(ctx.obj, ctx.obj.config, model=TrainDiffusion)
 
-# TODO Clear separation 
-#@sample.command()
-@click.pass_context
-def hgcal(ctx):
-    pass
-
 @inference.command()
 @click.option("-g", "--generated", default="", help="Path to existing generated results")
 @click.option("--plot-label", default="", help="Labels for the plot")

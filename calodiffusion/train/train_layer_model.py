@@ -2,8 +2,8 @@ from calodiffusion.models.layerdiffusion import LayerDiffusion
 from calodiffusion.train.train_diffusion import TrainDiffusion
 
 class TrainLayerModel(TrainDiffusion):
-    def __init__(self, flags, config, load_data = True, inference=False, *args, **kwargs):
-        super().__init__(flags, config, load_data)
+    def __init__(self, flags, config, load_data = True, inference=False, save_model=True, *args, **kwargs):
+        super().__init__(flags, config, load_data, save_model=save_model, *args, **kwargs)
         self.init_model()
         if inference: 
             self.model.set_layer_state(False)

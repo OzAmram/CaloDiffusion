@@ -31,7 +31,7 @@ class _FPD_HGCAL():
         self.hlf = HGCAL_HLF(binning_dataset)  # Hgcal HLF is stateless(ish), we don't need one for reference 
         self.encoder = hgcal_utils.HGCalConverter(bins=embed_shape, geom_file=binning_dataset)
 
-    def __call__(self, eval_data, trained_model, *args, **kwds):
+    def __call__(self, generated, energies, eval_data, *args, **kwds):
         reference_shower = []
         reference_energy = []
         for energy, _, data in eval_data: 
@@ -40,12 +40,6 @@ class _FPD_HGCAL():
 
         reference_shower = np.concatenate(reference_shower)
         reference_energy = np.concatenate(reference_energy)
-
-        generated, energies = trained_model.generate(
-            data_loader=eval_data, 
-            sample_steps=trained_model.config.get("NSTEPS"), 
-            sample_offset=0
-        )
 
         generated = np.squeeze(generated)
 
@@ -88,7 +82,7 @@ class _FPD():
                             Width_etas/1e2, Width_phis/1e2, label*np.ones_like(energies)], axis=1)
         return ret
     
-    def __call__(self, eval_data, trained_model, *args, **kwds):
+    def __call__(self, generated, energies, eval_data, *args, **kwds):
         reference_shower = []
         reference_energy = []
         for energy, _, data in eval_data: 
@@ -97,12 +91,6 @@ class _FPD():
 
         reference_shower = np.concatenate(reference_shower)
         reference_energy = np.concatenate(reference_energy)
-
-        generated, energies = trained_model.generate(
-            data_loader=eval_data, 
-            sample_steps=trained_model.config.get("NSTEPS"), 
-            sample_offset=0
-        )
 
         self.hlf.CalculateFeatures(generated)
         self.reference_hlf.CalculateFeatures(reference_shower)
@@ -121,8 +109,8 @@ class FPD:
         else: 
             self.fpd = _FPD(particle, binning_dataset)
 
-    def __call__(self, trained_model, eval_data, kwargs) -> float:
-        out = self.fpd(eval_data, trained_model, **kwargs)
+    def __call__(self, generated, energies, eval_data, kwargs) -> float:
+        out = self.fpd(generated=generated, energies=energies, eval_data=eval_data, **kwargs)
         source_array = out["source"]
         reference_array = out["reference"]
 

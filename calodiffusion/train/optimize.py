@@ -50,8 +50,8 @@ class EvalCount(Objective):
 
             def __call__(self, x=None) -> Any:
                 self.model.sample(
-                    self.E,
-                    layers=self.layers,
+                    self.E.to(device=self.model.device),
+                    layers=self.layers.to(device=self.model.device),
                     num_steps=self.sample_steps,
                     debug=False,
                     sample_offset=self.sample_offset,
@@ -115,7 +115,7 @@ class EvalCNNMetric(Objective):
         return "maximize"
     
     @staticmethod
-    def __call__(trained_model, eval_data, config):
+    def __call__(trained_model, eval_data, config, *args, **kwargs):
         cnn_method = evaluate.CNNCompare(
             trained_model=trained_model, 
             config= config, 
@@ -150,7 +150,7 @@ class EvalLoss(Objective):
         return "minimize"
     
     def __call__(self, trained_model, eval_data, config, *args, **kwds):
-        energy, layers, data = iter(next(eval_data)) 
+        energy, layers, data = next(iter(eval_data))
 
         noise = torch.randn_like(data).to(device=trained_model.device)
         data = data.to(device=trained_model.device)
@@ -166,14 +166,6 @@ OBJECTIVES: dict[str, type[Objective]] = {
     "CNN": EvalCNNMetric(), 
     "LOSS": EvalLoss()
 }
-
-for metric in [
-    name for name, cls in plots.__dict__.items() 
-    if 
-        isinstance(cls, type) and 
-        issubclass(cls, plots.Histogram) and 
-        cls != plots.Histogram]:
-    OBJECTIVES[f"MEAN_SEP_{metric}"] = lambda trained_model, eval_data, config: EvalMeanSeparation().__call__(trained_model, eval_data, config, metric)
 
 class Optimize: 
     """
@@ -230,11 +222,13 @@ class Optimize:
         default_spectators = [
             EvalCount, 
             EvalFPD, 
-            EvalCNNMetric, 
+            #EvalCNNMetric,  # Not using CNN metric, 
             EvalLoss,
             EvalMeanSeparation  # HistERatio is the default metric
         ]
-        self.spectators = [objective for objective in default_spectators if objective not in self.objectives]
+        self.spectators = [ 
+            obj for obj in default_spectators if not any([isinstance(train_obj, obj) for train_obj in self.objectives])
+        ]
         self.spectator_history = {}
         self.generated_samples = None
         self.generated_energies = None
@@ -353,9 +347,7 @@ class Optimize:
 
     def eval(self, model, eval_data, config) -> Sequence: 
         self.spectator_callback(
-            trained_model=model,
-            generated=self.generated_samples,
-            energies=self.generated_energies,
+            model=model,
             eval_data=eval_data,
             config=config
         )
@@ -374,7 +366,7 @@ class Optimize:
         config = self.suggest_config(trial)
         eval_data, _ = utils.load_data(self.flags, config, eval=True)
 
-        model_instance = self.trainer(flags=self.flags, config=config, load_data=False, inference=True)
+        model_instance = self.trainer(flags=self.flags, config=config, load_data=False, inference=True, save_model=False)
         model_instance.init_model()
 
         try: 
@@ -388,7 +380,7 @@ class Optimize:
             )
 
             self.generated_samples, self.generated_energies = model.generate(
-                data_loader=eval_data, sample_steps=config.get("SAMPLE_STEPS"), debug=False, sample_offset=0,
+                data_loader=eval_data, sample_steps=config.get("NSTEPS"), debug=False, sample_offset=0,
             )
             objectives = self.eval(model, eval_data, config)
         except RuntimeError as err:
@@ -405,7 +397,9 @@ class Optimize:
             train_model.init_model()
             train_model.train()
             model = train_model.model
-
+            self.generated_samples, self.generated_energies = model.generate(
+                data_loader=eval_data, sample_steps=config.get("NSTEPS"), debug=False, sample_offset=0,
+            )
         except RuntimeError as err:
             if "Kernel size can't be greater than actual input size" in str(err): 
                 objectives = [obj.failure() for obj in self.objectives]

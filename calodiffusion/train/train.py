@@ -143,7 +143,7 @@ class Train(ABC):
         )
         optimizer = torch.optim.Adam(self.model.parameters(), lr=float(self.config["LR"]))
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=optimizer, factor=0.1, patience=15, verbose=True
+            optimizer=optimizer, factor=0.1, patience=15
         )
 
         start_epoch = 0

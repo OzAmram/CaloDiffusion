@@ -44,22 +44,23 @@ class EvalCount(Objective):
             def __init__(self, model, eval_data, sample_steps, sample_offset) -> None:
                 super().__init__()
                 self.model = model
-                self.eval_data = eval_data
                 self.E, self.layers, _ = next(iter(eval_data))
                 self.sample_steps = sample_steps
                 self.sample_offset = sample_offset
 
             def __call__(self, x=None) -> Any:
-                self.model.generate(
-                    data_loader=self.eval_data, 
-                    sample_steps=self.sample_steps, 
-                    sample_offset=self.sample_offset
+                self.model.sample(
+                    self.E,
+                    layers=self.layers,
+                    num_steps=self.sample_steps,
+                    debug=False,
+                    sample_offset=self.sample_offset,
                 )
                 
         return ModelForward
 
     @staticmethod
-    def __call__(trained_model, eval_data, config) -> float:
+    def __call__(trained_model, eval_data, config, *args, **kwargs) -> float:
         random = np.random.default_rng()
         weight_matrix = random.random((24, 24))
         weight_matrix_compare = random.random((24, 24))
@@ -90,7 +91,7 @@ class EvalFPD(Objective):
         return 10e8
 
     @staticmethod
-    def __call__(trained_model, eval_data, config) -> float:
+    def __call__(trained_model, generated, energies, eval_data, config, *args, **kwargs) -> float:
 
         binning_dataset = trained_model.config.get("BIN_FILE", "binning_dataset.xml")
         particle = trained_model.config.get("PART_TYPE", "photon")
@@ -100,7 +101,7 @@ class EvalFPD(Objective):
             particle, 
             hgcal=utils.LoadJson(os.environ.get("CONFIG", {})).get("HGCAL", False))
         try: 
-            return fpd_calc(trained_model, eval_data, config)
+            return fpd_calc(generated=generated, energies=energies, eval_data=eval_data)
         except evaluate.FPDCalculationError:
             return EvalFPD.failure()
         
@@ -131,12 +132,11 @@ class EvalMeanSeparation(Objective):
     def direction():
         return "minimize"
     
-    def __call__(self, trained_model, eval_data, config, metric=None, *args, **kwds):
+    def __call__(self, generated, energies, eval_data, config, metric=None, *args, **kwds):
         metric = metric if metric is not None else config.get("SEPARATION_METRIC", "HistERatio")
         eval = evaluate.HistogramSeparation(metric)
-        generated, energies = trained_model.generate(eval_data, sample_steps=config['NSTEPS'], sample_offset=0)
-        data = np.array([d_batch for _, _, d_batch in eval_data])
 
+        data = np.array([d_batch for _, _, d_batch in eval_data])
         return eval(generated, data, energies)
         
 
@@ -150,15 +150,14 @@ class EvalLoss(Objective):
         return "minimize"
     
     def __call__(self, trained_model, eval_data, config, *args, **kwds):
-        loss = []
-        for energy, layers, data in eval_data: 
-            noise = torch.randn_like(data).to(device=trained_model.device)
-            data = data.to(device=trained_model.device)
-            energy = energy.to(device=trained_model.device)
-            layers = layers.to(device=trained_model.device)
+        energy, layers, data = iter(next(eval_data)) 
 
-            loss.append(trained_model.compute_loss(data=data, energy=energy, noise=noise, layers=layers))
-        return torch.mean(torch.tensor(loss)).detach().cpu().numpy()
+        noise = torch.randn_like(data).to(device=trained_model.device)
+        data = data.to(device=trained_model.device)
+        energy = energy.to(device=trained_model.device)
+        layers = layers.to(device=trained_model.device)
+
+        return trained_model.compute_loss(data=data, energy=energy, noise=noise, layers=layers).detach().cpu().numpy()
 
 
 OBJECTIVES: dict[str, type[Objective]] = {
@@ -237,6 +236,8 @@ class Optimize:
         ]
         self.spectators = [objective for objective in default_spectators if objective not in self.objectives]
         self.spectator_history = {}
+        self.generated_samples = None
+        self.generated_energies = None
 
     def suggest_config(self, trial_config): 
         if isinstance(self.flags.config, str): 
@@ -349,10 +350,25 @@ class Optimize:
         config['SAMPLER_SETTINGS'] = sampler_config
         return config
 
+
     def eval(self, model, eval_data, config) -> Sequence: 
-        self.spectator_callback(model, eval_data, config)
+        self.spectator_callback(
+            trained_model=model,
+            generated=self.generated_samples,
+            energies=self.generated_energies,
+            eval_data=eval_data,
+            config=config
+        )
         config['flags'] = self.flags
-        return [obj(model, eval_data, config) for obj in self.objectives]
+        return [
+            obj(
+                trained_model=model,
+                generated=self.generated_samples,
+                energies=self.generated_energies,
+                eval_data=eval_data,
+                config=config
+            ) 
+                for obj in self.objectives]
 
     def objective_inference(self, trial) -> tuple:
         config = self.suggest_config(trial)
@@ -371,6 +387,9 @@ class Optimize:
                 restart_training=True,
             )
 
+            self.generated_samples, self.generated_energies = model.generate(
+                data_loader=eval_data, sample_steps=config.get("SAMPLE_STEPS"), debug=False, sample_offset=0,
+            )
             objectives = self.eval(model, eval_data, config)
         except RuntimeError as err:
             print(f"Error in loading checkpoint: {err}")
@@ -423,7 +442,13 @@ class Optimize:
         self.spectator_history[trial_index] = {}
         for metric in self.spectators: 
             try: 
-                m = metric()(model, eval_data, config)
+                m = metric()(
+                    trained_model=model,
+                    generated=self.generated_samples,
+                    energies=self.generated_energies,
+                    eval_data=eval_data,
+                    config=config
+                )
             except Exception as err:
                 print(f"Spectator {metric.__name__} failed with error: {err}")
                 m = metric.failure()

@@ -19,16 +19,8 @@ class Train(ABC):
         self.config = config
         self.flags = flags
         self.batch_size = self.config.get("BATCH", 256)
-        if self.save_model: 
-            self.checkpoint_folder = f"{flags.checkpoint_folder.strip('/')}/{config['CHECKPOINT_NAME']}_{flags.model}/"
-            if not os.path.exists(self.checkpoint_folder):
-                os.makedirs(self.checkpoint_folder)
-
-            with open(os.path.join(self.checkpoint_folder, "config.json"), "w") as config_file:
-                json.dump(flags.config, config_file) 
-                
         self.checkpoint_folder = os.path.join(flags.checkpoint_folder, f"{config['CHECKPOINT_NAME']}_{self.__class__.__name__.removeprefix('Train')}")
-        
+
         if hasattr(flags, "sample_algo"): 
             if flags.sample_algo is not None: 
                 self.config['SAMPLER'] == flags.sample_algo
@@ -36,7 +28,14 @@ class Train(ABC):
         if hasattr(flags, "model_loc"): 
             if flags.model_loc is not None: 
                 self.checkpoint_folder = os.path.dirname(flags.model_loc)
+                
+        if not os.path.exists(self.checkpoint_folder):
+            os.makedirs(self.checkpoint_folder)
 
+        if self.save_model: 
+            with open(os.path.join(self.checkpoint_folder, "config.json"), "w") as config_file:
+                json.dump(flags.config, config_file) 
+                    
 
     @abstractmethod
     def init_model(self): 

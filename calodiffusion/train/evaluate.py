@@ -109,7 +109,7 @@ class FPD:
         else: 
             self.fpd = _FPD(particle, binning_dataset)
 
-    def __call__(self, generated, energies, eval_data, kwargs) -> float:
+    def __call__(self, generated, energies, eval_data, **kwargs) -> float:
         out = self.fpd(generated=generated, energies=energies, eval_data=eval_data, **kwargs)
         source_array = out["source"]
         reference_array = out["reference"]

@@ -38,7 +38,7 @@ def test_optimize_training_diffusion(execute, config, global_settings, study_nam
         train diffusion"
     exit = execute(command)
     assert exit == 0
-
+    
     report = os.path.join(folder, study_name, "report.json")
     assert os.path.exists(report)
 

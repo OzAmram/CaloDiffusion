@@ -27,6 +27,7 @@ class LayerDiffusion(CaloDiffusion):
         self.shape_pad = self.config.get("SHAPE_PAD")
         if self.shape_pad is None: 
             self.shape_pad = self.config['SHAPE_FINAL']
+        
 
     def init_model(self):
         cond_size = 3 if self.hgcal else 1
@@ -53,6 +54,11 @@ class LayerDiffusion(CaloDiffusion):
             return super().compute_loss(data, energy, noise, layers, time, rnd_normal)
 
     def load_layer_model_state(self, strict = True): 
+        try: 
+            self.config['layer_model']
+        except KeyError:
+            raise KeyError("Something went wrong - Layer model path not found in config")
+        
         layer_model_state_dict = torch.load(self.config['layer_model'], map_location=self.device, weights_only=False)
         state_dict = layer_model_state_dict if 'model_state_dict' not in layer_model_state_dict else layer_model_state_dict['model_state_dict']
         

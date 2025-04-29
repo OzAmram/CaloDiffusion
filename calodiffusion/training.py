@@ -79,8 +79,11 @@ def diffusion(ctx):
     TrainDiffusion(ctx.obj, ctx.obj.config).train()
 
 @train.command()
+@click.option("--layer-model-loc", default=None, help="Specify existing layer model to load")
 @click.pass_context
-def layer(ctx, ): 
+def layer(ctx, layer_model_loc):
+    if (layer_model_loc is not None) and ctx.obj.load: 
+        ctx.obj.config['layer_model'] = layer_model_loc 
 
     #self.layer_steps = self.config.get("LAYER_STEPS")
     #sampler_algo = self.config.get("LAYER_SAMPLER", "DDim")

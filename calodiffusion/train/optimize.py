@@ -346,6 +346,8 @@ class Optimize:
 
 
     def eval(self, model, eval_data, config) -> Sequence: 
+        self.save_results() # Save the last trial
+
         self.spectator_callback(
             model=model,
             eval_data=eval_data,
@@ -410,8 +412,8 @@ class Optimize:
         objectives = self.eval(model, eval_data, config)
         return objectives
 
-    def save_results(self, study): 
-        study_items = dict(study.trials_dataframe())
+    def save_results(self): 
+        study_items = dict(self.study.trials_dataframe())
         study_results = {} 
         for key, value in study_items.items(): 
             study_results[key] = value.to_list()
@@ -421,11 +423,11 @@ class Optimize:
             os.makedirs(save_loc)
 
         report_path = f"{save_loc.rstrip('/')}/{self.flags.study_name}/report.json"
-        with open(report_path, 'a') as f: 
+        with open(report_path, 'w') as f: 
             json.dump(study_results, f, default=str)
 
         spectator_path = f"{save_loc.rstrip('/')}/{self.flags.study_name}/spectators.json"
-        with open(spectator_path, 'a') as f: 
+        with open(spectator_path, 'w') as f: 
             json.dump(self.spectator_history, f, default=str)
 
     def spectator_callback(self, model, eval_data, config): 
@@ -449,15 +451,13 @@ class Optimize:
             self.spectator_history[trial_index][metric.__name__] = m
 
     def __call__(self) -> None:
-        study = optuna.create_study(
+        self.study = optuna.create_study(
             study_name=self.flags.study_name, 
             load_if_exists=True, 
             directions=[obj.direction() for obj in self.objectives]
             )
-        study.optimize(
+        self.study.optimize(
             self.objective, 
             n_trials=self.flags.n_trials, 
-            timeout=300,
         )
-        self.save_results(study)
-        
+        self.save_results() # Save the last trial

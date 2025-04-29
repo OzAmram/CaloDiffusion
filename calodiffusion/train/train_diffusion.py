@@ -11,8 +11,8 @@ from calodiffusion.models.calodiffusion import CaloDiffusion
 
 
 class TrainDiffusion(Train): 
-    def __init__(self, flags, config, load_data=True, save_model:bool=True) -> None:
-        super().__init__(flags, config, load_data=load_data, save_model=save_model)
+    def __init__(self, flags, config, load_data=True, save_model:bool=True, *args, **kwargs) -> None:
+        super().__init__(flags, config, load_data, save_model=save_model, *args, **kwargs)
 
     def init_model(self):
         self.model = CaloDiffusion(

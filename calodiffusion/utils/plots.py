@@ -12,30 +12,6 @@ from calodiffusion.utils import utils
 import calodiffusion.utils.HGCal_utils as HGCal_utils
 
 
-def WeightedMean(coord, energies, power=1, axis=-1):
-    ec = np.sum(energies * np.power(coord, power), axis=axis)
-    sum_energies = np.sum(energies, axis=axis)
-    ec = np.ma.divide(ec, sum_energies).filled(0)
-    return ec
-
-
-def ang_center_spread(matrix, energies, axis=-1):
-    # weighted average over periodic variabel (angle)
-    # https://github.com/scipy/scipy/blob/v1.11.1/scipy/stats/_morestats.py#L4614
-    # https://en.wikipedia.org/wiki/Directional_statistics#The_fundamental_difference_between_linear_and_circular_statistics
-    cos_matrix = np.cos(matrix)
-    sin_matrix = np.sin(matrix)
-    cos_ec = WeightedMean(cos_matrix, energies, axis=axis)
-    sin_ec = WeightedMean(sin_matrix, energies, axis=axis)
-    ang_mean = np.arctan2(sin_ec, cos_ec)
-    R = np.sqrt(sin_ec**2 + cos_ec**2)
-    eps = 1e-8
-    R = np.clip(R, eps, 1.0)
-
-    ang_std = np.sqrt(-np.log(R))
-    return ang_mean, ang_std
-
-
 def GetWidth(mean, mean2):
     width = np.ma.sqrt(mean2 - mean**2).filled(0)
     return width
@@ -129,134 +105,6 @@ class Plot(ABC):
         mpl.rcParams.update({"axes.labelsize": 26})
         mpl.rcParams.update({"legend.frameon": False})
         mpl.rcParams.update({"lines.linewidth": 4})
-
-    def _hist(
-        self,
-        feed_dict,
-        xlabel="",
-        ylabel="Arbitrary units",
-        reference_name="Geant4",
-        binning=None,
-        label_loc="best",
-        ratio=True,
-        normalize=True,
-        leg_font=24,
-    ):
-        if reference_name not in feed_dict.keys():
-            reference_name = list(feed_dict.keys())[0]
-            print("taking %s as ref" % reference_name)
-
-        fig, gs = self.SetGrid(ratio)
-        ax0 = plt.subplot(gs[0])
-        if ratio:
-            plt.xticks(fontsize=0)
-            ax1 = plt.subplot(gs[1], sharex=ax0)
-
-        if self.flags.cms:
-            hep.style.use(hep.style.CMS)
-            hep.cms.text(ax=ax0, text="Simulation Preliminary")
-
-        if binning is None:
-            binning = np.linspace(
-                np.quantile(feed_dict[reference_name], 0.0),
-                np.quantile(feed_dict[reference_name], 1),
-                10,
-            )
-        xaxis = [(binning[i] + binning[i + 1]) / 2.0 for i in range(len(binning) - 1)]
-        reference_hist, _ = np.histogram(
-            feed_dict[reference_name], bins=binning, density=True
-        )
-
-        for ip, plot in enumerate(reversed(list(feed_dict.keys()))):
-            color = self.colors.get(plot, "blue")
-            linestyle = self.line_style.get(plot, "-")
-
-            if "steps" in plot or "r=" in plot:
-                dist, _ = np.histogram(feed_dict[plot], bins=binning, density=normalize)
-                ax0.plot(
-                    xaxis,
-                    dist,
-                    histtype="stepfilled",
-                    facecolor="silver",
-                    lw=2,
-                    label=plot,
-                    alpha=1.0,
-                )
-
-            elif "Geant" in plot:
-                dist, _, _ = ax0.hist(
-                    feed_dict[plot],
-                    bins=binning,
-                    label=plot,
-                    density=True,
-                    histtype="stepfilled",
-                    facecolor="silver",
-                    lw=2,
-                    alpha=1.0,
-                )
-            else:
-                dist, _, _ = ax0.hist(
-                    feed_dict[plot],
-                    bins=binning,
-                    label=plot,
-                    linestyle=linestyle,
-                    color=color,
-                    density=True,
-                    histtype="step",
-                    lw=4,
-                )
-
-            if len(self.flags.plot_label) > 0:
-                ax0.set_title(
-                    self.flags.plot_label, fontsize=20, loc="right", style="italic"
-                )
-
-            if reference_name != plot and ratio:
-                eps = 1e-8
-                h_ratio = np.divide(dist, reference_hist + eps)
-                if "steps" in plot or "r=" in plot:
-                    ax1.plot(
-                        xaxis,
-                        h_ratio,
-                        color=color,
-                        marker=linestyle,
-                        ms=10,
-                        lw=0,
-                        markeredgewidth=4,
-                    )
-                else:
-                    if len(binning) > 20:  # draw ratio as line
-                        ax1.plot(xaxis, h_ratio, color=color, linestyle="-", lw=4)
-                    else:  # draw as markers
-                        ax1.plot(xaxis, h_ratio, color=color, marker="o", ms=10, lw=0)
-                sep_power = self._separation_power(dist, reference_hist, binning)
-                print("Separation power for hist '%s' is %.4f" % (xlabel, sep_power))
-
-        if ratio:
-            self.FormatFig(xlabel="", ylabel=ylabel, ax0=ax0)
-            plt.ylabel("Ratio")
-            plt.xlabel(xlabel)
-            plt.axhline(y=1.0, color="black", linestyle="--", linewidth=1)
-            loc = mtick.MultipleLocator(base=10.0)
-            ax1.yaxis.set_minor_locator(loc)
-            plt.ylim([0.5, 1.5])
-        else:
-            self.FormatFig(xlabel=xlabel, ylabel=ylabel, ax0=ax0)
-
-        ax0.legend(
-            loc=label_loc,
-            fontsize=leg_font,
-            ncol=1,
-            facecolor="white",
-            framealpha=0.5,
-            frameon=True,
-        )
-        # plt.tight_layout()
-        if ratio:
-            plt.subplots_adjust(
-                left=0.15, right=0.9, top=0.94, bottom=0.12, wspace=0, hspace=0
-            )
-        return fig, ax0
 
     def _plot(
         self,
@@ -397,11 +245,157 @@ class Plot(ABC):
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         raise NotImplementedError
 
-class HistERatio(Plot):
+class Histogram(Plot, ABC): 
+    """A subclass of Plot specifically for histograms"""
+    def produce_binning(self, reference_data): 
+        binning = np.linspace(
+            np.quantile(reference_data, 0.0),
+            np.quantile(reference_data, 1),
+            10
+        )
+        return binning
+
+    @abstractmethod
+    def transform_data(self, feed_dict:dict, energies: np.ndarray): 
+        """
+        Transform the feed dictionary into the variable to be plotted. Required.
+
+        Args:
+            feed_dict: Data to transform
+            energies: Energy corresponding to data
+        """
+        raise NotImplementedError
+
+    def _hist(
+        self,
+        feed_dict,
+        xlabel="",
+        ylabel="Arbitrary units",
+        reference_name="Geant4",
+        binning=None,
+        label_loc="best",
+        ratio=True,
+        normalize=True,
+        leg_font=24,
+    ):
+        if reference_name not in feed_dict.keys():
+            reference_name = list(feed_dict.keys())[0]
+            print("taking %s as ref" % reference_name)
+
+        fig, gs = self.SetGrid(ratio)
+        ax0 = plt.subplot(gs[0])
+        if ratio:
+            plt.xticks(fontsize=0)
+            ax1 = plt.subplot(gs[1], sharex=ax0)
+
+        if self.flags.cms:
+            hep.style.use(hep.style.CMS)
+            hep.cms.text(ax=ax0, text="Simulation Preliminary")
+
+        if binning is None:
+            binning = self.produce_binning(feed_dict[reference_name])
+        xaxis = [(binning[i] + binning[i + 1]) / 2.0 for i in range(len(binning) - 1)]
+        reference_hist, _ = np.histogram(
+            feed_dict[reference_name], bins=binning, density=True
+        )
+
+        for ip, plot in enumerate(reversed(list(feed_dict.keys()))):
+            color = self.colors.get(plot, "blue")
+            linestyle = self.line_style.get(plot, "-")
+
+            if "steps" in plot or "r=" in plot:
+                dist, _ = np.histogram(feed_dict[plot], bins=binning, density=normalize)
+                ax0.plot(
+                    xaxis,
+                    dist,
+                    histtype="stepfilled",
+                    facecolor="silver",
+                    lw=2,
+                    label=plot,
+                    alpha=1.0,
+                )
+
+            elif "Geant" in plot:
+                dist, _, _ = ax0.hist(
+                    feed_dict[plot],
+                    bins=binning,
+                    label=plot,
+                    density=True,
+                    histtype="stepfilled",
+                    facecolor="silver",
+                    lw=2,
+                    alpha=1.0,
+                )
+            else:
+                dist, _, _ = ax0.hist(
+                    feed_dict[plot],
+                    bins=binning,
+                    label=plot,
+                    linestyle=linestyle,
+                    color=color,
+                    density=True,
+                    histtype="step",
+                    lw=4,
+                )
+
+            if len(self.flags.plot_label) > 0:
+                ax0.set_title(
+                    self.flags.plot_label, fontsize=20, loc="right", style="italic"
+                )
+
+            if reference_name != plot and ratio:
+                eps = 1e-8
+                h_ratio = np.divide(dist, reference_hist + eps)
+                if "steps" in plot or "r=" in plot:
+                    ax1.plot(
+                        xaxis,
+                        h_ratio,
+                        color=color,
+                        marker=linestyle,
+                        ms=10,
+                        lw=0,
+                        markeredgewidth=4,
+                    )
+                else:
+                    if len(binning) > 20:  # draw ratio as line
+                        ax1.plot(xaxis, h_ratio, color=color, linestyle="-", lw=4)
+                    else:  # draw as markers
+                        ax1.plot(xaxis, h_ratio, color=color, marker="o", ms=10, lw=0)
+                sep_power = self._separation_power(dist, reference_hist, binning)
+                print("Separation power for hist '%s' is %.4f" % (xlabel, sep_power))
+
+        if ratio:
+            self.FormatFig(xlabel="", ylabel=ylabel, ax0=ax0)
+            plt.ylabel("Ratio")
+            plt.xlabel(xlabel)
+            plt.axhline(y=1.0, color="black", linestyle="--", linewidth=1)
+            loc = mtick.MultipleLocator(base=10.0)
+            ax1.yaxis.set_minor_locator(loc)
+            plt.ylim([0.5, 1.5])
+        else:
+            self.FormatFig(xlabel=xlabel, ylabel=ylabel, ax0=ax0)
+
+        ax0.legend(
+            loc=label_loc,
+            fontsize=leg_font,
+            ncol=1,
+            facecolor="white",
+            framealpha=0.5,
+            frameon=True,
+        )
+        # plt.tight_layout()
+        if ratio:
+            plt.subplots_adjust(
+                left=0.15, right=0.9, top=0.94, bottom=0.12, wspace=0, hspace=0
+            )
+        return fig, ax0
+
+
+class HistERatio(Histogram):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
 
-    def __call__(self, data_dict, energies):
+    def transform_data(self, data_dict, energies):
         feed_dict = {}
         for key in data_dict:
             dep = np.sum(data_dict[key].reshape(data_dict[key].shape[0], -1), -1)
@@ -415,13 +409,17 @@ class HistERatio(Plot):
         for key in data_dict:
             feed_dict[key] /= norm
 
-        # binning = np.linspace(0.5, 1.5, 51)
-        binning = np.linspace(0.7, 1.3, 30)
+        return feed_dict
+
+    def produce_binning(self, reference_data):
+        return np.linspace(0.7, 1.3, 30)
+
+    def __call__(self, data_dict, energies):
+        feed_dict = self.transform_data(data_dict, energies)
 
         fig, ax0 = self._hist(
             feed_dict,
             xlabel="Dep. energy / Gen. energy",
-            binning=binning,
             ratio=True,
         )
         for name in self.save_names("ERatio"):
@@ -503,7 +501,7 @@ class AverageShowerWidth(Plot):
             )
             r_proj = preprocessed = np.sum(r_preprocessed, axis=-1)
 
-            feed_dict_phi[key], feed_dict_phi2[key] = ang_center_spread(
+            feed_dict_phi[key], feed_dict_phi2[key] = utils.ang_center_spread(
                 phi_matrix, phi_proj
             )
             feed_dict_r[key] = GetCenter(r_matrix, r_proj)
@@ -735,11 +733,11 @@ class RadialEnergyHGCal(Plot):
         return feed_dict
 
 
-class RCenterHGCal(Plot):
+class RCenterHGCal(Histogram):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
 
-    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+    def transform_data(self, data_dict, energies):
         geom_file = self.config.get("BIN_FILE", "")
         geom = HGCal_utils.load_geom(geom_file)
         r_vals = geom.ring_map[:, : geom.max_ncell]
@@ -750,8 +748,8 @@ class RCenterHGCal(Plot):
         feed_dict_W_avg = {}
         for key in data_dict:
             # center
-            r_centers = WeightedMean(r_vals, np.squeeze(data_dict[key]))
-            r2_centers = WeightedMean(r_vals, np.squeeze(data_dict[key]), power=2)
+            r_centers = utils.WeightedMean(r_vals, np.squeeze(data_dict[key]))
+            r2_centers = utils.WeightedMean(r_vals, np.squeeze(data_dict[key]), power=2)
             feed_dict_C_hist[key] = np.reshape(r_centers, (-1))
             feed_dict_C_avg[key] = np.mean(r_centers, axis=0)
 
@@ -760,37 +758,47 @@ class RCenterHGCal(Plot):
             feed_dict_W_hist[key] = np.reshape(r_widths, (-1))
             feed_dict_W_avg[key] = np.mean(r_widths, axis=0)
 
+        return {
+            "C_hist": feed_dict_C_hist,
+            "C_avg": feed_dict_C_avg, 
+            "W_hist": feed_dict_W_hist, 
+            "W_avg": feed_dict_W_avg
+        }
+
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+        processed = self.transform_data(data_dict, energies)
+
         fig, ax0 = self._hist(
-            feed_dict_C_hist, xlabel="Shower R Center", normalize=True
+            processed['C_hist'], xlabel="Shower R Center", normalize=True
         )
-        for name in self.save_names(f"RCenter"):
+        for name in self.save_names("RCenter"):
             self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._plot(
-            feed_dict_C_avg, ylabel="Avg. Shower R Center", xlabel="Layer", no_mean=True
+            processed['C_avg'], ylabel="Avg. Shower R Center", xlabel="Layer", no_mean=True
         )
-        for name in self.save_names(f"RCenterLayer"):
+        for name in self.save_names("RCenterLayer"):
             self.save_fig(name, fig, ax0)
 
-        fig, ax0 = self._hist(feed_dict_W_hist, xlabel="Shower R Width", normalize=True)
-        for name in self.save_names(f"RWidth"):
+        fig, ax0 = self._hist(processed['W_hist'], xlabel="Shower R Width", normalize=True)
+        for name in self.save_names("RWidth"):
             self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._plot(
-            feed_dict_W_avg, ylabel="Avg. Shower R Width", xlabel="Layer", no_mean=True
+            processed['W_avg'], ylabel="Avg. Shower R Width", xlabel="Layer", no_mean=True
         )
-        for name in self.save_names(f"RWidthLayer"):
+        for name in self.save_names("RWidthLayer"):
             self.save_fig(name, fig, ax0)
 
         return
 
 
-class PhiCenterHGCal(Plot):
+class PhiCenterHGCal(Histogram):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
 
-    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
-
+    def transform_data(self, data_dict, *args, **kwargs):
+        
         geom_file = self.config.get("BIN_FILE", "")
         geom = HGCal_utils.load_geom(geom_file)
         phi_vals = geom.theta_map[:, : geom.max_ncell]
@@ -801,7 +809,7 @@ class PhiCenterHGCal(Plot):
         feed_dict_W_avg = {}
         for key in data_dict:
             # center
-            phi_centers, phi_widths = ang_center_spread(
+            phi_centers, phi_widths = utils.ang_center_spread(
                 phi_vals, np.squeeze(data_dict[key])
             )
             feed_dict_C_hist[key] = np.reshape(phi_centers, (-1))
@@ -811,8 +819,18 @@ class PhiCenterHGCal(Plot):
             feed_dict_W_hist[key] = np.reshape(phi_widths, (-1))
             feed_dict_W_avg[key] = np.mean(phi_widths, axis=0)
 
+        return {
+            "C_hist": feed_dict_C_hist,
+            "C_avg": feed_dict_C_avg, 
+            "W_hist": feed_dict_W_hist, 
+            "W_avg": feed_dict_W_avg
+        }
+
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+        processed = self.transform_data(data_dict)
+
         fig, ax0 = self._hist(
-            feed_dict_C_hist,
+            processed['C_hist'],
             xlabel="Shower Phi Center",
             ylabel="Arbitrary units",
             normalize=True,
@@ -821,7 +839,7 @@ class PhiCenterHGCal(Plot):
             self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._plot(
-            feed_dict_C_avg,
+            processed['C_avg'],
             ylabel="Avg. Shower Phi Center",
             xlabel="Layer",
             no_mean=True,
@@ -830,7 +848,7 @@ class PhiCenterHGCal(Plot):
             self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._hist(
-            feed_dict_W_hist,
+            processed['W_hist'],
             xlabel="Shower Phi Width",
             ylabel="Arbitrary units",
             normalize=True,
@@ -839,7 +857,7 @@ class PhiCenterHGCal(Plot):
             self.save_fig(name, fig, ax0)
 
         fig, ax0 = self._plot(
-            feed_dict_W_avg,
+            processed['W_avg'],
             ylabel="Avg. Shower Phi Width",
             xlabel="Layer",
             no_mean=True,
@@ -850,11 +868,19 @@ class PhiCenterHGCal(Plot):
         return
 
 
-class HistEtot(Plot):
+class HistEtot(Histogram):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
 
-    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+    def produce_binning(self, reference_data):
+        binning = np.geomspace(
+            np.quantile(reference_data[reference_data > 0.], 0.01),
+            np.quantile(reference_data, 1.0),
+            20,
+        )
+        return binning
+
+    def transform_data(self, data_dict, *args, **kwargs):
         def _preprocess(data):
             preprocessed = np.reshape(data, (data.shape[0], -1))
             return np.sum(preprocessed, -1)
@@ -862,47 +888,53 @@ class HistEtot(Plot):
         feed_dict = {}
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
+        return feed_dict
+    
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+        feed_dict = self.transform_data(data_dict)
 
-        # binning = np.geomspace(1.0, np.amax(feed_dict["Geant4"]), 20)
-        binning = np.geomspace(
-            np.quantile(feed_dict[self.geant_key][feed_dict[self.geant_key] > 0.], 0.01),
-            np.quantile(feed_dict[self.geant_key], 1.0),
-            20,
-        )
         fig, ax0 = self._hist(
             feed_dict,
             xlabel="Deposited energy [GeV]",
-            binning=binning,
+            reference_name=self.geant_key
         )
+
         ax0.set_xscale("log")
         for name in self.save_names("TotalE"):
             self.save_fig(name, fig, ax0)
 
 
-class HistNhits(Plot):
+class HistNhits(Histogram):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
-    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
-        def _preprocess(data):
-            min_voxel = 1e-3  # 1 Mev
-            preprocessed = np.reshape(data, (data.shape[0], -1))
-            return np.sum(preprocessed > min_voxel, -1)
 
+    def produce_binning(self, reference_data):
+        vMax = np.max(reference_data) # TODO method to ensure vMax is not in not-reference
+        return np.linspace(np.min(reference_data), vMax, 20)
+    
+    @staticmethod
+    def _preprocess(data): 
+        min_voxel = 1e-3  # 1 Mev
+        preprocessed = np.reshape(data, (data.shape[0], -1))
+        return np.sum(preprocessed > min_voxel, -1)
+
+    def transform_data(self, data_dict, *args, **kwargs):
         feed_dict = {}
-        vMax = 0.0
         for key in data_dict:
-            feed_dict[key] = _preprocess(data_dict[key])
-            vMax = max(np.max(feed_dict[key]), vMax)
+            feed_dict[key] = HistNhits._preprocess(data_dict[key])
+        return feed_dict
 
-        binning = np.linspace(np.min(feed_dict[self.geant_key]), vMax, 20)
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+        feed_dict = self.transform_data(data_dict)
 
         fig, ax0 = self._hist(
             feed_dict,
             xlabel="Number of hits (> 1 MeV)",
             label_loc="upper right",
-            binning=binning,
+            reference_name=self.geant_key,
             ratio=True,
         )
+
         yScalarFormatter = ScalarFormatterClass(useMathText=True)
         yScalarFormatter.set_powerlimits((0, 0))
         ax0.yaxis.set_major_formatter(yScalarFormatter)
@@ -910,31 +942,37 @@ class HistNhits(Plot):
             self.save_fig(name, fig, ax0)
 
 
-class HistVoxelE(Plot):
+class HistVoxelE(Histogram):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
 
+    def produce_binning(self, reference_data):
+        vMax = np.max(reference_data)
+        vMin = np.amin(reference_data[reference_data > 0])
+        binning = np.geomspace(vMin, vMax, 50)
+        return binning
+
+    @staticmethod
+    def _preprocess(data, nShowers): 
+        nShowers = min(nShowers, data.shape[0])
+        return np.reshape(data[:nShowers], (-1))
+        
+    def transform_data(self, data_dict, *args, **kwargs):
+        nShowers = 1000
+        feed_dict = {}
+        for key in data_dict:
+            feed_dict[key] = HistVoxelE._preprocess(data_dict[key], nShowers)
+
+        return feed_dict
+    
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
 
-        def _preprocess(data, nShowers):
-            nShowers = min(nShowers, data.shape[0])
-            return np.reshape(data[:nShowers], (-1))
+        feed_dict = self.transform_data(data_dict)
 
-        feed_dict = {}
-        nShowers = 1000
-        vMax = 0.0
-        for key in data_dict:
-            feed_dict[key] = _preprocess(data_dict[key], nShowers)
-            vMax = max(np.max(feed_dict[key]), vMax)
-
-        vMin = np.amin(feed_dict[self.geant_key][feed_dict[self.geant_key] > 0])
-        # binning = np.geomspace(vmin, np.quantile(feed_dict["Geant4"], 1.0), 50)
-        # vMin= 1e-4
-        binning = np.geomspace(vMin, vMax, 50)
         fig, ax0 = self._hist(
             feed_dict,
             xlabel="Voxel Energy [GeV]",
-            binning=binning,
+            reference_name=self.geant_key,
             ratio=True,
             normalize=False,
         )
@@ -969,12 +1007,14 @@ class HistMaxELayer(Plot):
             self.save_fig(name, fig, ax0)
 
 
-class HistMaxE(Plot):
+class HistMaxE(Histogram):
     def __init__(self, flags, config) -> None:
         super().__init__(flags, config)
 
-    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
-
+    def produce_binning(self, reference_data):
+        return np.linspace(0, 1, 10)
+    
+    def transform_data(self, data_dict, *args, **kwargs):
         def _preprocess(data):
             preprocessed = np.reshape(data, (data.shape[0], -1))
             preprocessed = np.ma.divide(
@@ -986,11 +1026,13 @@ class HistMaxE(Plot):
         for key in data_dict:
             feed_dict[key] = _preprocess(data_dict[key])
 
-        binning = np.linspace(0, 1, 10)
+        return feed_dict
+    
+    def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
+        feed_dict = self.transform_data(data_dict)
         fig, ax0 = self._hist(
             feed_dict,
             xlabel="Max. voxel/Dep. energy",
-            binning=binning,
         )
         for name in self.save_names("MaxEnergy"):
             self.save_fig(name, fig, ax0)

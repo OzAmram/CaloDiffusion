@@ -166,7 +166,7 @@ class DPM(Sample):
         if sigma_min <= 0 or sigma_max <= 0:
             raise ValueError("sigma_min and sigma_max must not be 0")
         dpm_solver = sampling.DPMSolver(model, extra_args={"E":energy, "layers":layers})
-        return dpm_solver.dpm_solver_fast(
+        solver_results = dpm_solver.dpm_solver_fast(
             x,
             dpm_solver.t(torch.tensor(sigma_max)),
             dpm_solver.t(torch.tensor(sigma_min)),
@@ -175,6 +175,7 @@ class DPM(Sample):
             self.s_noise,
             None,
         )
+        return solver_results
 
     @torch.no_grad()
     def __call__(
@@ -205,7 +206,7 @@ class DPMAdaptive(DPM):
         self.h_init = self.sample_config.get("H_INIT", 0.05)
         self.t_err = self.sample_config.get("T_ERROR", 1e-5)
         self.accept_safety = self.sample_config.get("ACCEPT_SAFETY", 0.81)
-
+        self.max_steps = self.sample_config.get("MAX_STEPS", 10)
         self.model = None 
         self.energy = None 
         self.layers = None
@@ -217,6 +218,7 @@ class DPMAdaptive(DPM):
         if key in eps_cache:
             return eps_cache[key], eps_cache
         sigma = DPM.sigma_fn(t) * x.new_ones([x.shape[0]])
+        sigma = sigma.reshape(-1, *[1 for _ in x.shape[1:]])
         eps = (x - self.model_fn(x, sigma)) / DPM.sigma_fn(t)
         return eps, {key: eps, **eps_cache}
 
@@ -258,7 +260,8 @@ class DPMAdaptive(DPM):
         sigma_min, sigma_max = self.sigmas[-1], self.sigmas[0]
         t_start, t_end = DPM.time_fn(sigma_max), DPM.time_fn(sigma_min)
         noise_sampler = sampling.default_noise_sampler(x)
-        lambda_0, lambda_s = noise_sampler(sigma_min, sigma_max)
+        lambda_0, lambda_s = noise_sampler(sigma_min, sigma_max), noise_sampler(sigma_min, sigma_max)
+
 
         if sigma_min <= 0 or sigma_max <= 0:
             raise ValueError("sigma_min and sigma_max must not be 0")
@@ -278,32 +281,33 @@ class DPMAdaptive(DPM):
         x_prev = x
 
         pid = sampling.PIDStepSizeControl(h_init, self.order, self.eta, self.accept_safety)
-        while s < t_end - self.t_err if forward else s > self.t_err + self.t_err:
-            eps_cache = {}
-            t = torch.minimum(t_end, s + pid.h) if forward else torch.maximum(t_end, s + pid.h)
+        for _ in range(self.max_steps): 
+            if s < t_end - self.t_err if forward else s > self.t_err + self.t_err:
+                eps_cache = {}
+                t = torch.minimum(t_end, s + pid.h) if forward else torch.maximum(t_end, s + pid.h)
 
-            sd, _ = sampling.get_ancestral_step(DPM.sigma_fn(s), DPM.sigma_fn(t), self.eta)
-            t_prime = torch.minimum(t_end, DPM.time_fn(sd))
-            su = (DPM.sigma_fn(t) ** 2 - DPM.sigma_fn(t_prime) ** 2) ** 0.5
+                sd, _ = sampling.get_ancestral_step(DPM.sigma_fn(s), DPM.sigma_fn(t), self.eta)
+                t_prime = torch.minimum(t_end, DPM.time_fn(sd))
+                su = (DPM.sigma_fn(t) ** 2 - DPM.sigma_fn(t_prime) ** 2) ** 0.5
 
-            eps, eps_cache = self.eps(eps_cache, 'eps', x, s)
+                eps, eps_cache = self.eps(eps_cache, 'eps', x, s)
 
-            if self.order == 2:
-                x_low, eps_cache = self.dpm_solver_1_step(x, s, t_prime, eps_cache=eps_cache)
-                x_high, eps_cache = self.dpm_solver_2_step(x, s, t_prime, eps_cache=eps_cache)
-            else:
-                x_low, eps_cache = self.dpm_solver_2_step(x, s, t_prime, r1=1 / 3, eps_cache=eps_cache)
-                x_high, eps_cache = self.dpm_solver_3_step(x, s, t_prime, eps_cache=eps_cache)
+                if self.order == 2:
+                    x_low, eps_cache = self.dpm_solver_1_step(x, s, t_prime, eps_cache=eps_cache)
+                    x_high, eps_cache = self.dpm_solver_2_step(x, s, t_prime, eps_cache=eps_cache)
+                else:
+                    x_low, eps_cache = self.dpm_solver_2_step(x, s, t_prime, r1=1 / 3, eps_cache=eps_cache)
+                    x_high, eps_cache = self.dpm_solver_3_step(x, s, t_prime, eps_cache=eps_cache)
 
-            delta = torch.maximum(atol, rtol * torch.maximum(x_low.abs(), x_prev.abs()))
-            error = torch.linalg.norm((x_low - x_high) / delta) / x.numel() ** 0.5
-            accept = pid.propose_step(error, lambda_0, lambda_s)
+                delta = torch.maximum(atol, rtol * torch.maximum(x_low.abs(), x_prev.abs()))
+                error = torch.linalg.norm((x_low - x_high) / delta) / x.numel() ** 0.5
+                accept = pid.propose_step(error, lambda_0, lambda_s)
 
-            if accept:
-                x_prev = x_low
-                x = x_high + su * self.s_noise * noise_sampler(DPM.sigma_fn(s), DPM.sigma_fn(t))
-                s = t
-                _, lambda_s = noise_sampler(x, self.sigma_fn(s))
+                if accept:
+                    x_prev = x_low
+                    x = x_high + su * self.s_noise * noise_sampler(DPM.sigma_fn(s), DPM.sigma_fn(t))
+                    s = t
+                    lambda_s = noise_sampler(x, self.sigma_fn(s))
 
         return x
 
@@ -312,7 +316,7 @@ class DPMPP2S(DPM):
     def sample(self, model, x, num_steps, energy, layers):
         noise_sampler = sampling.default_noise_sampler(x)
         s_in = x.new_ones([x.shape[0]])
-
+        s_in = s_in.reshape(-1, *[1 for _ in x.shape[1:]])
         for i in range(len(self.sigmas) - 1):
             denoised = model.denoise(x, sigma=self.sigmas[i] * s_in, E=energy, layers=layers)
             sigma_down, sigma_up = sampling.get_ancestral_step(
@@ -335,12 +339,7 @@ class DPMPP2S(DPM):
             ).expm1() * denoised_2
         # Noise addition
         if self.sigmas[i + 1] > 0:
-            x = (
-                x
-                + noise_sampler(self.sigmas[i], self.sigmas[i + 1])
-                * self.s_noise
-                * sigma_up
-            )
+            x += noise_sampler(self.sigmas[i], self.sigmas[i + 1]) * self.s_noise * sigma_up
         return x
 
 
@@ -363,7 +362,7 @@ class DPMPPSDE(DPM):
         sigma_min, sigma_max = self.sigmas[self.sigmas > 0].min(), self.sigmas.max()
         noise_sampler = sampling.BrownianTreeNoiseSampler(x, sigma_min, sigma_max)
         s_in = x.new_ones([x.shape[0]])
-
+        s_in = s_in.reshape(-1, *[1 for _ in x.shape[1:]])
         for i in range(len(self.sigmas) - 1):
             denoised = model(x, sigma=self.sigmas[i] * s_in, E=energy, layers=layers)
 
@@ -424,6 +423,7 @@ class DPMPP2M(DPM):
     def sample(self, model, x, num_steps, energy, layers):
         """DPM-Solver++(2M)."""
         s_in = x.new_ones([x.shape[0]])
+        s_in = s_in.reshape(-1, *[1 for _ in x.shape[1:]])
         old_denoised = None
 
         for i in range(len(self.sigmas) - 1):
@@ -467,6 +467,7 @@ class DPMPP2MSDE(DPM):
 
     def sample(self, model, x, num_steps, energy, layers):
         s_in = x.new_ones([x.shape[0]])
+        s_in = s_in.reshape(-1, *[1 for _ in x.shape[1:]])
 
         sigma_min, sigma_max = self.sigmas[self.sigmas > 0].min(), self.sigmas.max()
         noise_sampler = sampling.BrownianTreeNoiseSampler(x, sigma_min, sigma_max)
@@ -529,6 +530,7 @@ class DPMPP3MSDE(DPM):
         sigma_min, sigma_max = self.sigmas[self.sigmas > 0].min(), self.sigmas.max()
         noise_sampler = sampling.BrownianTreeNoiseSampler(x, sigma_min, sigma_max)
         s_in = x.new_ones([x.shape[0]])
+        s_in = s_in.reshape(-1, *[1 for _ in x.shape[1:]])
 
         denoised_1, denoised_2 = None, None
         h_1, h_2 = None, None

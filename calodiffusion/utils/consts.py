@@ -155,6 +155,46 @@ hgcal_william_embed_params = {
     "layers_std": 2.98382,
 }
 
+hgcal_pion_embed_params = {
+    "logit_mean": -17.8980,
+    "logit_std": 2.23132,
+    "logit_min": -13.81551,
+    "logit_max": 0.2909,
+    "embed_mean": 0.0,
+    "embed_std": 1.0,
+    "totalE_mean": 0.3482,
+    "totalE_std": 0.33421,
+    "layers_mean": -4.4724, 
+    "layers_std": 3.88548,
+}
+
+
+hgcal_photon_embed_params = {
+    "logit_mean": -17.8664,
+    "logit_std": 2.34207,
+    "logit_min": -13.,
+    "logit_max": 13.,
+    "embed_mean": 0.0,
+    "embed_std": 1.0,
+    "totalE_mean": 1.0270,
+    "totalE_std": 0.09394,
+    "layers_mean": -11.6495,
+    "layers_std": 7.31088,
+}
+
+blank = {
+    "logit_mean": 0.0,
+    "logit_std": 1.0,
+    "logit_min": -13.,
+    "logit_max": 13.,
+    "embed_mean": 0.0,
+    "embed_std": 1.0,
+    "totalE_mean": 0.0,
+    "totalE_std": 1.0,
+    "layers_mean": 0.0,
+    "layers_std": 1.0,
+}
+
 
 dataset_params = {
     0: dataset0_params,
@@ -166,4 +206,6 @@ dataset_params = {
     100: hgcal_william_v1_params,  # HGCal
     101: hgcal_william_v2_params,  # HGCal
     111: hgcal_william_embed_params,  # HGCal, embedding first
+    120: hgcal_pion_embed_params,  # HGCal, pion central prod, embedding first
+    121: hgcal_photon_embed_params,  # HGCal, photon central prod, embedding first
 }

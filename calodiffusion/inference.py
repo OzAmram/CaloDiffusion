@@ -134,28 +134,32 @@ def process_data_dict(flags, config):
     if flags.hgcal: 
         shape_embed = config.get("SHAPE_FINAL")
         NN_embed = hgcal_utils.HGCalConverter(bins=shape_embed, geom_file=config["BIN_FILE"])
-        NN_embed.init()
+        if(flags.plot_reshape): N_embed.init()
     
     elif(dataset_num <= 1): 
         bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
         NN_embed = utils.GeomConverter(bins)
 
 
-    generated, energies = LoadSamples(flags.generated, flags, config, geom_conv, NN_embed=NN_embed)
+    total_evts = None
 
-    # TODO Sub for geant_only version
-    total_evts = energies.shape[0]
+    if(not flags.geant_only):
+        generated, energy = LoadSamples(flags.generated, flags, config, geom_conv, NN_embed=NN_embed)
+        total_evts = generated.shape[0]
 
     data = []
+    energies = []
     for dataset in config["EVAL"]:
-        showers, energies = LoadSamples(f"{flags.data_folder}/{dataset}", flags, config, geom_conv, NN_embed)
+        showers, energy = LoadSamples(f"{flags.data_folder}/{dataset}", flags, config, geom_conv, NN_embed)
         data.append(showers)
-        if data[-1].shape[0] == total_evts: 
+        energies.append(energy)
+        if data[-1].shape[0] >= flags.nevts: 
             break
 
     if len(data) == 0: 
         raise ValueError("No Evaluation Data passed, please change the `EVAL` field of the config")
     
+    energies = np.concatenate(energies)
     data_dict = {
         "Geant4": np.concatenate(data),
     }

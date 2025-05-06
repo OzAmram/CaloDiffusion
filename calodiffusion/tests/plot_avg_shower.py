@@ -1,4 +1,6 @@
-from utils import *
+from calodiffusion.utils.utils import *
+from calodiffusion.utils.plots import plot_shower_layer
+from calodiffusion.utils.HGCal_utils import *
 import argparse
 import os
 import h5py
@@ -20,10 +22,10 @@ hgcal = dataset_config.get('HGCAL', False)
 if (not os.path.exists(flags.outdir)): os.system("mkdir " + flags.outdir)
 f = h5py.File(flags.fin)
 
-scale_fac = 200. if hgcal else (1/1000.)
+shower_scale = dataset_config.get("SHOWERSCALE", 0.001)
 nShowers = max(flags.nShowers, 10000)
 
-showers = f['showers'][:nShowers] * scale_fac
+showers = f['showers'][:nShowers] * shower_scale
 
 
 if(flags.EMin > 0.):
@@ -35,14 +37,14 @@ if(flags.EMin > 0.):
 if(hgcal):
     print("Embedding HGCal")
     vmin = 1e-4
-    shape_plot = dataset_config['SHAPE_FINAL']
+    shape_plot = dataset_config['SHAPE_PAD']
     NN_embed = HGCalConverter(bins = shape_plot, geom_file = dataset_config['BIN_FILE'])
     trainable = dataset_config.get('TRAINABLE_EMBED', False)
     if(not trainable): NN_embed.init()
 
 
     showers = showers[:,:, :NN_embed.geom.max_ncell]
-    showers =torch.from_numpy(showers.astype(np.float32)).reshape(dataset_config['SHAPE_PAD'])
+    showers =torch.from_numpy(showers.astype(np.float32))
     norm_before = torch.sum(showers)
     showers = torch.squeeze(NN_embed.enc(showers)).detach().numpy()
     norm_after = np.sum(showers)

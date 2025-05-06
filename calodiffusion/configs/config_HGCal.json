@@ -9,7 +9,7 @@
     'VAL_FILES':[ 'HGCal_showers_william_v2/HGCal_showers12.h5'],
     'EVAL':[ 'HGCal_showers_william_v2/HGCal_showers13.h5', 'HGCal_showers_william_v2/HGCal_showers14.h5'],
     'HGCAL' : True,
-    'BIN_FILE': '/home/oamram/CaloDiffusion/HGCalShowers/geom_william.pkl',
+    'BIN_FILE': '/home/oamram/CaloDiffusion/HGCalShowers/geoms/geom_william.pkl',
     'PART_TYPE' : 'photon',
     'AVG_SHOWER_LOC' : 'dataset_1_photons_avg_showers.h5',
     'DATASET_NUM' : 111,
@@ -54,6 +54,6 @@
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : 'NN-pre-embed',
-    'CHECKPOINT_NAME':'HGCal_mar3',
+    'CHECKPOINT_NAME':'HGCal_april8',
 }
 

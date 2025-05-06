@@ -6,6 +6,8 @@ import os
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 import matplotlib.ticker as mtick
+from matplotlib.colors import LogNorm as LN
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import mplhep as hep
 
 from calodiffusion.utils import utils
@@ -481,8 +483,12 @@ class AverageShowerWidth(Plot):
             sum_energies = np.sum(
                 np.reshape(energies, (energies.shape[0], energies.shape[1], -1)), -1
             )
+            totalE = np.sum(sum_energies, axis=(1,2))
+            layerE = np.sum(sum_energies, axis=2)
+            layer_zero = layerE < (1e-6 * totalE)
             ec = np.reshape(ec, (ec.shape[0], ec.shape[1], -1))  # get value per layer
             ec = np.ma.divide(np.sum(ec, -1), sum_energies).filled(0)
+            ec[layer_zero] = 0.
             return ec
 
         feed_dict_phi = {}
@@ -493,6 +499,7 @@ class AverageShowerWidth(Plot):
         for key in data_dict:
 
             data = data_dict[key]
+
             phi_preprocessed = np.reshape(
                 data, (data.shape[0], self.shape_plot[2], self.shape_plot[3], -1)
             )
@@ -561,8 +568,8 @@ class ELayer(Plot):
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         def _preprocess(data):
             preprocessed = np.reshape(data, (data.shape[0], self.shape_plot[2], -1))
-            layer_sum = np.sum(preprocessed, -1)
-            totalE = np.sum(preprocessed, -1)
+            layer_sum = np.sum(preprocessed, axis=-1)
+            totalE = np.sum(preprocessed,axis=(1,2)).reshape(-1,1)
             layer_mean = np.mean(layer_sum, 0)
             layer_std = np.std(layer_sum, 0) / layer_mean
             layer_nonzero = layer_sum > (1e-6 * totalE)
@@ -719,7 +726,7 @@ class RadialEnergyHGCal(Plot):
 
         feed_dict = {}
         for key in data_dict:
-            nrings = geom.nrings
+            nrings = int(np.max(geom.nrings))
             r_bins = np.zeros((data_dict[key].shape[0], nrings))
             for i in range(nrings):
                 mask = r_vals == i
@@ -742,7 +749,8 @@ class RCenterHGCal(Plot):
     def __call__(self, data_dict: dict[str, np.ndarray], energies: np.ndarray) -> None:
         geom_file = self.config.get("BIN_FILE", "")
         geom = HGCal_utils.load_geom(geom_file)
-        r_vals = geom.ring_map[:, : geom.max_ncell]
+        r_vals_manual = (geom.xmap[:, : geom.max_ncell]**2 + geom.ymap[:, : geom.max_ncell]**2)**0.5
+        r_vals = r_vals_manual
 
         feed_dict_C_hist = {}
         feed_dict_C_avg = {}
@@ -750,8 +758,19 @@ class RCenterHGCal(Plot):
         feed_dict_W_avg = {}
         for key in data_dict:
             # center
+            data = data_dict[key]
+            #filter out the negligligible layers
+            preprocessed = np.reshape(data, (data.shape[0], self.shape_plot[2], -1))
+            layer_sum = np.sum(preprocessed, axis=-1)
+            totalE = np.sum(preprocessed,axis=(1,2)).reshape(-1,1)
+            layer_zero = layer_sum < (1e-6 * totalE)
+
+
             r_centers = WeightedMean(r_vals, np.squeeze(data_dict[key]))
             r2_centers = WeightedMean(r_vals, np.squeeze(data_dict[key]), power=2)
+            r_centers[layer_zero] = 0.
+            r2_centers[layer_zero] = 0.
+
             feed_dict_C_hist[key] = np.reshape(r_centers, (-1))
             feed_dict_C_avg[key] = np.mean(r_centers, axis=0)
 
@@ -801,9 +820,18 @@ class PhiCenterHGCal(Plot):
         feed_dict_W_avg = {}
         for key in data_dict:
             # center
+            data = data_dict[key]
+            preprocessed = np.reshape(data, (data.shape[0], self.shape_plot[2], -1))
+            layer_sum = np.sum(preprocessed, axis=-1)
+            totalE = np.sum(preprocessed,axis=(1,2)).reshape(-1,1)
+            layer_zero = layer_sum < (1e-6 * totalE)
+
             phi_centers, phi_widths = ang_center_spread(
                 phi_vals, np.squeeze(data_dict[key])
             )
+
+            phi_centers[layer_zero] = 0.
+            phi_widths[layer_zero] = 0.
             feed_dict_C_hist[key] = np.reshape(phi_centers, (-1))
             feed_dict_C_avg[key] = np.mean(phi_centers, axis=0)
 
@@ -1062,3 +1090,69 @@ class Plot_Shower_2D(Plot):
                     vmax, vmin = self.plot_shower(
                         shower, fout=fout_ex, title=title, vmax=vmax, vmin=vmin
                     )
+
+
+
+def plot_shower_layer(data, fname = "", title=None, fig=None, subplot=(1, 1, 1),
+                     vmin = None, vmax=None, colbar='alone', r_edges = None):
+    """ draws the shower in layer_nr only """
+    if fig is None:
+        fig = plt.figure(figsize=(5, 5), dpi=200)
+
+    #r,phi
+    shape = data.shape
+    nPhi = shape[0]
+    nRad = shape[1]
+
+    pts_per_angular_bin = 50
+    num_splits = pts_per_angular_bin * nPhi
+
+
+    if(r_edges is None):
+        r_edges = np.arange(nRad + 1) 
+    max_r = np.amax(r_edges)
+
+    phi_bins = 2.*np.pi* np.arange(num_splits+1)/ num_splits
+
+    theta, rad = np.meshgrid(phi_bins, r_edges)
+    data_reshaped = data.reshape(nPhi, -1)
+    data_repeated = np.repeat(data_reshaped, (pts_per_angular_bin), axis=0)
+
+    ax = fig.add_subplot(*subplot, polar=True)
+    #ax = plt.subplot(111, projection='polar')
+    ax.grid(False)
+    if vmax is None: vmax = data.max()
+    if vmin is None: vmin = 1e-2 if data.max() > 1e-3 else data.max()/100.
+
+
+    pcm = ax.pcolormesh(theta, rad, data_repeated.T+1e-16, norm=LN(vmin=vmin, vmax=vmax))
+    ax.axes.get_xaxis().set_visible(False)
+    ax.axes.get_yaxis().set_visible(False)
+    ax.set_rmax(max_r)
+
+    if title is not None:
+        ax.set_title(title)
+
+    if colbar == 'alone':
+        axins = inset_axes(fig.get_axes()[-1], width='100%',
+                           height="15%", loc='lower center', bbox_to_anchor=(0., -0.2, 1, 1),
+                           bbox_transform=fig.get_axes()[-1].transAxes,
+                           borderpad=0)
+        cbar = plt.colorbar(pcm, cax=axins, fraction=0.2, orientation="horizontal")
+        cbar.set_label(r'Energy (GeV)', y=0.83, fontsize=12)
+    elif colbar == 'both':
+        axins = inset_axes(fig.get_axes()[-1], width='200%',
+                           height="15%", loc='lower center',
+                           bbox_to_anchor=(-0.625, -0.2, 1, 1),
+                           bbox_transform=fig.get_axes()[-1].transAxes,
+                           borderpad=0)
+        cbar = plt.colorbar(pcm, cax=axins, fraction=0.2, orientation="horizontal")
+        cbar.set_label(r'Energy (GeV)', y=0.83, fontsize=12)
+    elif colbar == 'None':
+        pass
+
+    plt.subplots_adjust(bottom=0.25, left = 0.02, right = 0.98, top = 0.95)
+
+
+    if fname is not None:
+        plt.savefig(fname, facecolor='white')

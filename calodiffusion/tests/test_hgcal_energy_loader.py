@@ -192,14 +192,14 @@ def test_hgcal_energy_loader(flags, config):
     # print(data_rev[0,0,10])
     print("AVG DIFF: ", torch.mean(torch.tensor(data_rev[:1000]) - raw_shower[:1000]))
 
-    data_dict = {}
-    data_dict["Geant4"] = raw_shower
-    data_dict["Embed- Pre-process - ReverseNorm - Decode"] = data_rev
-    flags.model = "test"
-    rad_plotter = RadialEnergyHGCal(flags, config)
-    rad_plotter(data_dict, e_rev)
-
     if False:
+        data_dict = {}
+        data_dict["Geant4"] = raw_shower
+        data_dict["Embed- Pre-process - ReverseNorm - Decode"] = data_rev
+        flags.model = "test"
+        rad_plotter = RadialEnergyHGCal(flags, config)
+        rad_plotter(data_dict, e_rev)
+
         layers = [3, 10, 24]
         geo = NN_embed.geom
 

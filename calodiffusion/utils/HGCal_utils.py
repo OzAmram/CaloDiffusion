@@ -443,6 +443,7 @@ def load_geom(geom_filename):
     # angle from 0 to 2pi, arctan2 has (y,x) convention for some reason
     geom.theta_map = np.arctan2(geom.xmap, geom.ymap) % (2.0 * np.pi)
     geom.max_ncell = int(round(np.amax(geom.ncells)))
+    #print("ncell max",  geom.max_ncell)
     return geom
 
 

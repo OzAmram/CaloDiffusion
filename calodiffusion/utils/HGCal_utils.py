@@ -350,10 +350,21 @@ class Decoder(nn.Module):
 
 def generate_sparse_mat(in_map):
     #Generate a 'sparse' matrix for the decoding step
-    #instead of splitting energies over multi cells (average), sample from them
-    rand_mat = torch.rand_like(in_map)
-    sparse_mat = rand_mat < in_map
-    print(sparse_mat.shape)
+    #instead of splitting energies over multi cells (average), sample from them like probabilities
+    rand_mat = torch.rand_like(in_map) * (in_map > 0) + in_map
+    maxs = torch.argmax(rand_mat, dim=-2)
+
+    idxs = range(rand_mat.shape[-1])
+    #make sure to keep at least one entry, by setting max to above thresh
+    eps = 1e-6
+    rand_mat[:, maxs, idxs] = 1.0 + eps
+
+    sparse_mat = (rand_mat > 1.0).to(torch.float32)
+
+    #conserve energy -> each column must add to one
+    sparse_mat_norm = torch.sum(sparse_mat, dim=-2, keepdim=True)
+    sparse_mat /= sparse_mat_norm
+
     return sparse_mat
 
 

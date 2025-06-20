@@ -833,7 +833,7 @@ def conversion_preprocess(file_path):
 def get_files(field, folder=""):
     if(isinstance(field, list)):
         if(len(folder) > 0): 
-            out = [folder + "/" + file for file in field]
+            out = [os.path.join(folder, file) for file in field]
         else: 
             out = field
         return out
@@ -895,7 +895,7 @@ def load_data(args, config, eval=False, NN_embed=None):
         if args.nevts > 0:
             tag = ".n%i.npz" % args.nevts
         # path of pre-processed data files
-        path_clean = os.path.join(args.data_folder, dataset + tag)
+        path_clean = dataset + tag
         shape = config.get("SHAPE_PAD")
         if shape is None:
             shape = config.get("SHAPE_FINAL")

@@ -830,9 +830,13 @@ def conversion_preprocess(file_path):
         h5f.create_dataset("mask", data=mask)
 
 
-def get_files(field):
+def get_files(field, folder=""):
     if(isinstance(field, list)):
-        return field
+        if(len(folder) > 0): 
+            out = [folder + "/" + file for file in field]
+        else: 
+            out = field
+        return out
     elif(isinstance(field, str)):
         if(not os.path.exists(field)):
             print("File list %s not found" % field)
@@ -861,13 +865,13 @@ def load_data(args, config, eval=False, NN_embed=None):
     hgcal = config.get("HGCAL", False)
 
     if eval:
-        files = get_files(config["EVAL"])
+        files = get_files(config["EVAL"], folder=args.data_folder)
         val_file_list = []
     else:
         if hasattr(args, "seed"):
             torch.manual_seed(args.seed)
-        files = get_files(config["FILES"])
-        val_file_list = get_files(config.get("VAL_FILES", []))
+        files = get_files(config["FILES"], folder=args.data_folder)
+        val_file_list = get_files(config.get("VAL_FILES", []), folder=args.data_folder)
 
     NN_embed = None
     if pre_embed:

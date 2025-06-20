@@ -47,6 +47,9 @@ def test_parser():
     parser.add_argument(
         "-n", "--nevts", type=int, default=-1, help="Number of events to load"
     )
+    parser.add_argument(
+        "--layer-only", default=False, action='store_true', help="Only layers"
+    )
     parser.add_argument("--plot-label", default="", help="Add to plot")
 
     flags = parser.parse_args()
@@ -57,7 +60,8 @@ def test_parser():
 def test_hgcal_energy_loader(flags, config):
     hgcal = True
 
-    dataset = os.path.join(flags.data_folder, config["FILES"][0])
+    files = get_files(config["FILES"])[:3]
+    datasets = [os.path.join(flags.data_folder, file) for file in files]
 
     batch_size = config["BATCH"]
     dataset_num = config.get("DATASET_NUM", 2)
@@ -83,44 +87,60 @@ def test_hgcal_energy_loader(flags, config):
 
     e_key = "gen_info"
 
-    with h5.File(dataset, "r") as h5f:
-        gen = h5f[e_key][0 : int(flags.nevts)].astype(np.float32)
-        gen[:, 0] *= shower_scale
-        raw_shower = (
-            h5f["showers"][0 : int(flags.nevts)].astype(np.float32) * shower_scale
-        )
-        raw_shower = raw_shower[:, :, :max_cells]
+    raw_shower = []
+    data = []
+    layers = []
+    e = []
 
-    # process this dataset
-    data_, e_, layers = DataLoader(
-        dataset,
-        shape=config["SHAPE_PAD"],
-        emax=config["EMAX"],
-        emin=config["EMIN"],
-        hgcal=hgcal,
-        nevts=flags.nevts,
-        binning_file=geom_file,
-        max_deposit=config[
-            "MAXDEP"
-        ],  # noise can generate more deposited energy than generated
-        logE=config["logE"],
-        showerMap=config["SHOWERMAP"],
-        shower_scale=shower_scale,
-        max_cells=max_cells,
-        dataset_num=dataset_num,
-        orig_shape=orig_shape,
-        config=config,
-        embed=pre_embed,
-        NN_embed=NN_embed,
-    )
+    for dataset in datasets:
+        with h5.File(dataset, "r") as h5f:
+            raw_shower_ = (
+                h5f["showers"][0 : int(flags.nevts)].astype(np.float32) * shower_scale
+            )
+            raw_shower_ = raw_shower_[:, :, :max_cells]
 
-    print(data_.shape)
+            # process this dataset
+            data_, e_, layers_ = DataLoader(
+                dataset,
+                shape=config["SHAPE_PAD"],
+                emax=config["EMAX"],
+                emin=config["EMIN"],
+                hgcal=hgcal,
+                nevts=flags.nevts,
+                binning_file=geom_file,
+                max_deposit=config[
+                    "MAXDEP"
+                ],  # noise can generate more deposited energy than generated
+                logE=config["logE"],
+                showerMap=config["SHOWERMAP"],
+                shower_scale=shower_scale,
+                max_cells=max_cells,
+                dataset_num=dataset_num,
+                orig_shape=orig_shape,
+                config=config,
+                embed=pre_embed,
+                NN_embed=NN_embed,
+            )
+            e.append(e_)
+            layers.append(layers_)
+            if(not flags.layer_only):
+                raw_shower.append(raw_shower_)
+                data.append(data_)
+            else:
+                del raw_shower_, data_
+
+    e = np.concatenate(e)
+    layers = np.concatenate(layers)
+        
+    if(not flags.layer_only):
+        data = np.concatenate(data)
+        data = np.reshape(data, shape_pad)
+        raw_shower = np.concatenate(raw_shower)
+
     print(layers.shape)
-
     print(shape_pad)
-    data = np.reshape(data_, shape_pad)
 
-    if not pre_embed:
+    if not pre_embed and not flags.layer_only:
         tdata = torch.tensor(data)
 
         data_enc = apply_in_batches(NN_embed.enc, tdata, device=device)
@@ -134,6 +154,28 @@ def test_hgcal_energy_loader(flags, config):
 
     else:
         data_enc = data_dec = data
+
+    print("ShowerMap %s" % config["SHOWERMAP"])
+    print("RAW: \n")
+    # print(raw_shower[0,0,10])
+    print("PREPROCESSED: \n")
+    # print(data_[0,0,10])
+    if layers is not None:
+        totalE, layers_ = layers[:, 0], layers[:, 1:]
+        print("TotalE MEAN %.4f, STD: %.5f" % (np.mean(totalE), np.std(totalE)))
+        print("LAYERS MEAN %.4f, STD: %.5f" % (np.mean(layers_), np.std(layers_)))
+
+    mean = np.mean(data_enc)
+    std = np.std(data_enc)
+    maxE = np.amax(data_enc)
+    minE = np.amin(data_enc)
+
+    maxEn = np.amax(e_)
+    minEn = np.amin(e_)
+    print("VOX MEAN: %.4f STD : %.5f" % (mean, std))
+    print("MAX: %.4f MIN : %.5f" % (maxE, minE))
+    print("maxE %.2f minE %.2f" % (maxEn, minEn))
+
 
     data_rev, e_rev = ReverseNorm(
         data_dec,
@@ -157,26 +199,6 @@ def test_hgcal_energy_loader(flags, config):
 
     data_rev[data_rev < flags.EMin] = 0.0
 
-    print("ShowerMap %s" % config["SHOWERMAP"])
-    print("RAW: \n")
-    # print(raw_shower[0,0,10])
-    print("PREPROCESSED: \n")
-    # print(data_[0,0,10])
-    mean = np.mean(data_enc)
-    std = np.std(data_enc)
-    maxE = np.amax(data_enc)
-    minE = np.amin(data_enc)
-
-    maxEn = np.amax(e_)
-    minEn = np.amin(e_)
-    print("MEAN: %.4f STD : %.5f" % (mean, std))
-    print("MAX: %.4f MIN : %.5f" % (maxE, minE))
-    print("maxE %.2f minE %.2f" % (maxEn, minEn))
-
-    if layers is not None:
-        totalE, layers_ = layers[:, 0], layers[:, 1:]
-        print("TotalE MEAN %.4f, STD: %.5f" % (np.mean(totalE), np.std(totalE)))
-        print("LAYERS MEAN %.4f, STD: %.5f" % (np.mean(layers_), np.std(layers_)))
     print("REVERSED: \n")
     print("AVG DIFF: ", np.mean(data_rev[:100] - raw_shower[:100]))
 

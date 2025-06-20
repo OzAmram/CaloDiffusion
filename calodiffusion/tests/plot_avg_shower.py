@@ -60,9 +60,11 @@ if(hgcal):
     print(enc_mat_reshape[0,:,1,1])
 
     eps = 1e-4
+    """
     for i in range(enc_mat.shape[2]):
         if( abs(np.sum(enc_mat[0,:,i]) - 1.0) > eps):
             print(i)
+    """
 
 
 

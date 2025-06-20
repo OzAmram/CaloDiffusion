@@ -830,6 +830,21 @@ def conversion_preprocess(file_path):
         h5f.create_dataset("mask", data=mask)
 
 
+def get_files(field):
+    if(isinstance(field, list)):
+        return field
+    elif(isinstance(field, str)):
+        if(not os.path.exists(field)):
+            print("File list %s not found" % field)
+            return []
+        with open(field, "r") as f:
+            f_list = [line.strip() for line in f]
+            return f_list
+    else:
+        print("Unrecognized file param ", field)
+        return []
+
+
 def load_data(args, config, eval=False, NN_embed=None):
 
     nholdout = config.get("HOLDOUT", 0)
@@ -846,13 +861,13 @@ def load_data(args, config, eval=False, NN_embed=None):
     hgcal = config.get("HGCAL", False)
 
     if eval:
-        files = config["EVAL"]
+        files = get_files(config["EVAL"])
         val_file_list = []
     else:
         if hasattr(args, "seed"):
             torch.manual_seed(args.seed)
-        files = config["FILES"]
-        val_file_list = config.get("VAL_FILES", [])
+        files = get_files(config["FILES"])
+        val_file_list = get_files(config.get("VAL_FILES", []))
 
     NN_embed = None
     if pre_embed:

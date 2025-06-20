@@ -110,6 +110,7 @@ def DataLoaderHGCal(
     binning_file="",
 ):
 
+    print(file_name)
     with h5.File(file_name, "r") as h5f:
         # holdout events for testing
         if nevts == -1 and nholdout > 0:
@@ -131,7 +132,6 @@ def DataLoaderHGCal(
     gen_min = np.array(emin)
     gen_max = np.array(emax)
 
-    print(shower.shape)
     if embed and NN_embed is None:
         trainable = config.get("TRAINABLE_EMBED", False)
         NN_embed = HGCalConverter(
@@ -144,7 +144,6 @@ def DataLoaderHGCal(
 
     if embed:
         shower = NN_embed.enc_batches(torch.Tensor(shower))
-    print(shower.shape)
 
     shower_preprocessed, layerE_preprocessed = preprocess_hgcal_shower(
         shower,
@@ -358,6 +357,14 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay, trainable=False):
     weight_mat = torch.zeros((num_alpha_bins, num_r_bins, dim_in))
     mask = torch.zeros((num_alpha_bins, num_r_bins, dim_in))
 
+    #should make this not hardcoded...
+    inner = 23
+    max_ring = 100
+    outer_step = 3
+    r_binning = np.arange(0,max_ring, 1)
+
+    r_binning[inner:] = (r_binning[inner:]-inner)//outer_step + inner
+
     step_size = 2.0 * np.pi / num_alpha_bins
     ang_bins = torch.arange(0, 2.0 * np.pi + step_size, step_size)
     ang_bins += (
@@ -368,9 +375,6 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay, trainable=False):
     eps2 = 1e-2
     cell_alphas = torch.tensor(geom.theta_map[ilay][:dim_in])
     cell_ang_bins = torch.bucketize(cell_alphas + eps, ang_bins, right=True)
-    # print(ang_bins)
-    # print(cell_alphas[1:7])
-    # print(cell_ang_bins)
     # last bin = first bin b/c phi periodic
     cell_ang_bins[cell_ang_bins == num_alpha_bins] = 0
     diffs = torch.abs(cell_alphas - ang_bins[cell_ang_bins - 1])
@@ -386,7 +390,8 @@ def init_map(num_alpha_bins, num_r_bins, geom, ilay, trainable=False):
     for i in range(1, ncells):
         # matrix is size of largest layer, but only process up to size of this layer
         a_bin = cell_ang_bins[i] % num_alpha_bins
-        r_bin = int(round(geom.ring_map[ilay, i]))
+        ring_idx = int(round(geom.ring_map[ilay, i]))
+        r_bin = r_binning[ring_idx]
         if close_boundaries[i]:
             weight_mat[a_bin, r_bin, i] = 0.5
             weight_mat[a_bin - 1, r_bin, i] = 0.5
@@ -444,6 +449,7 @@ def load_geom(geom_filename):
     geom.theta_map = np.arctan2(geom.xmap, geom.ymap) % (2.0 * np.pi)
     geom.max_ncell = int(round(np.amax(geom.ncells)))
     #print("ncell max",  geom.max_ncell)
+    #print("rbins",  np.amax(geom.ring_map) +1)
     return geom
 
 

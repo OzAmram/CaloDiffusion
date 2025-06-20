@@ -149,11 +149,17 @@ def process_data_dict(flags, config):
 
     data = []
     energies = []
-    for dataset in config["EVAL"]:
-        showers, energy = LoadSamples(f"{flags.data_folder}/{dataset}", flags, config, geom_conv, NN_embed)
+
+    eval_files = utils.get_files(config["EVAL"])
+    for dataset in eval_files:
+        showers, energy = LoadSamples(dataset, flags, config, geom_conv, NN_embed)
         data.append(showers)
         energies.append(energy)
-        if data[-1].shape[0] >= flags.nevts: 
+
+        total_events = 0
+        for d in data:
+            total_events += d.shape[0]
+        if total_events >= flags.nevts: 
             break
 
     if len(data) == 0: 

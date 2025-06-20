@@ -156,16 +156,16 @@ hgcal_william_embed_params = {
 }
 
 hgcal_pion_embed_params = {
-    "logit_mean": -17.8980,
-    "logit_std": 2.23132,
-    "logit_min": -13.81551,
-    "logit_max": 0.2909,
+    "logit_mean": -18.1561,
+    "logit_std": 1.56255,
+    "logit_min": -13.,
+    "logit_max": 13.,
     "embed_mean": 0.0,
     "embed_std": 1.0,
-    "totalE_mean": 0.3482,
-    "totalE_std": 0.33421,
-    "layers_mean": -4.4724, 
-    "layers_std": 3.88548,
+    "totalE_mean": 0.5389,
+    "totalE_std": 0.30325,
+    "layers_mean": -6.7899,
+    "layers_std": 5.64943,
 }
 
 

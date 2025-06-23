@@ -152,7 +152,7 @@ def process_data_dict(flags, config):
     data = []
     energies = []
 
-    eval_files = utils.get_files(config["EVAL"])
+    eval_files = utils.get_files(config["EVAL"], folder=flags.data_folder)
     for dataset in eval_files:
         showers, energy = LoadSamples(dataset, flags, config, geom_conv, NN_embed)
         data.append(showers)

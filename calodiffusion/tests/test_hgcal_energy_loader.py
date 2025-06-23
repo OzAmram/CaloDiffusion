@@ -61,7 +61,6 @@ def test_hgcal_energy_loader(flags, config):
     hgcal = True
 
     files = get_files(config["FILES"])[:3]
-    datasets = [os.path.join(flags.data_folder, file) for file in files]
 
     batch_size = config["BATCH"]
     dataset_num = config.get("DATASET_NUM", 2)

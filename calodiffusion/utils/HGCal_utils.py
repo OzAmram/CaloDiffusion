@@ -182,6 +182,7 @@ def ReverseNormHGCal(
     NN_embed=None,
     binning_file="",
     config=None,
+    sparse_decoding=False,
 ):
     """Revert the transformations applied to the training set"""
 
@@ -240,7 +241,7 @@ def ReverseNormHGCal(
         NN_embed.init(norm=True, dataset_num=dataset_num)
 
     if embed:
-        data = NN_embed.dec_batches(data)
+        data = NN_embed.dec_batches(data, sparse_decoding=sparse_decoding)
 
     # Per layer energy normalization
     if "layer" in showerMap:
@@ -351,6 +352,7 @@ class Decoder(nn.Module):
 def generate_sparse_mat(in_map):
     #Generate a 'sparse' matrix for the decoding step
     #instead of splitting energies over multi cells (average), sample from them like probabilities
+    print(in_map.shape)
     rand_mat = torch.rand_like(in_map) * (in_map > 0) + in_map
     maxs = torch.argmax(rand_mat, dim=-2)
 

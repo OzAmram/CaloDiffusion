@@ -63,10 +63,11 @@ def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, jo
 @click.option("--sample-steps", default=400, type=int, help="How many steps for sampling (override config)")
 @click.option("--sample-offset", default=0, type=int, help="Skip some iterations in the sampling (noisiest iters most unstable)")
 @click.option("--sample-algo", default="DDim", help="Algorithm for sampling the model output")
+@click.option("--sparse-decoding", default=False, is_flag=True, help="Sampling during HGCal decoding step to reduce sparsity")
 @click.option("--train-sampler/--no-train-sampler", default=None, help="For samplers requiring pre-training, train them (overwrites config)")
 @click.option("--model-loc", default=None, help="Specific folder for loading existing model")
 @click.pass_context
-def sample(ctx, generated, sample_steps, sample_algo, sample_offset, train_sampler, model_loc):
+def sample(ctx, generated, sample_steps, sample_algo, sample_offset, sparse_decoding, train_sampler, model_loc):
     ctx.obj.config['SAMPLER'] = sample_algo
     if "SAMPLER_OPTIONS" not in ctx.obj.config.keys(): 
         ctx.obj.config['SAMPLER_OPTIONS'] = {}
@@ -80,6 +81,7 @@ def sample(ctx, generated, sample_steps, sample_algo, sample_offset, train_sampl
     ctx.obj.sample_steps = sample_steps
     ctx.obj.sample_algo = sample_algo 
     ctx.obj.sample_offset = sample_offset
+    ctx.obj.sparse_decoding = sparse_decoding
     ctx.obj.generated = generated
 
     non_config = dotdict({key: value for key, value in ctx.obj.items() if key!='config'})
@@ -327,7 +329,7 @@ def run_inference(flags, config, model):
     )
     sample_steps = flags.sample_steps if flags.sample_steps is not None else config.get("SAMPLE_STEPS", 400)
 
-    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset)
+    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset, sparse_decoding=flags.sparse_decoding)
     if(flags.generated == ""):
         fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}_{datetime.now().timestamp()}.h5"
     else: 

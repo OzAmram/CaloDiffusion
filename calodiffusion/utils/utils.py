@@ -833,7 +833,7 @@ def conversion_preprocess(file_path):
 def get_files(field, folder=""):
     if(isinstance(field, list)):
         if(len(folder) > 0): 
-            out = [os.path.join(folder, file) for file in field]
+            out = [os.path.join(folder, file) if (folder not in file) else file for file in field]
         else: 
             out = field
         return out
@@ -903,7 +903,7 @@ def load_data(args, config, eval=False, NN_embed=None):
         if not os.path.exists(path_clean) or args.reclean:
             # process this dataset
             showers, E, layers = DataLoader(
-                os.path.join(args.data_folder, dataset),
+                dataset,
                 shape=shape,
                 emax=config["EMAX"],
                 emin=config["EMIN"],

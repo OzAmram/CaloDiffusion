@@ -2,6 +2,9 @@ import json
 import os
 import pytest 
 
+import shutil
+import subprocess
+
 def execute(command:str): 
     command = [i for i in command.split(" ") if i not in ('', ' ')]  # Strip out the random spaces
     process = subprocess.run(command, capture_output=True)
@@ -176,11 +179,7 @@ def test_train_hgcal(config, execute, pytestconfig, hgcal_data):
         "FILES":[data_file],
         "EVAL":[data_file],
         "CHECKPOINT_NAME": "hgcal", 
-<<<<<<< HEAD
-        "BIN_FILE": f"""{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl""", 
-=======
         "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl", 
->>>>>>> dc0cc2c (sp, correct goem path in tests)
         'SHAPE_ORIG': [-1,28,1988],
         'DATASET_NUM' : 111,
         'SHAPE_PAD':[-1,1,28,12,21],
@@ -234,11 +233,7 @@ def test_inference_hgcal(config, execute, pytestconfig, hgcal_data):
         "FILES":[data_file],
         "EVAL":[data_file],
         "CHECKPOINT_NAME": "hgcal", 
-<<<<<<< HEAD
-        "BIN_FILE": f"""{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl""", 
-=======
         "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl", 
->>>>>>> dc0cc2c (sp, correct goem path in tests)
         'SHAPE_ORIG': [-1,28,1988],
         'DATASET_NUM' : 111,
         'SHAPE_PAD':[-1,1,28,12,21],
@@ -304,11 +299,7 @@ def test_plotting_hgcal(config, execute, pytestconfig, hgcal_data):
         "FILES":[data_file],
         "EVAL":[data_file],
         "CHECKPOINT_NAME": "hgcal", 
-<<<<<<< HEAD
-        "BIN_FILE": f"""{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl""", 
-=======
         "BIN_FILE": f"{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl", 
->>>>>>> dc0cc2c (sp, correct goem path in tests)
         'SHAPE_ORIG': [-1,28,1988],
         'DATASET_NUM' : 111,
         'SHAPE_PAD':[-1,1,28,12,21],

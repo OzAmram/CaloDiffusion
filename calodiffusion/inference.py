@@ -130,7 +130,6 @@ def plot(ctx, generated, plot_label, plot_folder, plot_reshape, extension, cms, 
 
 
 def process_data_dict(flags, config): 
-    evt_start = flags.job_idx * flags.nevts if flags.job_idx >=0 else 0
     dataset_num = config.get("DATASET_NUM", 2)
 
     geom_conv = None
@@ -138,18 +137,17 @@ def process_data_dict(flags, config):
     if flags.hgcal: 
         shape_embed = config.get("SHAPE_FINAL")
         NN_embed = hgcal_utils.HGCalConverter(bins=shape_embed, geom_file=config["BIN_FILE"])
-        if(flags.plot_reshape): N_embed.init()
+        if flags.plot_reshape: 
+            NN_embed.init()
     
-    elif(dataset_num <= 1): 
+    elif dataset_num <= 1: 
         bins = utils.XMLHandler(config["PART_TYPE"], config["BIN_FILE"])
         NN_embed = utils.GeomConverter(bins)
 
 
-    total_evts = None
-
     if(not flags.geant_only):
         generated, energy = LoadSamples(flags.generated, flags, config, geom_conv, NN_embed=NN_embed)
-        total_evts = generated.shape[0]
+        total_events = generated.shape[0]
 
     data = []
     energies = []
@@ -361,12 +359,18 @@ def run_inference(flags, config, model):
     )
     sample_steps = flags.sample_steps if flags.sample_steps is not None else config.get("SAMPLE_STEPS", 400)
 
-    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset)
+    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset, sparse_decoding=flags.sparse_decoding)
     if(flags.generated == ""):
         fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}_{datetime.now().timestamp()}.h5"
     else: 
         fout = flags.generated
     write_out(fout, flags, config, generated, energies, first_write=True)
+
+    if flags.run_metrics:
+        results = run_metrics(flags, model_instance.model, generated, data_loader)
+
+        with open(f"{model_instance.checkpoint_folder}/metrics.json", "w") as f:
+            json.dump(results, f)
 
 if __name__ == "__main__":
     inference()

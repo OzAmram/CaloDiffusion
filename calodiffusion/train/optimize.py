@@ -10,7 +10,6 @@ import os
 
 from datetime import datetime
 from calodiffusion.utils import utils
-from calodiffusion.utils import plots
 from calodiffusion.train import evaluate
 
 class Objective(ABC): 
@@ -233,6 +232,10 @@ class Optimize:
         self.generated_samples = None
         self.generated_energies = None
 
+        # Automatically make the results folder if it does not exist
+        if not os.path.exists(self.flags.results_folder):
+            os.makedirs(self.flags.results_folder)
+
     def suggest_config(self, trial_config): 
         if isinstance(self.flags.config, str): 
             config = utils.LoadJson(self.flags.config)
@@ -418,15 +421,15 @@ class Optimize:
         for key, value in study_items.items(): 
             study_results[key] = value.to_list()
 
-        save_loc = self.flags.results_folder
+        save_loc = os.path.join(self.flags.results_folder, self.flags.study_name)
         if not os.path.exists(save_loc): 
             os.makedirs(save_loc)
 
-        report_path = f"{save_loc.rstrip('/')}/{self.flags.study_name}/report.json"
+        report_path = os.path.join(save_loc, 'report.json')
         with open(report_path, 'w') as f: 
             json.dump(study_results, f, default=str)
 
-        spectator_path = f"{save_loc.rstrip('/')}/{self.flags.study_name}/spectators.json"
+        spectator_path = os.path.join(save_loc, 'spectators.json')
         with open(spectator_path, 'w') as f: 
             json.dump(self.spectator_history, f, default=str)
 
@@ -451,8 +454,10 @@ class Optimize:
             self.spectator_history[trial_index][metric.__name__] = m
 
     def __call__(self) -> None:
+
         self.study = optuna.create_study(
             study_name=self.flags.study_name, 
+            storage=f"sqlite:///{os.path.abspath(self.flags.results_folder)}/{self.flags.study_name}.db",
             load_if_exists=True, 
             directions=[obj.direction() for obj in self.objectives]
             )

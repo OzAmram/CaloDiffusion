@@ -831,6 +831,7 @@ def conversion_preprocess(file_path):
 
 
 def get_files(field, folder=""):
+    print(field, folder)
     if(isinstance(field, list)):
         if(len(folder) > 0): 
             out = [os.path.join(folder, file) if (folder not in file) else file for file in field]

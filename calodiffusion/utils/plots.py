@@ -480,14 +480,13 @@ class AverageShowerWidth(Plot):
 
         def GetCenter(matrix, energies, power=1):
             ec = energies * np.power(matrix, power)
-            sum_energies = np.sum(
+            layerE = np.sum(
                 np.reshape(energies, (energies.shape[0], energies.shape[1], -1)), -1
             )
-            totalE = np.sum(sum_energies, axis=(1,2))
-            layerE = np.sum(sum_energies, axis=2)
+            totalE = np.sum(layerE, axis=-1, keepdims=True)
             layer_zero = layerE < (1e-6 * totalE)
             ec = np.reshape(ec, (ec.shape[0], ec.shape[1], -1))  # get value per layer
-            ec = np.ma.divide(np.sum(ec, -1), sum_energies).filled(0)
+            ec = np.ma.divide(np.sum(ec, -1), layerE).filled(0)
             ec[layer_zero] = 0.
             return ec
 
@@ -1041,7 +1040,6 @@ class Plot_Shower_2D(Plot):
         if vmax == 0:
             vmax = np.nanmax(shower[:, :, 0])
             vmin = np.nanmin(shower[:, :, 0])
-            # print(vmin,vmax)
         im = ax.pcolormesh(
             range(shower.shape[0]),
             range(shower.shape[1]),

@@ -182,6 +182,7 @@ def ReverseNormHGCal(
     NN_embed=None,
     binning_file="",
     config=None,
+    sparse_decoding=False,
 ):
     """Revert the transformations applied to the training set"""
 
@@ -240,7 +241,7 @@ def ReverseNormHGCal(
         NN_embed.init(norm=True, dataset_num=dataset_num)
 
     if embed:
-        data = NN_embed.dec_batches(data)
+        data = NN_embed.dec_batches(data, sparse_decoding=sparse_decoding)
 
     # Per layer energy normalization
     if "layer" in showerMap:
@@ -335,16 +336,62 @@ class Decoder(nn.Module):
             self.mat = mat
         self.mask = mask
 
-    def forward(self, x):
+    def forward(self, x, sparse_decoding=False):
         masked_mat = self.mat * self.mask if self.trainable else self.mat
-        # masked_mat = self.mat
+
         out = rearrange(x, " ... l a r -> ... l (a r)", a=self.dim1, r=self.dim2)
-        out = torch.einsum("l n e, ... l e -> ... l n", masked_mat, out)
+        if(sparse_decoding):
+            masked_mat = generate_sparse_mat(masked_mat, batches=x.shape[0])
+            out = torch.einsum("b l n e, b c l e ->  b c l n", masked_mat, out)
+        else:
+            out = torch.einsum("l n e, ... l e -> ... l n", masked_mat, out)
         return out
 
     def set(self, mat, mask):
         self.mat.values = mat
         self.mask = mask
+
+def generate_sparse_mat(in_mat, batches=1):
+    #Generate a 'sparse' matrix for the decoding step
+    #instead of using the decode matrix to to split energies over multiple cells (average), sample from it like probabilities
+    #this procedure could probably be better memory optimized ? 
+
+    #unique sampling matrix per shower
+    in_mat = in_mat.repeat((batches,1,1,1))
+
+    #randomly determine which cells to be nonzero
+    eps = 1e-6
+    rand_mat = torch.rand_like(in_mat) * (in_mat > eps) + in_mat
+
+    #make sure to keep at least one entry
+    #set at least one entry (max) to above thresh
+    maxs = torch.argmax(rand_mat, dim=-2, keepdim=True)
+    rand_mat = rand_mat.scatter(-2, maxs, 1.0 + eps)
+
+    #select nonzero entries
+    sparse_mat = (rand_mat > 1.0).to(torch.float32)
+
+    #conserve energy -> each column must add to one
+    sparse_mat_norm = torch.sum(sparse_mat, dim=-2, keepdim=True)
+    sparse_mat /= sparse_mat_norm
+
+    #if column originally zero, set to zero again
+    sparse_mat *= (in_mat > eps)
+
+    #for i in range(sparse_mat.shape[1]):
+        #sum1 = torch.sum(in_mat[0,10,:,i])
+        #sum2 = torch.sum(sparse_mat[0,10,:,i])
+        #if(abs(sum1 - sum2) > eps):
+            #print(i, sum1, sum2)
+            #print(torch.nonzero(in_mat[0,10,:,i]))
+            #print(torch.nonzero(sparse_mat[0,10,:,i]))
+            #print(maxs[0,10,:,i])
+            #print(in_mat[0,10, torch.nonzero(in_mat[0,10,:,i]) ,i])
+            #print(sparse_mat[0,10, torch.nonzero(sparse_mat[0,10,:,i]) ,i])
+            #print(rand_mat[0,10, torch.nonzero(sparse_mat[0,10,:,i]) ,i])
+
+    return sparse_mat
+
 
 
 # initialize GLaM map
@@ -595,13 +642,13 @@ class HGCalConverter(nn.Module):
 
         return out
 
-    def dec(self, x):
+    def dec(self, x, sparse_decoding=False):
         if self.norm:
             x = (x * self.embed_std) + self.embed_mean
-        out = self.decoder(x)
+        out = self.decoder(x, sparse_decoding=sparse_decoding)
         return out
 
-    def dec_batches(self, x, batch_size=256):
+    def dec_batches(self, x, batch_size=128, sparse_decoding=False):
 
         data_loader = torchdata.DataLoader(x, batch_size=batch_size, shuffle=False)
 
@@ -610,13 +657,14 @@ class HGCalConverter(nn.Module):
         for i, shower_batch in enumerate(data_loader):
             shower_batch = shower_batch.to(self.device)
 
-            batch = self.dec(shower_batch).detach().cpu().numpy()
+            batch = self.dec(shower_batch, sparse_decoding=sparse_decoding).detach().cpu().numpy()
             if i == 0:
                 out = batch
             else:
                 out = np.concatenate((out, batch))
 
         return out
+
 
     def forward(x):
         if self.norm:

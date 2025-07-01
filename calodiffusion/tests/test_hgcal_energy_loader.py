@@ -4,7 +4,8 @@ import os
 import numpy as np
 import h5py as h5
 
-from calodiffusion.utils.plots import RadialEnergyHGCal
+from calodiffusion.utils.plots import RadialEnergyHGCal, SparsityLayer, HistERatio, RCenterHGCal
+from calodiffusion.utils.plots import plot_shower_layer
 from calodiffusion.utils.utils import *
 from calodiffusion.utils.HGCal_utils import *
 
@@ -30,6 +31,12 @@ def test_parser():
         default=False,
         action="store_true",
         help="Plots in embeded space",
+    )
+    parser.add_argument(
+        "--sparse-decoding",
+        default=False,
+        action="store_true",
+        help="Decode with sparsity correction",
     )
     parser.add_argument(
         "--cms", default=False, action="store_true", help="CMS style for the plots"
@@ -60,7 +67,9 @@ def test_parser():
 def test_hgcal_energy_loader(flags, config):
     hgcal = True
 
-    files = get_files(config["FILES"])[:3]
+    flags.plot_extensions = [".png"]
+
+    files = get_files(config["FILES"], flags.data_folder)[:3]
 
     batch_size = config["BATCH"]
     dataset_num = config.get("DATASET_NUM", 2)
@@ -91,7 +100,9 @@ def test_hgcal_energy_loader(flags, config):
     layers = []
     e = []
 
-    for dataset in datasets:
+    n_showers=0
+
+    for dataset in files:
         with h5.File(dataset, "r") as h5f:
             raw_shower_ = (
                 h5f["showers"][0 : int(flags.nevts)].astype(np.float32) * shower_scale
@@ -120,6 +131,7 @@ def test_hgcal_energy_loader(flags, config):
                 embed=pre_embed,
                 NN_embed=NN_embed,
             )
+            n_showers += data_.shape[0]
             e.append(e_)
             layers.append(layers_)
             if(not flags.layer_only):
@@ -128,6 +140,9 @@ def test_hgcal_energy_loader(flags, config):
             else:
                 del raw_shower_, data_
 
+        if (flags.nevts > 0 and n_showers >= flags.nevts):
+            break
+
     e = np.concatenate(e)
     layers = np.concatenate(layers)
         
@@ -135,9 +150,6 @@ def test_hgcal_energy_loader(flags, config):
         data = np.concatenate(data)
         data = np.reshape(data, shape_pad)
         raw_shower = np.concatenate(raw_shower)
-
-    print(layers.shape)
-    print(shape_pad)
 
     if not pre_embed and not flags.layer_only:
         tdata = torch.tensor(data)
@@ -176,7 +188,9 @@ def test_hgcal_energy_loader(flags, config):
     print("maxE %.2f minE %.2f" % (maxEn, minEn))
 
 
-    data_rev, e_rev = ReverseNorm(
+    print(data_dec.shape)
+
+    data_rev, gen_rev = ReverseNorm(
         data_dec,
         e_,
         shape=shape_pad,
@@ -194,9 +208,13 @@ def test_hgcal_energy_loader(flags, config):
         hgcal=hgcal,
         embed=pre_embed,
         NN_embed=NN_embed,
+        sparse_decoding=flags.sparse_decoding,
     )
+    e_rev = gen_rev[:,0]
 
-    data_rev[data_rev < flags.EMin] = 0.0
+    if flags.EMin > 0.0:
+        mask = data_rev < flags.EMin
+        data_rev = apply_mask_conserveE(data_rev, mask)
 
     print("REVERSED: \n")
     print("AVG DIFF: ", np.mean(data_rev[:100] - raw_shower[:100]))
@@ -213,14 +231,22 @@ def test_hgcal_energy_loader(flags, config):
     # print(data_rev[0,0,10])
     print("AVG DIFF: ", torch.mean(torch.tensor(data_rev[:1000]) - raw_shower[:1000]))
 
-    if False:
+    if True:
         data_dict = {}
         data_dict["Geant4"] = raw_shower
-        data_dict["Embed- Pre-process - ReverseNorm - Decode"] = data_rev
+        data_dict["Embed-Decode"] = data_rev
         flags.model = "test"
         rad_plotter = RadialEnergyHGCal(flags, config)
-        rad_plotter(data_dict, e_rev)
+        sparse_plotter = SparsityLayer(flags, config)
+        E_plotter = HistERatio(flags, config)
+        RC_plotter = RCenterHGCal(flags, config)
 
+        rad_plotter(data_dict, e_rev)
+        RC_plotter(data_dict, e_rev)
+        sparse_plotter(data_dict, e_rev)
+        E_plotter(data_dict, e_rev)
+
+        return 
         layers = [3, 10, 24]
         geo = NN_embed.geom
 
@@ -229,8 +255,10 @@ def test_hgcal_energy_loader(flags, config):
 
         avg_shower_ratio = avg_shower_after / avg_shower_before
 
+
         for ilay in layers:
             print(ilay)
+
 
             ncells = int(round(geo.ncells[ilay]))
             plot_shower_hex(

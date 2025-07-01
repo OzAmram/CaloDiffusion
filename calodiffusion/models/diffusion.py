@@ -121,6 +121,7 @@ class Diffusion(torch.nn.Module, ABC):
         sample_steps: int,
         debug: bool = False,
         sample_offset: Optional[int] = 0,
+        sparse_decoding: Optional[bool] = False,
     ):
         """
         Generate samples for a whole dataloader
@@ -183,6 +184,7 @@ class Diffusion(torch.nn.Module, ABC):
             hgcal=self.hgcal,
             embed=self.pre_embed,
             NN_embed=self.NN_embed,
+            sparse_decoding=sparse_decoding,
         )
         if not orig_shape:
             generated = generated.reshape(self.config["SHAPE_ORIG"])

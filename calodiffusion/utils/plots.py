@@ -303,7 +303,7 @@ class Plot(ABC):
                 ax0.set_ymargin(0)
 
                 eps = 1e-8
-                ratio = np.divide(ref, d + eps)
+                ratio = np.divide(d, ref + eps)
                 # ax1.plot(ratio,color=colors[plot],marker='o',ms=10,lw=0,markerfacecolor='none',markeredgewidth=3)
 
                 plt.axhline(y=1.0, color="black", linestyle="--", linewidth=2)

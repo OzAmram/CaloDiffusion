@@ -353,23 +353,42 @@ class Decoder(nn.Module):
 
 def generate_sparse_mat(in_mat, batches=1):
     #Generate a 'sparse' matrix for the decoding step
-    #instead of splitting energies over multi cells (average), sample from them like probabilities
+    #instead of using the decode matrix to to split energies over multiple cells (average), sample from it like probabilities
+    #this procedure could probably be better memory optimized ? 
 
-    shape = in_mat.shape
+    #unique sampling matrix per shower
     in_mat = in_mat.repeat((batches,1,1,1))
 
     #randomly determine which cells to be nonzero
-    rand_mat = torch.rand_like(in_mat) * (in_mat > 0) + in_mat
-    maxs = torch.argmax(rand_mat, dim=-2, keepdim=True)
-
-    #make sure to keep at least one entry, by at least one entry (max) to above thresh
     eps = 1e-6
+    rand_mat = torch.rand_like(in_mat) * (in_mat > eps) + in_mat
+
+    #make sure to keep at least one entry
+    #set at least one entry (max) to above thresh
+    maxs = torch.argmax(rand_mat, dim=-2, keepdim=True)
     rand_mat = rand_mat.scatter(-2, maxs, 1.0 + eps)
 
+    #select nonzero entries
     sparse_mat = (rand_mat > 1.0).to(torch.float32)
 
     #conserve energy -> each column must add to one
     sparse_mat_norm = torch.sum(sparse_mat, dim=-2, keepdim=True)
+    sparse_mat /= sparse_mat_norm
+
+    #if column originally zero, set to zero again
+    sparse_mat *= (in_mat > eps)
+
+    #for i in range(sparse_mat.shape[1]):
+        #sum1 = torch.sum(in_mat[0,10,:,i])
+        #sum2 = torch.sum(sparse_mat[0,10,:,i])
+        #if(abs(sum1 - sum2) > eps):
+            #print(i, sum1, sum2)
+            #print(torch.nonzero(in_mat[0,10,:,i]))
+            #print(torch.nonzero(sparse_mat[0,10,:,i]))
+            #print(maxs[0,10,:,i])
+            #print(in_mat[0,10, torch.nonzero(in_mat[0,10,:,i]) ,i])
+            #print(sparse_mat[0,10, torch.nonzero(sparse_mat[0,10,:,i]) ,i])
+            #print(rand_mat[0,10, torch.nonzero(sparse_mat[0,10,:,i]) ,i])
 
     return sparse_mat
 

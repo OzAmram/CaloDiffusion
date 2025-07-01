@@ -4,7 +4,7 @@ import os
 import numpy as np
 import h5py as h5
 
-from calodiffusion.utils.plots import RadialEnergyHGCal, SparsityLayer
+from calodiffusion.utils.plots import RadialEnergyHGCal, SparsityLayer, HistERatio, RCenterHGCal
 from calodiffusion.utils.plots import plot_shower_layer
 from calodiffusion.utils.utils import *
 from calodiffusion.utils.HGCal_utils import *
@@ -151,9 +151,6 @@ def test_hgcal_energy_loader(flags, config):
         data = np.reshape(data, shape_pad)
         raw_shower = np.concatenate(raw_shower)
 
-    print(layers.shape)
-    print(shape_pad)
-
     if not pre_embed and not flags.layer_only:
         tdata = torch.tensor(data)
 
@@ -191,7 +188,9 @@ def test_hgcal_energy_loader(flags, config):
     print("maxE %.2f minE %.2f" % (maxEn, minEn))
 
 
-    data_rev, e_rev = ReverseNorm(
+    print(data_dec.shape)
+
+    data_rev, gen_rev = ReverseNorm(
         data_dec,
         e_,
         shape=shape_pad,
@@ -211,6 +210,7 @@ def test_hgcal_energy_loader(flags, config):
         NN_embed=NN_embed,
         sparse_decoding=flags.sparse_decoding,
     )
+    e_rev = gen_rev[:,0]
 
     if flags.EMin > 0.0:
         mask = data_rev < flags.EMin
@@ -238,8 +238,13 @@ def test_hgcal_energy_loader(flags, config):
         flags.model = "test"
         rad_plotter = RadialEnergyHGCal(flags, config)
         sparse_plotter = SparsityLayer(flags, config)
+        E_plotter = HistERatio(flags, config)
+        RC_plotter = RCenterHGCal(flags, config)
+
         rad_plotter(data_dict, e_rev)
+        RC_plotter(data_dict, e_rev)
         sparse_plotter(data_dict, e_rev)
+        E_plotter(data_dict, e_rev)
 
         return 
         layers = [3, 10, 24]

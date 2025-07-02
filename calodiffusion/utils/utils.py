@@ -30,6 +30,31 @@ def split_data_np(data, frac=0.8):
     test_data = data[split:]
     return train_data, test_data
 
+def WeightedMean(coord, energies, power=1, axis=-1):
+    ec = np.sum(energies * np.power(coord, power), axis=axis)
+    sum_energies = np.sum(energies, axis=axis)
+    ec = np.ma.divide(ec, sum_energies).filled(0)
+    return ec
+
+def GetWidth(mean,mean2):
+    width = np.ma.sqrt(mean2-mean**2).filled(0)
+    return width
+
+def ang_center_spread(matrix, energies, axis=-1):
+    # weighted average over periodic variabel (angle)
+    # https://github.com/scipy/scipy/blob/v1.11.1/scipy/stats/_morestats.py#L4614
+    # https://en.wikipedia.org/wiki/Directional_statistics#The_fundamental_difference_between_linear_and_circular_statistics
+    cos_matrix = np.cos(matrix)
+    sin_matrix = np.sin(matrix)
+    cos_ec = WeightedMean(cos_matrix, energies, axis=axis)
+    sin_ec = WeightedMean(sin_matrix, energies, axis=axis)
+    ang_mean = np.arctan2(sin_ec, cos_ec)
+    R = np.sqrt(sin_ec**2 + cos_ec**2)
+    eps = 1e-8
+    R = np.clip(R, eps, 1.0)
+
+    ang_std = np.sqrt(-np.log(R))
+    return ang_mean, ang_std
 
 def create_phi_image(device, shape=(1, 45, 16, 9)):
     n_phi = shape[-2]
@@ -869,7 +894,7 @@ def load_data(args, config, eval=False, NN_embed=None):
         files = get_files(config["EVAL"], folder=args.data_folder)
         val_file_list = []
     else:
-        if hasattr(args, "seed"):
+        if hasattr(args, "seed") and (args.seed is not None):
             torch.manual_seed(args.seed)
         files = get_files(config["FILES"], folder=args.data_folder)
         val_file_list = get_files(config.get("VAL_FILES", []), folder=args.data_folder)
@@ -1017,13 +1042,13 @@ def subsample_alphas(alpha, time, x_shape):
     out = alpha.gather(-1, time.cpu())
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(time.device)
 
-
-def load_attr(type_: Literal["sampler", "loss"], algo_name: str): 
+def load_attr(type_: Literal["sampler", "loss", "plots"], algo_name: str): 
     if type_ == "sampler": 
         from calodiffusion.models import sample as module
-    else: 
+    elif type_ == 'loss': 
         from calodiffusion.models import loss as module
-
+    else: 
+        from calodiffusion.utils import plots as module
     try: 
         algo = getattr(
             module, algo_name
@@ -1033,3 +1058,9 @@ def load_attr(type_: Literal["sampler", "loss"], algo_name: str):
         raise ValueError("%s '%s' is not supported: %s" % (type_, algo_name, e))
     
     return algo
+
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__

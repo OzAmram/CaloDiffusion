@@ -12,6 +12,159 @@ from datetime import datetime
 from calodiffusion.utils import utils
 from calodiffusion.train import evaluate
 
+class Objective(ABC): 
+    @staticmethod
+    @abstractmethod
+    def direction() -> Literal['minimize', "maximize"]: 
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def failure() -> float: 
+        "What is returned if the model has failed to train"
+        raise NotImplementedError
+    
+    @staticmethod
+    def __call__(trained_model, eval_data, kwargs) -> float:
+        raise NotImplementedError
+
+class EvalCount(Objective): 
+    @staticmethod
+    def direction() -> Literal['minimize', 'maximize']:
+        return "minimize"
+    
+    @staticmethod
+    def failure():
+        return 10e8
+
+    @staticmethod
+    def get_forward(): 
+        class ModelForward(torch.nn.Module): 
+            def __init__(self, model, eval_data, sample_steps, sample_offset) -> None:
+                super().__init__()
+                self.model = model
+                self.E, self.layers, _ = next(iter(eval_data))
+                self.sample_steps = sample_steps
+                self.sample_offset = sample_offset
+
+            def __call__(self, x=None) -> Any:
+                self.model.sample(
+                    self.E.to(device=self.model.device),
+                    layers=self.layers.to(device=self.model.device),
+                    num_steps=self.sample_steps,
+                    debug=False,
+                    sample_offset=self.sample_offset,
+                )
+                
+        return ModelForward
+
+    @staticmethod
+    def __call__(trained_model, eval_data, config, *args, **kwargs) -> float:
+        random = np.random.default_rng()
+        weight_matrix = random.random((24, 24))
+        weight_matrix_compare = random.random((24, 24))
+
+        forward = EvalCount.get_forward()(
+            model=trained_model, 
+            eval_data=eval_data, 
+            sample_steps=config['NSTEPS'], 
+            sample_offset=0) # Only doing a single sample
+        
+        start = datetime.now()
+        forward()
+        inference_time = (start - datetime.now()).total_seconds()
+
+        start = datetime.now()
+        weight_matrix*weight_matrix_compare
+        reference_time = (start - datetime.now()).total_seconds()
+        return inference_time/reference_time
+
+
+class EvalFPD(Objective): 
+    @staticmethod
+    def direction() -> Literal['minimize', 'maximize']:
+        return "minimize"
+    
+    @staticmethod
+    def failure():
+        return 10e8
+
+    @staticmethod
+    def __call__(trained_model, generated, energies, eval_data, config, *args, **kwargs) -> float:
+
+        binning_dataset = trained_model.config.get("BIN_FILE", "binning_dataset.xml")
+        particle = trained_model.config.get("PART_TYPE", "photon")
+
+        fpd_calc = evaluate.FPD(
+            binning_dataset, 
+            particle, 
+            hgcal=utils.LoadJson(os.environ.get("CONFIG", {})).get("HGCAL", False))
+        try: 
+            return fpd_calc(generated=generated, energies=energies, eval_data=eval_data)
+        except evaluate.FPDCalculationError:
+            return EvalFPD.failure()
+        
+class EvalCNNMetric(Objective):
+    @staticmethod
+    def failure(): 
+        return 1 
+    
+    @staticmethod
+    def direction() -> Literal['minimize', 'maximize']:
+        return "maximize"
+    
+    @staticmethod
+    def __call__(trained_model, eval_data, config, *args, **kwargs):
+        cnn_method = evaluate.CNNCompare(
+            trained_model=trained_model, 
+            config= config, 
+            flags = config['flags']
+        )
+        return cnn_method(eval_data)
+
+class EvalMeanSeparation(Objective): 
+    @staticmethod
+    def failure(): 
+        return 1
+    
+    @staticmethod
+    def direction():
+        return "minimize"
+    
+    def __call__(self, generated, energies, eval_data, config, metric=None, *args, **kwds):
+        metric = metric if metric is not None else config.get("SEPARATION_METRIC", "HistERatio")
+        eval = evaluate.HistogramSeparation(metric)
+
+        data = np.array([d_batch for _, _, d_batch in eval_data])
+        return eval(generated, data, energies)
+        
+
+class EvalLoss(Objective): 
+    @staticmethod
+    def failure(): 
+        return 10**5
+    
+    @staticmethod
+    def direction():
+        return "minimize"
+    
+    def __call__(self, trained_model, eval_data, config, *args, **kwds):
+        energy, layers, data = next(iter(eval_data))
+
+        noise = torch.randn_like(data).to(device=trained_model.device)
+        data = data.to(device=trained_model.device)
+        energy = energy.to(device=trained_model.device)
+        layers = layers.to(device=trained_model.device)
+
+        return trained_model.compute_loss(data=data, energy=energy, noise=noise, layers=layers).detach().cpu().numpy()
+
+
+OBJECTIVES: dict[str, type[Objective]] = {
+    "COUNT": EvalCount(), 
+    "FPD": EvalFPD(), 
+    "CNN": EvalCNNMetric(), 
+    "LOSS": EvalLoss()
+}
 
 class Optimize: 
     """
@@ -46,28 +199,42 @@ class Optimize:
             "RESTART_T": Range allowed for T_MIN_{i}. T_MAX_{i} is decided by taking t_min_i as the bottom of the range and t_min_i + {top of the restart_t range} as the top
         }
     """
-    def __init__(self, flags, trainer: type[Train], objectives: Literal["COUNT", "FPD", "CNN"]) -> None:
+    def __init__(self, flags, trainer, objectives: str, inference: bool = False) -> None:
 
-        implemented_objectives: dict[str, type[Objective]] = {
-            "COUNT": Count(), 
-            "FPD": FPD(), 
-            "CNN": CNNMetric()
-        }
         self.flags = flags
+        if self.flags.checkpoint_folder is None: 
+            self.flags.checkpoint_folder = os.path.join(self.flags.results_folder, self.flags.study_name, "checkpoints")
+
         self.trainer = trainer
 
         self.objectives = []
         if isinstance(objectives, str):
             objectives = [objectives]
         for objective in objectives: 
-            self.objectives.append(implemented_objectives[objective])
+            try: 
+                self.objectives.append(OBJECTIVES[objective])
+            except KeyError:
+                raise ValueError(f"Objective {objective} not in {OBJECTIVES.keys()}")
 
-    def train(self, trial_config): 
-        config = self.suggest_config(trial_config)
-        train_model = self.trainer(flags=self.flags, config=config, save_model=False)
-        model, _, _ = train_model.train()
-        eval_data = train_model.loader_val
-        return model, eval_data, config
+        self.objective = self.objective_inference if inference else self.objective_training
+
+        default_spectators = [
+            EvalCount, 
+            EvalFPD, 
+            #EvalCNNMetric,  # Not using CNN metric, 
+            EvalLoss,
+            EvalMeanSeparation  # HistERatio is the default metric
+        ]
+        self.spectators = [ 
+            obj for obj in default_spectators if not any([isinstance(train_obj, obj) for train_obj in self.objectives])
+        ]
+        self.spectator_history = {}
+        self.generated_samples = None
+        self.generated_energies = None
+
+        # Automatically make the results folder if it does not exist
+        if not os.path.exists(self.flags.results_folder):
+            os.makedirs(self.flags.results_folder)
 
     def suggest_config(self, trial_config): 
         if isinstance(self.flags.config, str): 
@@ -105,19 +272,20 @@ class Optimize:
         return config
 
     def suggest_hyperparam(self, setting_name, config, hyparam_settings, trial_config, type_=float): 
+    
         if setting_name in hyparam_settings.keys(): 
             if type_ is float: 
-                config[setting_name] = trial_config.suggest_float(setting_name, *hyparam_settings[setting_name])
+                config[setting_name] = trial_config.suggest_float(setting_name, *[float(i) for i in hyparam_settings[setting_name]])
             elif type_ is int: 
-                config[setting_name] = trial_config.suggest_int(setting_name, *hyparam_settings[setting_name])
+                config[setting_name] = trial_config.suggest_int(setting_name, *[int(i) for i in hyparam_settings[setting_name]])
             else: 
                 config[setting_name] = trial_config.suggest_categorical(setting_name, hyparam_settings[setting_name])
         return config 
     
     def suggest_sampler_config(self, config, trial_config): 
         optimized_section = config.get("OPTIMIZE", {})
-        sampler = config.get('SAMPLER')
-        if not sampler: 
+        suggest_sampler = ("SAMPLER" in optimized_section) or ("SAMPLER" not in config)
+        if suggest_sampler: 
             sampler = trial_config.suggest_categorical("SAMPLER", optimized_section.get("SAMPLER", []))
             config["SAMPLER"] = sampler
 
@@ -179,13 +347,64 @@ class Optimize:
         config['SAMPLER_SETTINGS'] = sampler_config
         return config
 
-    def eval(self, model, eval_data, config) -> Sequence: 
-        config['flags'] = self.flags
-        return [obj(model, eval_data, config) for obj in self.objectives]
 
-    def objective(self, trial) -> tuple: 
+    def eval(self, model, eval_data, config) -> Sequence: 
+        self.save_results() # Save the last trial
+
+        self.spectator_callback(
+            model=model,
+            eval_data=eval_data,
+            config=config
+        )
+        config['flags'] = self.flags
+        return [
+            obj(
+                trained_model=model,
+                generated=self.generated_samples,
+                energies=self.generated_energies,
+                eval_data=eval_data,
+                config=config
+            ) 
+                for obj in self.objectives]
+
+    def objective_inference(self, trial) -> tuple:
+        config = self.suggest_config(trial)
+        eval_data, _ = utils.load_data(self.flags, config, eval=True)
+
+        model_instance = self.trainer(flags=self.flags, config=config, load_data=False, inference=True, save_model=False)
+        model_instance.init_model()
+
         try: 
-            model, eval_data, config = self.train(trial)
+            model, _, _, _, _, _  = model_instance.pickup_checkpoint(
+                model=model_instance.model,
+                optimizer=None,
+                scheduler=None,
+                early_stopper=None,
+                n_epochs=0,
+                restart_training=True,
+            )
+
+            self.generated_samples, self.generated_energies = model.generate(
+                data_loader=eval_data, sample_steps=config.get("NSTEPS"), debug=False, sample_offset=0,
+            )
+            objectives = self.eval(model, eval_data, config)
+        except RuntimeError as err:
+            print(f"Error in loading checkpoint: {err}")
+            objectives = [obj.failure() for obj in self.objectives]
+        
+        return objectives
+
+    def objective_training(self, trial) -> tuple: 
+        try: 
+            config = self.suggest_config(trial)
+            eval_data, _ = utils.load_data(self.flags, config, eval=True)
+            train_model = self.trainer(flags=self.flags, config=config, save_model=False, load_data=True)
+            train_model.init_model()
+            train_model.train()
+            model = train_model.model
+            self.generated_samples, self.generated_energies = model.generate(
+                data_loader=eval_data, sample_steps=config.get("NSTEPS"), debug=False, sample_offset=0,
+            )
         except RuntimeError as err:
             if "Kernel size can't be greater than actual input size" in str(err): 
                 objectives = [obj.failure() for obj in self.objectives]
@@ -196,139 +415,54 @@ class Optimize:
         objectives = self.eval(model, eval_data, config)
         return objectives
 
-    def save_results(self, study): 
-        study_items = dict(study.trials_dataframe())
+    def save_results(self): 
+        study_items = dict(self.study.trials_dataframe())
         study_results = {} 
         for key, value in study_items.items(): 
             study_results[key] = value.to_list()
 
-        save_loc = self.flags.results_folder
+        save_loc = os.path.join(self.flags.results_folder, self.flags.study_name)
         if not os.path.exists(save_loc): 
             os.makedirs(save_loc)
 
-        report_path = f"{save_loc.rstrip('/')}/{self.flags.study_name}_report.json"
-        with open(report_path, 'a') as f: 
+        report_path = os.path.join(save_loc, 'report.json')
+        with open(report_path, 'w') as f: 
             json.dump(study_results, f, default=str)
 
+        spectator_path = os.path.join(save_loc, 'spectators.json')
+        with open(spectator_path, 'w') as f: 
+            json.dump(self.spectator_history, f, default=str)
+
+    def spectator_callback(self, model, eval_data, config): 
+        """
+            Run through the spectator metrics with the trained model/selected sampler, update the spectator history
+        """
+        trial_index = len(self.spectator_history.keys()) + 1
+        self.spectator_history[trial_index] = {}
+        for metric in self.spectators: 
+            try: 
+                m = metric()(
+                    trained_model=model,
+                    generated=self.generated_samples,
+                    energies=self.generated_energies,
+                    eval_data=eval_data,
+                    config=config
+                )
+            except Exception as err:
+                print(f"Spectator {metric.__name__} failed with error: {err}")
+                m = metric.failure()
+            self.spectator_history[trial_index][metric.__name__] = m
 
     def __call__(self) -> None:
-        study = optuna.create_study(
+
+        self.study = optuna.create_study(
             study_name=self.flags.study_name, 
+            storage=f"sqlite:///{os.path.abspath(self.flags.results_folder)}/{self.flags.study_name}.db",
             load_if_exists=True, 
             directions=[obj.direction() for obj in self.objectives]
             )
-        study.optimize(
+        self.study.optimize(
             self.objective, 
             n_trials=self.flags.n_trials, 
-            timeout=300
         )
-        self.save_results(study)
-        
-
-class Objective(ABC): 
-    @staticmethod
-    @abstractmethod
-    def direction() -> Literal['minimize', "maximize"]: 
-        raise NotImplementedError
-
-    @staticmethod
-    @abstractmethod
-    def failure() -> float: 
-        "What is returned if the model has failed to train"
-        raise NotImplementedError
-    
-    @staticmethod
-    def __call__(trained_model, eval_data, kwargs) -> float:
-        raise NotImplementedError
-    
-
-class Count(Objective): 
-    @staticmethod
-    def direction() -> Literal['minimize', 'maximize']:
-        return "minimize"
-    
-    @staticmethod
-    def failure():
-        return 10e8
-
-    @staticmethod
-    def get_forward(): 
-        class ModelForward(torch.nn.Module): 
-            def __init__(self, model, eval_data, sample_steps, sample_offset) -> None:
-                super().__init__()
-                self.model = model
-                self.eval_data = eval_data
-                self.E, self.layers, _ = next(iter(eval_data))
-                self.sample_steps = sample_steps
-                self.sample_offset = sample_offset
-
-            def __call__(self, x=None) -> Any:
-                self.model.generate(
-                    data_loader=self.eval_data, 
-                    sample_steps=self.sample_steps, 
-                    sample_offset=self.sample_offset
-                )
-                
-        return ModelForward
-
-    @staticmethod
-    def __call__(trained_model, eval_data, trial_config) -> float:
-        random = np.random.default_rng()
-        weight_matrix = random.random((24, 24))
-        weight_matrix_compare = random.random((24, 24))
-
-        forward = Count.get_forward()(
-            model=trained_model, 
-            eval_data=eval_data, 
-            sample_steps=trial_config['NSTEPS'], 
-            sample_offset=0) # Only doing a single sample
-        
-        start = datetime.now()
-        forward()
-        inference_time = (start - datetime.now()).total_seconds()
-
-        start = datetime.now()
-        weight_matrix*weight_matrix_compare
-        reference_time = (start - datetime.now()).total_seconds()
-        return inference_time/reference_time
-
-
-class FPD(Objective): 
-    @staticmethod
-    def direction() -> Literal['minimize', 'maximize']:
-        return "minimize"
-    
-    @staticmethod
-    def failure():
-        return 10e8
-
-    @staticmethod
-    def __call__(trained_model, eval_data, kwargs) -> float:
-
-        binning_dataset = trained_model.config.get("BIN_FILE", "binning_dataset.xml")
-        particle = trained_model.config.get("PART_TYPE", "photon")
-
-        fpd_calc = evaluate.FDP(binning_dataset, particle)
-        
-        try: 
-            return fpd_calc(trained_model, eval_data, kwargs)
-        except evaluate.FDPCalculationError:
-            return FPD.failure()
-        
-class CNNMetric(Objective):
-    @staticmethod
-    def failure(): 
-        return 1 
-    
-    @staticmethod
-    def direction() -> Literal['minimize', 'maximize']:
-        return "maximize"
-    
-    @staticmethod
-    def __call__(trained_model, eval_data, kwargs):
-        cnn_method = evaluate.CNNCompare(
-            trained_model=trained_model, 
-            config= kwargs, 
-            flags = kwargs['flags']
-        )
-        return cnn_method(eval_data)
+        self.save_results() # Save the last trial

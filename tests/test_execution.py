@@ -1,113 +1,5 @@
 import os
 import pytest 
-import subprocess
-import json 
-import shutil
-
-
-def execute(command:str): 
-    command = [i for i in command.split(" ") if i not in ('', ' ')]  # Strip out the random spaces
-    process = subprocess.run(command, capture_output=True)
-    print(process.stdout.decode())
-    print(process.stderr.decode())
-    return process.returncode
-
-@pytest.fixture(scope="function")
-def hgcal_data(pytestconfig): 
-    import h5py
-    import numpy as np
-    
-    # make fake hgcal data
-    data_dir = pytestconfig.getoption("data_dir")
-    hgcal_dir_name = "hgcal_data/"
-    hgcal_dir = os.path.join(data_dir, hgcal_dir_name)
-    os.makedirs(hgcal_dir, exist_ok=True)
-
-    def hgcal_factory(name:str): 
-        f_name = os.path.join(hgcal_dir, name)
-        if os.path.exists(f_name): 
-            os.remove(f_name)
-        with h5py.File(f_name, "w") as f:
-            f.create_dataset("gen_info", shape=(360, 3), dtype="<f4")
-            f['gen_info'][:] = np.random.rand(360, 3).astype("<f4")
-
-            f.create_dataset("showers", shape=(360, 28, 3000), dtype="<f4")
-            f['showers'][:] = np.random.rand(360, 28, 3000).astype("<f4")
-
-        return os.path.join(hgcal_dir_name, name)
-    
-    yield hgcal_factory
-
-    shutil.rmtree(hgcal_dir)
-
-
-@pytest.fixture(scope="session")
-def config(pytestconfig): 
-    # setup
-    checkpoint_dir = "./testing_checkpoints/"
-    os.makedirs(checkpoint_dir, exist_ok=True) # Okay to overwrite if there was a failure that caused teardown not to be triggered
-    
-    def config_factory(extra_settings:dict={}): 
-        fp = f"{checkpoint_dir}test_config.json"
-        config = {
-            "FILES":["dataset_1_photons_1.hdf5"],
-            "EVAL":["dataset_1_photons_1.hdf5"],
-            "BIN_FILE": f"""{pytestconfig.getoption("calochallenge")}/CaloChallenge/code/binning_dataset_1_photons.xml""",
-            "EMBED":128,
-            "EMAX":4194.304,
-            "EMIN":0.256,
-            "ECUT":0.0000001,
-            "logE":True,
-            "PART_TYPE" : "photon",
-            "DATASET_NUM" : 1,
-            "HOLDOUT" : 0,
-            "SHAPE_ORIG":[-1,368],
-            "SHAPE":[-1,5,10,30,1],
-            "SHAPE_PAD":[-1,1,5,10,30],
-            "SHAPE_FINAL":[-1,1,5,10,30],
-            "BATCH":128,
-            "LR":4e-4,
-            "MAXEPOCH":2,
-            "NLAYERS":3,
-            "EARLYSTOP":20,
-            "MAXDEP":3.1,
-            "LAYER_SIZE_AE":[32,64, 64,32],
-            "DIM_RED_AE":[0, 2, 0, 2],
-            "LAYER_SIZE_UNET" : [32, 32, 64, 96],
-            "COND_SIZE_UNET" : 128,
-            "KERNEL":[3,3,3],
-            "STRIDE":[3,2,2],
-            "BLOCK_ATTN" : True,
-            "MID_ATTN" : True,
-            "COMPRESS_Z" : True,
-            "CYLINDRICAL": True,
-            "SHOWERMAP": "layer-logit-norm",
-            "PHI_INPUT": True,
-            "R_Z_INPUT": True,
-            "BETA_MAX" : 0.02,
-            "NOISE_SCHED": "log",
-            "NSTEPS": 100,
-            "CONSIS_NSTEPS": 100,
-            "COLD_DIFFU" : False,
-            "COLD_NOISE" : 1.0,
-            "TRAINING_OBJ" : "hybrid_weight",
-            "LOSS_TYPE" : "huber",
-            "TIME_EMBED" : "sigma",
-            "COND_EMBED" : "id",
-            "SHOWER_EMBED" : "orig-NN",
-            "SAMPLER": "DDim", 
-            "CHECKPOINT_NAME": "photon_test", 
-            "COLD_DIFFU" : False
-        }
-        config.update(extra_settings)
-        with open(fp, "w") as f: 
-            json.dump(config, f)
-
-        return fp 
-    yield config_factory
-
-    # Teardown
-    shutil.rmtree(checkpoint_dir)
 
 
 @pytest.fixture(scope="session")
@@ -134,7 +26,7 @@ def pion_config(config):
     yield pion_config
 
 @pytest.mark.dependency() 
-def test_train_diffusion(config, pytestconfig): 
+def test_train_diffusion(config, execute, pytestconfig): 
     config = config()
     data_dir = pytestconfig.getoption("data_dir")
 
@@ -144,7 +36,7 @@ def test_train_diffusion(config, pytestconfig):
 
 @pytest.mark.pion
 @pytest.mark.dependency() 
-def test_train_diffusion_pion(pion_config, pytestconfig): 
+def test_train_diffusion_pion(pion_config, execute, pytestconfig): 
     config = pion_config("pion_test")
     data_dir = pytestconfig.getoption("data_dir")
 
@@ -154,7 +46,7 @@ def test_train_diffusion_pion(pion_config, pytestconfig):
 
 
 @pytest.mark.dependency() 
-def test_train_layer(config, pytestconfig): 
+def test_train_layer(config, execute, pytestconfig): 
     config = config({"CHECKPOINT_NAME": "layer", "SHAPE_PAD": [-1,1,5,10,30]})
     data_dir = pytestconfig.getoption("data_dir")
     command = f"calodif-train -c {config} -d {data_dir} -n 10 --checkpoint ./testing_checkpoints/ layer"
@@ -163,7 +55,7 @@ def test_train_layer(config, pytestconfig):
 
 
 @pytest.mark.pion
-def test_train_layer_pion(pion_config, pytestconfig): 
+def test_train_layer_pion(pion_config, execute, pytestconfig): 
     config = pion_config("pion_test_layer")
     data_dir = pytestconfig.getoption("data_dir")
     command = f"calodif-train -c {config} -d {data_dir} -n 10 --checkpoint ./testing_checkpoints/ layer"
@@ -172,7 +64,7 @@ def test_train_layer_pion(pion_config, pytestconfig):
 
 @pytest.mark.hgcal
 @pytest.mark.dependency() 
-def test_train_hgcal(config, pytestconfig, hgcal_data): 
+def test_train_hgcal(config, execute, pytestconfig, hgcal_data): 
     data_dir = pytestconfig.getoption("data_dir")
     data_file = hgcal_data("mock_hgcal.h5")
     config = config({
@@ -194,7 +86,7 @@ def test_train_hgcal(config, pytestconfig, hgcal_data):
 
 
 @pytest.mark.dependency(depends=["test_train_diffusion"]) 
-def test_inference_diffusion(config, pytestconfig): 
+def test_inference_diffusion(config, execute, pytestconfig): 
     config = config()
     data_dir = pytestconfig.getoption("data_dir")
     command = f"calodif-inference -c {config} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/\
@@ -206,7 +98,7 @@ def test_inference_diffusion(config, pytestconfig):
 
 @pytest.mark.pion
 @pytest.mark.dependency(depends=["test_train_diffusion_pion"]) 
-def test_inference_diffusion_pion(pion_config, pytestconfig): 
+def test_inference_diffusion_pion(pion_config, execute, pytestconfig): 
     config = pion_config("pion_test")
     data_dir = pytestconfig.getoption("data_dir")
     command = f"calodif-inference -c {config} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/\
@@ -216,7 +108,7 @@ def test_inference_diffusion_pion(pion_config, pytestconfig):
     assert exit == 0
 
 @pytest.mark.dependency(depends=["test_train_diffusion", "test_train_layer"]) 
-def test_inference_layer(config, pytestconfig): 
+def test_inference_layer(config,execute, pytestconfig): 
     data_dir = pytestconfig.getoption("data_dir")
     config = config()
     command = f"calodif-inference -c {config} -d {data_dir} -n 10 --checkpoint-folder ./testing_checkpoints/\
@@ -227,7 +119,7 @@ def test_inference_layer(config, pytestconfig):
 
 @pytest.mark.hgcal
 @pytest.mark.dependency(depends=["test_train_hgcal"]) 
-def test_inference_hgcal(config, pytestconfig, hgcal_data): 
+def test_inference_hgcal(config, execute, pytestconfig, hgcal_data): 
     data_file = hgcal_data("mock_hgcal.h5")
     config = config({
         "FILES":[data_file],
@@ -251,7 +143,7 @@ def test_inference_hgcal(config, pytestconfig, hgcal_data):
 
 
 @pytest.mark.dependency(depends=["test_inference_diffusion"]) 
-def test_plotting_diffusion(config, pytestconfig): 
+def test_plotting_diffusion(config, execute, pytestconfig): 
     data_dir = pytestconfig.getoption("data_dir")
     base_dir = "./testing_checkpoints/photon_test_Diffusion"
     generated = [f for f in os.listdir(base_dir) if "generated" in f][0]
@@ -261,7 +153,7 @@ def test_plotting_diffusion(config, pytestconfig):
     assert exit == 0
 
 @pytest.mark.dependency(depends=["test_inference_diffusion"]) 
-def test_plotting_geant(config, pytestconfig):
+def test_plotting_geant(config, execute, pytestconfig):
     data_dir = pytestconfig.getoption("data_dir")
     base_dir = "./testing_checkpoints/photon_test_Diffusion"
     generated = [f for f in os.listdir(base_dir) if "generated" in f][0]
@@ -272,7 +164,7 @@ def test_plotting_geant(config, pytestconfig):
 
 @pytest.mark.hgcal
 @pytest.mark.dependency(depends=["test_inference_hgcal"]) 
-def test_plotting_hgcal(config, pytestconfig, hgcal_data): 
+def test_plotting_hgcal(config, execute, pytestconfig, hgcal_data): 
     data_dir = pytestconfig.getoption("data_dir")
     data_file = hgcal_data("mock_hgcal.h5")
     config = config({

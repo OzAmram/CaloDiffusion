@@ -1121,3 +1121,152 @@ class BespokeNonStationary(Sample):
         
         return self.sampler(start, debug=debug, offset=sample_offset)
 
+class PushforwardTraining(Sample): 
+    """Pushforward sampling to be paired with IMM loss - https://arxiv.org/abs/2503.07565"""
+    def __init__(self, config):
+        super().__init__(config)
+        self.epsilon = self.sample_config.get("EPSILON", 0.01)
+        self.noise_low = self.sample_config.get("NOISE_LOW", 0.0)
+        self.noise_high = self.sample_config.get("NOISE_HIGH", 0.994)
+
+        self.t_distribution = torch.distributions.LogNormal(
+            self.sample_config.get("P_MEAN", 0.0),
+            self.sample_config.get("P_STD", 0.1)
+        )
+
+        self.s_distribution = torch.distributions.Uniform(
+            self.noise_low, 
+            self.noise_high
+        )
+
+        self.k_noise_seperation = self.sample_config.get("K", 12)
+        self.noise_schedule = self.sample_config.get("NOISE_SCHEDULE", "fm")
+
+    def compute_noise_offset(self, noise_sampled): 
+        "Convert s -> r, ensuring there is a proper offset between the two sampling parameters"
+
+        u = (self.noise_high - self.noise_low) * (1/2) ** self.k_noise_seperation
+        return (noise_sampled - u).clamp(min=self.noise_low, max=self.noise_high) 
+
+    def noise_ratio_to_time(self, sample): 
+        """Convert the sample of the noise to a timestep """
+
+        if self.noise_schedule == "vp_cosine":
+            t = torch.arctan(sample) / (torch.pi * 0.5) 
+
+        elif self.noise_schedule == "fm":
+            t = sample / (1 + sample)
+        
+        # p(nan) := 1 
+        t = torch.nan_to_num(t, nan=1)
+        return t
+
+    def get_alpha_sigma(self, time_step): 
+        if self.noise_schedule == "fm":
+            # Flow matching: linear interpolation between clean and noise
+            alpha = 1 - time_step  # Signal coefficient decreases linearly
+            sigma = time_step      # Noise coefficient increases linearly
+            
+        elif self.noise_schedule == "vp_cosine":
+            # VP cosine schedule: smooth transition using cosine/sine
+            alpha = torch.cos(time_step * torch.pi * 0.5)
+            sigma = torch.sin(time_step * torch.pi * 0.5)
+
+        return alpha, sigma
+
+    def sample_noise(self, x) -> tuple[torch.Tensor, torch.Tensor]: 
+        """
+        Time sampling that produces T and R samples (high noise and low noise).
+        """
+
+        noise_sample_t = self.t_distribution.sample(x.shape)
+        noise_sample_s = self.s_distribution.sample(x.shape)  # Intermediate, clamped to fit the distrubution of T. 
+
+        # Convert s sample to have a proper offset
+        noise_sample_r = self.compute_noise_offset(noise_sample_s)
+        return noise_sample_t, noise_sample_r, noise_sample_r
+
+    def _ddim_step(self, x, noisy_x, time_t, time_r):
+        """
+        Perform a single DDIM step with the denoised output.
+
+        Algorithm 3, line 6 from https://arxiv.org/abs/2503.07565
+        """
+        alpha_t, sigma_t = self.get_alpha_sigma(time_t)
+        alpha_r, sigma_r = self.get_alpha_sigma(time_r)
+
+        return (alpha_r - alpha_t*sigma_r/sigma_t) * x + sigma_r/sigma_t * noisy_x
+
+    def __call__(self, model, x,energy, layers, sigma=None, num_steps=None, **kwargs):
+        """
+        Sample with Pushforward, a method that uses basic DDIM sampling with a noise offset between different noisy steps instead of noisy and clean steps.
+        """
+        noise_r, noise_s, noise_t = self.sample_noise(sigma) # initial noise sample
+
+        # COnvert to timesteps
+        time_t = self.noise_ratio_to_time(noise_t)
+        time_s = self.noise_ratio_to_time(noise_s)
+        time_r = self.noise_ratio_to_time(noise_r)
+
+        # Add noises to x at time t and r
+        alpha_t, sigma_t = self.get_alpha_sigma(time_t)
+        x_noised_t = alpha_t * x + sigma_t * noise_t
+        x_noised_r = self._ddim_step(x, x_noised_t, time_t, time_r)
+        
+        # Multiple time embeddings are added - avoid dramatic archecture change requirements
+        # Section "Injecting time" in the paper appdeneix 
+        high_noise_time_embedding = model.do_time_embed(time_t) + model.do_time_embed(time_s)
+        low_noise_time_embedding = model.do_time_embed(time_r) + model.do_time_embed(time_s)
+
+        high_noise_prediction = model.denoise(
+            x_noised_t, 
+            sigma=high_noise_time_embedding, 
+            E=energy, 
+            layers=layers,
+            do_time_embed=False  # Time embedding is already added
+        )  # f_st in the paper
+
+        low_noise_prediction = model.denoise(
+            x_noised_r, 
+            sigma=low_noise_time_embedding, 
+            E=energy, 
+            layers=layers,
+            do_time_embed=False
+        )  # f_sr in the paper
+
+        return high_noise_prediction, low_noise_prediction, time_t, time_s
+
+
+class Pushforward(Sample): 
+    def __init__(self, config):
+        super().__init__(config)
+        self.p_mean = self.sample_config.get("P_MEAN", 0.0)
+        self.p_std = self.sample_config.get("P_STD", 0.1)
+
+        self.noise_sampler = torch.distributions.LogNormal(
+            self.p_mean, self.p_std)
+
+        self.training_sampler = PushforwardTraining(config)
+
+    def time_schedule(self, num_steps):
+        start = self.training_sampler.noise_high
+        end = self.training_sampler.noise_low
+        schedule = torch.linspace(start, end, steps=num_steps)
+        return schedule  # Return the sample x_shape times for batch size
+
+
+    def __call__(self, model, start, energy, layers, num_steps, sample_offset=None, debug=False):
+        """
+        Pushforward for inference - e.g. just samples the model for N steps.
+        x is unused, it is resampled by against a noise generator.
+        """
+        denoised = self.noise_sampler.sample(start.shape).to(start.device)
+        xs = [start]
+        time_schedule = self.time_schedule(num_steps+1)
+        for index in range(num_steps):
+            sigma = model.do_time_embed(time_schedule[index]) + model.do_time_embed(time_schedule[index + 1])
+            sigma = sigma.reshape(1, -1).expand(start.shape[0], -1)
+            denoised = model.forward(denoised, energy, layers=layers, time=sigma)
+            xs.append(denoised)
+
+        return denoised, xs, xs[0]

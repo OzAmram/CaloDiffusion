@@ -103,11 +103,16 @@ class Loss(ABC):
         def l2_loss(target, prediction, weight): 
             return  (weight * ((prediction - target) ** 2)).sum() / (torch.mean(weight) * np.prod(target.shape))
 
+        def l2_decay(target, prediction, weight):
+            flatten_dim = 3  ## Flatten across the feature dimension 
+            loss = (torch.clamp_min(((x - y) ** 2).flatten(flatten_dim).sum(-1), 1e-8)).sqrt() / (np.prod(y.shape[flatten_dim:])) / self.sigma
+
         losses = {
             "l1": lambda y_hat, y, weight=1: torch.nn.functional.l1_loss(y_hat, y),
             "l2": l2_loss,
             "mse": lambda y_hat, y, weight=1: torch.nn.functional.mse_loss(y_hat, y),
             "huber": lambda y_hat, y, weight=1: torch.nn.functional.smooth_l1_loss(y_hat, y),
+            "l2_decay": l2_decay
         }
 
         if loss_type not in losses.keys(): 
@@ -208,3 +213,62 @@ class mean_pred(Loss):
         pred = x0_pred
 
         return self.loss(pred, target, weight)
+
+
+class IMM(Loss): 
+    def __init__(self, config, n_steps, loss_type='l1') -> None:
+        """A kernel based MMD loss function, as described in https://arxiv.org/abs/2503.07565"""
+        super().__init__(config, n_steps, loss_type)
+        pad_shape = config.get("SHAPE_PAD", [-1, 1, 28, 12, 21])
+
+        self.feature_dimension = pad_shape.index(max(pad_shape[1:]))
+        self.bandwidth = config.get("IMM_BANDWIDTH", 1.0)
+        self.loss_cutoff = config.get("IMM_LOSS_CUTOFF", 1e-8)
+
+        # Pushfoward sampler used only during training 
+        self.sampler = utils.load_attr("sampler", "PushforwardTraining")(self.config)
+
+    def kernel(self, y_0, y_1, weight=1.0): 
+        """Compute the kernel for IMM Loss - exp(-||x - y||₂ / ||x|| * w)  """
+
+        # Compute the L2 distance, normalized by the feature dimension
+        clamped_l2 = (
+            torch.clamp_min(
+                torch.sum(((y_0 - y_1) ** 2).flatten(self.feature_dimension), dim=-1), 1e-8
+            )
+        ).sqrt() / ((np.prod(y_0.shape[self.feature_dimension:])) * self.bandwidth)
+        
+        # Apply RBF transformation: exp(-distance * weight)
+        return torch.mean(torch.exp(-clamped_l2 * weight))
+    
+    def _calculate_weight(self, t, s):
+        """
+        Weight for the kernel -> adaptive based on time difference
+        w = abs(sigma_t/(alpha_s * sigma_t - sigma_s * alpha_t))
+        """
+        sigma_t, alpha_t = self.sampler.get_alpha_sigma(t)
+        sigma_s, alpha_s = self.sampler.get_alpha_sigma(s)
+
+        return torch.abs(sigma_t/(alpha_s * sigma_t - sigma_s * alpha_t))
+
+    def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
+        """An MMD loss between two points of sampling using pushforward to access the two points"""
+
+        if self.feature_dimension >= data.ndim:
+            self.feature_dimension = data.ndim - 1
+
+        sampled_high_noise, sampled_low_noise, time_t, time_s = self.sampler(
+            model=model, 
+            sigma=sigma,
+            x=data, 
+            energy=E, 
+            layers=layers)
+
+        weight = self._calculate_weight(time_t, time_s)
+
+        high_noise_intersample = self.kernel(sampled_high_noise, sampled_high_noise, weight=weight)
+        low_noise_intersample = self.kernel(sampled_low_noise, sampled_low_noise, weight=weight)
+
+        cross_sample = self.kernel(sampled_high_noise, sampled_low_noise, weight=weight)
+
+        return high_noise_intersample + low_noise_intersample - (2 * cross_sample)

@@ -151,8 +151,12 @@ class CaloDiffusion(Diffusion):
         }
         return embed[self.time_embed](sigma)
     
-    def denoise(self, x, E=None, sigma=None, layers = None, controls=None):
-        t_emb = self.do_time_embed(sigma = sigma.reshape(-1)).to(float)
+    def denoise(self, x, E=None, sigma=None, layers = None, controls=None, do_time_embed=True):
+        if do_time_embed:
+            t_emb = self.do_time_embed(sigma = sigma.reshape(-1)).to(float)
+        else:
+            t_emb = sigma.reshape(sigma.shape[0], -1).to(float)
+
         loss_function_name = type(self.loss_function).__name__
 
         scales = self.loss_function.get_scaling(sigma)
@@ -160,13 +164,10 @@ class CaloDiffusion(Diffusion):
 
         if('noise_pred' in loss_function_name):
             return (x - sigma * pred)
-
-        elif('mean_pred' in loss_function_name):
-            return pred
         elif ('hybrid' or 'minsnr') in loss_function_name:
             return (scales['c_skip'] * x + scales['c_out'] * pred)
-        else:
-            raise ValueError("??? Training obj %s" % loss_function_name)
+        else: 
+            return pred
 
 
     def __call__(self, x, **kwargs):

@@ -113,7 +113,6 @@ def config(pytestconfig):
             "SHOWER_EMBED" : "orig-NN",
             "SAMPLER": "DDim", 
             "CHECKPOINT_NAME": "photon_test", 
-            "COLD_DIFFU" : False
         }
         config.update(extra_settings)
         with open(fp, "w") as f: 

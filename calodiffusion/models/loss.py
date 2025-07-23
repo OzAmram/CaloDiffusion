@@ -217,7 +217,13 @@ class mean_pred(Loss):
 
 class IMM(Loss): 
     def __init__(self, config, n_steps, loss_type='l1') -> None:
-        """A kernel based MMD loss function, as described in https://arxiv.org/abs/2503.07565"""
+        """
+        A kernel based MMD loss function, as described in https://arxiv.org/abs/2503.07565
+        L = 1/2 * (K(f_t, f_t) + K(f_r, f_r) - 2 * K(f_t, f_r))
+        where K is a kernel (self.kernel), and f_t, f_r are the embeddings of the high and low noise samples, respectively.
+        See sampling.PushforwardTraining for more details on how the samples are generated.
+
+        """
         super().__init__(config, n_steps, loss_type)
         pad_shape = config.get("SHAPE_PAD", [-1, 1, 28, 12, 21])
 
@@ -228,15 +234,18 @@ class IMM(Loss):
         # Pushfoward sampler used only during training 
         self.sampler = utils.load_attr("sampler", "PushforwardTraining")(self.config)
 
-    def kernel(self, y_0, y_1, weight=1.0): 
-        """Compute the kernel for IMM Loss - exp(-||x - y||₂ / ||x|| * w)  """
+    def kernel(self, f_a, f_b, weight=1.0): 
+        """
+        Compute the kernel for IMM Loss - exp(-||x - y||₂ / ||x|| * w)  
+        f_a, f_b are two embeddings, which can be the same. 
+        """
 
         # Compute the L2 distance, normalized by the feature dimension
         clamped_l2 = (
             torch.clamp_min(
-                torch.sum(((y_0 - y_1) ** 2).flatten(self.feature_dimension), dim=-1), 1e-8
+                torch.sum(((f_a - f_b) ** 2).flatten(self.feature_dimension), dim=-1), self.loss_cutoff
             )
-        ).sqrt() / ((np.prod(y_0.shape[self.feature_dimension:])) * self.bandwidth)
+        ).sqrt() / ((np.prod(f_a.shape[self.feature_dimension:])) * self.bandwidth)
         
         # Apply RBF transformation: exp(-distance * weight)
         return torch.mean(torch.exp(-clamped_l2 * weight))

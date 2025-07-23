@@ -1122,12 +1122,22 @@ class BespokeNonStationary(Sample):
         return self.sampler(start, debug=debug, offset=sample_offset)
 
 class PushforwardTraining(Sample): 
-    """Pushforward sampling to be paired with IMM loss - https://arxiv.org/abs/2503.07565"""
+    """
+    Pushforward sampling to be paired with IMM loss - https://arxiv.org/abs/2503.07565
+    Key concepts: 
+        - Uses DDIM sampling with a noise offset between different noisy steps instead of noisy and clean
+        - Samples different noise levels (T for high noise in a log-normal distribution, R for low noise in 
+            a uniform distribution, S as a proxy for R where S has constraints of only being so far from T) 
+            and learns the step between them 
+        - 
+    """
     def __init__(self, config):
         super().__init__(config)
         self.epsilon = self.sample_config.get("EPSILON", 0.01)
         self.noise_low = self.sample_config.get("NOISE_LOW", 0.0)
         self.noise_high = self.sample_config.get("NOISE_HIGH", 0.994)
+
+        self.pi_over_2 = torch.pi * 0.5
 
         self.t_distribution = torch.distributions.LogNormal(
             self.sample_config.get("P_MEAN", 0.0),
@@ -1139,38 +1149,40 @@ class PushforwardTraining(Sample):
             self.noise_high
         )
 
-        self.k_noise_seperation = self.sample_config.get("K", 12)
+        self.k_noise_separation = self.sample_config.get("K", 12)
         self.noise_schedule = self.sample_config.get("NOISE_SCHEDULE", "fm")
+        if self.noise_schedule not in ["fm", "vp_cosine"]:
+            raise ValueError("Noise schedule must be 'fm' or 'vp_cosine'")
 
     def compute_noise_offset(self, noise_sampled): 
-        "Convert s -> r, ensuring there is a proper offset between the two sampling parameters"
+        """Convert s -> r, ensuring there is a proper offset between the two sampling parameters"""
 
-        u = (self.noise_high - self.noise_low) * (1/2) ** self.k_noise_seperation
+        u = (self.noise_high - self.noise_low) * (1/2) ** self.k_noise_separation
         return (noise_sampled - u).clamp(min=self.noise_low, max=self.noise_high) 
 
     def noise_ratio_to_time(self, sample): 
         """Convert the sample of the noise to a timestep """
 
-        if self.noise_schedule == "vp_cosine":
-            t = torch.arctan(sample) / (torch.pi * 0.5) 
-
-        elif self.noise_schedule == "fm":
-            t = sample / (1 + sample)
-        
+        conversion = {
+            "vp_cosine": lambda sample: torch.arctan(sample) / self.pi_over_2, 
+            "fm": lambda sample: sample / (1 + sample)
+        }
+        # Just in case something terrible happens, we use Identity
+        t = conversion.get(self.noise_schedule, lambda sample: sample)(sample)
         # p(nan) := 1 
         t = torch.nan_to_num(t, nan=1)
         return t
 
     def get_alpha_sigma(self, time_step): 
-        if self.noise_schedule == "fm":
-            # Flow matching: linear interpolation between clean and noise
-            alpha = 1 - time_step  # Signal coefficient decreases linearly
-            sigma = time_step      # Noise coefficient increases linearly
-            
-        elif self.noise_schedule == "vp_cosine":
-            # VP cosine schedule: smooth transition using cosine/sine
-            alpha = torch.cos(time_step * torch.pi * 0.5)
-            sigma = torch.sin(time_step * torch.pi * 0.5)
+        alpha = {
+            "fm": lambda t: 1 - t,
+            "vp_cosine": lambda t: torch.cos(t * self.pi_over_2)
+        }.get(self.noise_schedule, lambda t: t)(time_step)  # Default to identity if not found
+
+        sigma = {
+            "fm": lambda t: t,
+            "vp_cosine": lambda t: torch.sin(t * self.pi_over_2)
+        }.get(self.noise_schedule, lambda t: t)(time_step)
 
         return alpha, sigma
 
@@ -1213,8 +1225,8 @@ class PushforwardTraining(Sample):
         x_noised_t = alpha_t * x + sigma_t * noise_t
         x_noised_r = self._ddim_step(x, x_noised_t, time_t, time_r)
         
-        # Multiple time embeddings are added - avoid dramatic archecture change requirements
-        # Section "Injecting time" in the paper appdeneix 
+        # Multiple time embeddings are added - avoid dramatic architecture change requirements
+        # Section "Injecting time" in the paper appendix 
         high_noise_time_embedding = model.do_time_embed(time_t) + model.do_time_embed(time_s)
         low_noise_time_embedding = model.do_time_embed(time_r) + model.do_time_embed(time_s)
 

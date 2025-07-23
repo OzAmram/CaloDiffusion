@@ -7,6 +7,21 @@ from calodiffusion.utils import utils
 import calodiffusion.utils.HGCal_utils as hgcal_utils
 
 class CaloDiffusion(Diffusion): 
+    """
+    A class for training and inference of the base CaloDiffusion model.
+    Uses either a ResNet or a CondUnet model
+    The denoising sampler can be any of the samplers in samplers.py (given by config['SAMPLER'])
+    The training losses are defined by the loss function in loss.py (given by config['LOSS'])
+        If these losses have scaling functions (defined by loss.get_scaling),
+        the "c_in" will be applied to the input before denoising (defaults c_in=1), and "c_skip" and "c_out" will 
+        be applied to the output if the loss function is 'hybrid' or 'minsnr'. If the loss is 'noise_pred',
+        the output will be the denoised input (non-noisy-input - sigma * prediction-of-noisy-image). Otherwise, the output will 
+        be the prediction of the noisy image.
+
+    Additional embeds or decoders can be added by using config["SHOWER_EMBED"] = "NN". If it is an HGCal model, a geometric encoder will be used. 
+    The embedding model will be initialized with the config["BIN_FILE"] and the dataset settings. 
+    """
+
     def __init__(self, config: Union[str, dict], n_steps: int = 400, loss_type: str = 'l2'):
         super().__init__(config, n_steps, loss_type)
         self.pre_embed = "pre-embed" in self.config['SHOWER_EMBED']

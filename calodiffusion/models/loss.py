@@ -253,12 +253,10 @@ class IMM(Loss):
     def _calculate_weight(self, t, s):
         """
         Weight for the kernel -> adaptive based on time difference
-        w = abs(sigma_t/(alpha_s * sigma_t - sigma_s * alpha_t))
+        w = 1/c_out, c_out(t, s) is the scaling factor from Simple-EDM
         """
         sigma_t, alpha_t = self.sampler.get_alpha_sigma(t)
-        sigma_s, alpha_s = self.sampler.get_alpha_sigma(s)
-
-        return torch.abs(sigma_t/(alpha_s * sigma_t - sigma_s * alpha_t))
+        return torch.abs(torch.sqrt(alpha_t**2 + sigma_t**2)/(- sigma_t * self.sigma_data))
 
     def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
         """An MMD loss between two points of sampling using pushforward to access the two points"""
@@ -275,9 +273,7 @@ class IMM(Loss):
 
         weight = self._calculate_weight(time_t, time_s)
 
-        high_noise_intersample = self.kernel(sampled_high_noise, sampled_high_noise, weight=weight)
+        high_noise_intersample = self.kernel(sampled_high_noise, sampled_high_noise, weight=weight).detach()
         low_noise_intersample = self.kernel(sampled_low_noise, sampled_low_noise, weight=weight)
-
-        cross_sample = self.kernel(sampled_high_noise, sampled_low_noise, weight=weight)
-
+        cross_sample = self.kernel(sampled_high_noise.detach(), sampled_low_noise, weight=weight)
         return high_noise_intersample + low_noise_intersample - (2 * cross_sample)

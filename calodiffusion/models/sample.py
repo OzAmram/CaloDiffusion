@@ -10,8 +10,7 @@ import torch
 import numpy as np
 
 from calodiffusion.utils import sampling
-from calodiffusion.utils.utils import load_data
-from calodiffusion.utils.utils import import_tqdm
+from calodiffusion.utils.utils import load_data, import_tqdm, get_device
 
 tqdm = import_tqdm()
 
@@ -1133,6 +1132,7 @@ class PushforwardTraining(Sample):
     """
     def __init__(self, config):
         super().__init__(config)
+        self.device = get_device()
         self.epsilon = self.sample_config.get("EPSILON", 0.01)
         self.noise_low = self.sample_config.get("NOISE_LOW", 0.0)
         self.noise_high = self.sample_config.get("NOISE_HIGH", 0.994)
@@ -1191,8 +1191,8 @@ class PushforwardTraining(Sample):
         Time sampling that produces T and R samples (high noise and low noise).
         """
 
-        noise_sample_t = self.t_distribution.sample(x.shape)
-        noise_sample_s = self.s_distribution.sample(x.shape)  # Intermediate, clamped to fit the distrubution of T. 
+        noise_sample_t = self.t_distribution.sample(x.shape).to(self.device)  # High noise sample, log-normal distribution
+        noise_sample_s = self.s_distribution.sample(x.shape).to(self.device)  # Intermediate, clamped to fit the distrubution of T. 
 
         # Convert s sample to have a proper offset
         noise_sample_r = self.compute_noise_offset(noise_sample_s)

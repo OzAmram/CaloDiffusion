@@ -4,6 +4,7 @@ methods for sampling on inference
 """
 
 from abc import ABC
+import collections
 import os
 from typing import Any
 import torch
@@ -1139,20 +1140,57 @@ class PushforwardTraining(Sample):
 
         self.pi_over_2 = torch.pi * 0.5
 
-        self.t_distribution = torch.distributions.LogNormal(
-            self.sample_config.get("P_MEAN", 0.0),
-            self.sample_config.get("P_STD", 0.1)
-        )
+        self.p_mean = self.sample_config.get("P_MEAN", -1.1)
+        self.p_std = self.sample_config.get("P_STD", 2.0)
 
-        self.s_distribution = torch.distributions.Uniform(
-            self.noise_low, 
-            self.noise_high
-        )
+        self.base_distribution = self._get_distribution(self.sample_config.get("DISTRIBUTION", "lognormal"))
 
         self.k_noise_separation = self.sample_config.get("K", 12)
         self.noise_schedule = self.sample_config.get("NOISE_SCHEDULE", "fm")
         if self.noise_schedule not in ["fm", "vp_cosine"]:
             raise ValueError("Noise schedule must be 'fm' or 'vp_cosine'")
+
+    def _convert_to_log_space(self, sample):
+        if self.noise_schedule == "vp_cosine":
+            return -1 * torch.log(torch.tan(sample * self.pi_over_2))
+        else:
+            return (1 - sample).log() - sample.log()
+        
+    def _get_distribution(self, distribution_type: str) -> collections.abc.Callable: 
+        """
+        All distributions follow the same format
+        Take a high and low end of the distribution, and process them according to match
+        
+        """
+        def uniform(low, high, x_sample): 
+            # Need to convert the samples to noise-to-time
+            low = self.noise_ratio_to_time(low)
+            high = self.noise_ratio_to_time(high)
+            dist = torch.distributions.Uniform(low, high)
+            sample = dist.sample(x_sample)
+            return self._convert_to_log_space(sample).exp()
+
+        def lognormal(low, high, x_sample): 
+            dist = torch.distributions.LogNormal(loc=self.p_mean, scale=self.p_std)
+            sample = dist.sample(x_sample)
+            sample = torch.clamp(sample, min=low, max=high)
+            return sample
+
+        def normal(low, high, x_sample): 
+            low = self.noise_ratio_to_time(low)
+            high = self.noise_ratio_to_time(high)
+            dist = torch.distributions.Normal(loc=self.p_mean, scale=self.p_std)
+
+            sample = dist.sample(x_sample)
+            sample = self._convert_to_log_space(sample).exp()
+            return torch.clamp(sample, min=low, max=high)
+
+        dist_function = {"uniform": uniform, "lognormal": lognormal, "normal":normal}.get(distribution_type)
+        if dist_function is None: 
+            err = f"Distribution {distribution_type} is not supported. Choice 'uniform', 'lognormal', or 'normal' with the [SAMPLER_SETTINGS][DISTRIBUTION] key."
+            raise ValueError(err)
+        
+        return dist_function
 
     def compute_noise_offset(self, noise_sampled): 
         """Convert s -> r, ensuring there is a proper offset between the two sampling parameters"""
@@ -1191,12 +1229,17 @@ class PushforwardTraining(Sample):
         Time sampling that produces T and R samples (high noise and low noise).
         """
 
-        noise_sample_t = self.t_distribution.sample(x.shape).to(self.device)  # High noise sample, log-normal distribution
-        noise_sample_s = self.s_distribution.sample(x.shape).to(self.device)  # Intermediate, clamped to fit the distrubution of T. 
+        noise_sample_t = self.base_distribution(self.noise_low, self.noise_high, x.shape)
+
+        # Intermediate, clamped to fit the distrubution of T. 
+
+        noise_sample_s = self.base_distribution(self.noise_low, noise_sample_t.exp().mean(), x.shape)
+
+        noise_sample_s = torch.minimum(noise_sample_s, noise_sample_t).clamp(min=self.noise_low) # Current low noise
 
         # Convert s sample to have a proper offset
         noise_sample_r = self.compute_noise_offset(noise_sample_s)
-        return noise_sample_t, noise_sample_r, noise_sample_r
+        return noise_sample_t, noise_sample_s, noise_sample_r
 
     def _ddim_step(self, x, noisy_x, time_t, time_r):
         """

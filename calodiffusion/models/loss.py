@@ -239,16 +239,23 @@ class IMM(Loss):
         Compute the kernel for IMM Loss - exp(-||x - y||₂ / ||x|| * w)  
         f_a, f_b are two embeddings, which can be the same. 
         """
-
         # Compute the L2 distance, normalized by the feature dimension
-        clamped_l2 = (
-            torch.clamp_min(
-                torch.sum(((f_a - f_b) ** 2).flatten(self.feature_dimension), dim=-1), self.loss_cutoff
-            )
-        ).sqrt() / ((np.prod(f_a.shape[self.feature_dimension:])) * self.bandwidth)
-        
+        # Take the l2 norm, clamp, and normalize with bandwidth and feature dimensions
+        batch_size = f_a.shape[0] # cdist assumes a tensor with shape (N, batch, features)
+        f_a = f_a.reshape(batch_size, -1)
+        f_b = f_b.reshape(batch_size, -1)
+        weight = weight.reshape(batch_size, -1)
+
+        clamped_l2 = torch.clamp_min(torch.cdist(f_a, f_b, p=2), self.loss_cutoff) / (f_a.shape[-1] * self.bandwidth)
         # Apply RBF transformation: exp(-distance * weight)
-        return torch.mean(torch.exp(-clamped_l2 * weight))
+
+
+        embedding_similarity = torch.exp(-clamped_l2 * weight)
+        # Remove the diagonal elements of the if f_a and f_b are the same
+        # if torch.allclose(f_a, f_b, atol=1e-10): 
+        #     embedding_similarity = embedding_similarity[~torch.eye(batch_size, dtype=bool, device=f_a.device)]
+
+        return torch.mean(embedding_similarity)
     
     def _calculate_weight(self, t, s):
         """
@@ -256,7 +263,12 @@ class IMM(Loss):
         w = 1/c_out, c_out(t, s) is the scaling factor from Simple-EDM
         """
         sigma_t, alpha_t = self.sampler.get_alpha_sigma(t)
-        return torch.abs(torch.sqrt(alpha_t**2 + sigma_t**2)/(- sigma_t * self.sigma_data))
+        # Clamp the weight to make sure nothing explodes
+
+        intermediate = torch.clamp_min(torch.abs(sigma_t * self.sigma_data), self.loss_cutoff)
+        weight = torch.abs(torch.sqrt(alpha_t**2 + sigma_t**2)) / intermediate
+
+        return torch.clamp(weight, min=0.1, max=10.0)
 
     def loss_function(self, model, data, E, sigma=None, noise=None, layers=None):
         """An MMD loss between two points of sampling using pushforward to access the two points"""
@@ -272,8 +284,8 @@ class IMM(Loss):
             layers=layers)
 
         weight = self._calculate_weight(time_t, time_s)
-
-        high_noise_intersample = self.kernel(sampled_high_noise, sampled_high_noise, weight=weight).detach()
-        low_noise_intersample = self.kernel(sampled_low_noise, sampled_low_noise, weight=weight)
-        cross_sample = self.kernel(sampled_high_noise.detach(), sampled_low_noise, weight=weight)
+        # Unsqueeze the sampled tensors 
+        high_noise_intersample = self.kernel(sampled_high_noise.unsqueeze(1), sampled_high_noise.unsqueeze(0), weight=weight)
+        low_noise_intersample = self.kernel(sampled_low_noise.unsqueeze(1), sampled_low_noise.unsqueeze(0), weight=weight)
+        cross_sample = self.kernel(sampled_high_noise.unsqueeze(1), sampled_low_noise.unsqueeze(0), weight=weight)
         return high_noise_intersample + low_noise_intersample - (2 * cross_sample)

@@ -1140,8 +1140,8 @@ class PushforwardTraining(Sample):
 
         self.pi_over_2 = torch.pi * 0.5
 
-        self.p_mean = self.sample_config.get("P_MEAN", -1.1)
-        self.p_std = self.sample_config.get("P_STD", 2.0)
+        self.p_mean = self.sample_config.get("P_MEAN", 0.0)
+        self.p_std = self.sample_config.get("P_STD", 1.0)
 
         self.base_distribution = self._get_distribution(self.sample_config.get("DISTRIBUTION", "lognormal"))
 
@@ -1168,13 +1168,13 @@ class PushforwardTraining(Sample):
             high = self.noise_ratio_to_time(high)
             dist = torch.distributions.Uniform(low, high)
             sample = dist.sample(x_sample)
-            return self._convert_to_log_space(sample).exp()
+            return self._convert_to_log_space(sample).exp().to(self.device)
 
         def lognormal(low, high, x_sample): 
             dist = torch.distributions.LogNormal(loc=self.p_mean, scale=self.p_std)
             sample = dist.sample(x_sample)
             sample = torch.clamp(sample, min=low, max=high)
-            return sample
+            return sample.to(self.device)
 
         def normal(low, high, x_sample): 
             low = self.noise_ratio_to_time(low)
@@ -1183,7 +1183,7 @@ class PushforwardTraining(Sample):
 
             sample = dist.sample(x_sample)
             sample = self._convert_to_log_space(sample).exp()
-            return torch.clamp(sample, min=low, max=high)
+            return torch.clamp(sample, min=low, max=high).to(self.device)
 
         dist_function = {"uniform": uniform, "lognormal": lognormal, "normal":normal}.get(distribution_type)
         if dist_function is None: 
@@ -1198,7 +1198,7 @@ class PushforwardTraining(Sample):
         u = (self.noise_high - self.noise_low) * (1/2) ** self.k_noise_separation
         return (noise_sampled - u).clamp(min=self.noise_low, max=self.noise_high) 
 
-    def noise_ratio_to_time(self, sample): 
+    def noise_ratio_to_time(self, sample):
         """Convert the sample of the noise to a timestep """
 
         conversion = {
@@ -1267,9 +1267,11 @@ class PushforwardTraining(Sample):
         alpha_t, sigma_t = self.get_alpha_sigma(time_t)
         x_noised_t = alpha_t * x + sigma_t * noise_t
         x_noised_r = self._ddim_step(x, x_noised_t, time_t, time_r)
-        
+        if torch.isnan(x_noised_r).any(): 
+            x_noised_r[torch.isnan(x_noised_r)] = 0
         # Multiple time embeddings are added - avoid dramatic architecture change requirements
         # Section "Injecting time" in the paper appendix 
+        # These are okay
         high_noise_time_embedding = model.do_time_embed(time_t) + model.do_time_embed(time_s)
         low_noise_time_embedding = model.do_time_embed(time_r) + model.do_time_embed(time_s)
 
@@ -1288,7 +1290,7 @@ class PushforwardTraining(Sample):
             layers=layers,
             do_time_embed=False
         )  # f_sr in the paper
-
+        
         return high_noise_prediction, low_noise_prediction, time_t, time_s
 
 

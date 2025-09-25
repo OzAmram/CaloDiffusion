@@ -249,7 +249,6 @@ class IMM(Loss):
         clamped_l2 = torch.clamp_min(torch.cdist(f_a, f_b, p=2), self.loss_cutoff) / (f_a.shape[-1] * self.bandwidth)
         # Apply RBF transformation: exp(-distance * weight)
 
-
         embedding_similarity = torch.exp(-clamped_l2 * weight)
         # Remove the diagonal elements of the if f_a and f_b are the same
         # if torch.allclose(f_a, f_b, atol=1e-10): 
@@ -281,11 +280,14 @@ class IMM(Loss):
             sigma=sigma,
             x=data, 
             energy=E, 
-            layers=layers)
+            layers=layers)  # Error is happening with the sample high and low noise
 
-        weight = self._calculate_weight(time_t, time_s)
+        weight = self._calculate_weight(time_t, time_s)  # Weight is okay
+
         # Unsqueeze the sampled tensors 
         high_noise_intersample = self.kernel(sampled_high_noise.unsqueeze(1), sampled_high_noise.unsqueeze(0), weight=weight)
         low_noise_intersample = self.kernel(sampled_low_noise.unsqueeze(1), sampled_low_noise.unsqueeze(0), weight=weight)
         cross_sample = self.kernel(sampled_high_noise.unsqueeze(1), sampled_low_noise.unsqueeze(0), weight=weight)
-        return high_noise_intersample + low_noise_intersample - (2 * cross_sample)
+
+        loss = abs(0.5*(high_noise_intersample + low_noise_intersample - (2 * cross_sample)))
+        return loss

@@ -106,7 +106,6 @@ class CaloDiffusion(Diffusion):
 
         rz_phi = self.add_RZPhi(x).float()
         out = self.model(rz_phi, cond=E.float(), time=time.float(), controls=controls)
-
         if (self.do_embed):
             out = self.NN_embed.dec(out).to(x.device)
 

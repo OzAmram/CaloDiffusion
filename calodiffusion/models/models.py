@@ -704,6 +704,8 @@ class CondUnet(nn.Module):
         c = self.cond_mlp(cond)
         if(not self.no_time):
             t = self.time_mlp(time)
+            if len(t.shape) > 2:
+                t = t.squeeze()
             conditions = torch.cat([t, c], axis=-1)
         else: 
             conditions = c

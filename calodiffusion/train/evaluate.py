@@ -6,7 +6,10 @@ General evaluation metrics for a fully trained model (not losses)
 from typing import Literal
 from calodiffusion.utils import utils
 import numpy as np
-import jetnet
+try: 
+    import jetnet
+except ImportError: 
+    print("Cannot use jetnet")
 import torch 
 
 from torchvision.models.resnet import ResNet, BasicBlock
@@ -232,3 +235,155 @@ class CNNCompare:
             probabilities.append(self.cnn.forward(torch.tensor(batch_generated), E).detach())
 
         return (1/len(probabilities))*np.sum(np.log(np.array(probabilities)))
+
+
+class ProfileInference: 
+    def __init__(self, config, trained_model, n_iterations=10):
+        """
+        Create a pytorch profiler that can compare compute requirements during inference
+        Measured GPU and CPU use, estimated flops
+        """
+        
+        # Setup the model
+        # Make a fake input
+        self.n_iterations = n_iterations
+        self.model = trained_model
+        self.config = config
+
+        class DummyLoader(torch.utils.data.Dataset): 
+            def __init__(self):
+                super().__init__()
+
+            def __len__(self): 
+                return 1
+            
+            def __getitem__(self, idx): 
+                E = torch.rand((config.get("NLAYERS")), dtype=torch.float)
+                layer = torch.rand((config.get("SHAPE_ORIG")[1]+1), dtype=torch.float)
+                batch = torch.rand((10, *config.get("SHAPE_PAD")[1:]), dtype=torch.float)
+                return E, layer, batch
+            
+        self.dummy_loader = torch.utils.data.DataLoader(DummyLoader())
+
+    def __call__(self, *args, **kwds):
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA], 
+            schedule=torch.profiler.schedule(wait=1, warmup=1, active=1, repeat=1),
+            with_flops=True
+        ) as profile: 
+            for _ in range(self.n_iterations):
+                self.model.generate(
+                    data_loader=self.dummy_loader, 
+                    sample_steps=self.config.get("NSTEPS"),
+                    sample_offset=0
+                )
+                profile.step()
+
+        return profile.key_averages()
+
+class _LogisticKernel:
+    def __init__(self, training_epochs: int = 100, sigma: float = 0.5):
+        self.sigma = sigma
+        self.lamb = 1e-8
+        self.epochs = training_epochs
+        self.weights = None
+        self.centers = None 
+        self.invert_matrix = None
+
+    def _kernel(self, x1, x2): 
+        return torch.exp(-torch.cdist(x1, x2)**2/(2*self.sigma**2))
+
+    def _find_centers(self, X): 
+        # Finding approximate nystrom centers given the distributions X
+        n_samples = X.shape[0]
+        n_features = X.shape[-1]
+        m = int(n_features/3)
+
+        def random_fourier_features():
+            # Return the score used to sample indices
+            W = torch.normal(0, 1.0/self.sigma, size=(n_samples, n_features))
+            b = torch.randn(size=(n_features, 1)) * 2*torch.pi
+            phi = torch.Tensor([np.sqrt(2.0/n_features)]) * torch.cos(X.T @ W + b)
+
+            Q, _ = torch.linalg.qr(phi, mode='reduced')
+            return torch.sum(Q**2, axis=1)
+            
+        dist = torch.distributions.categorical.Categorical(probs=random_fourier_features())
+        samples = [int(dist.sample()) for _ in range(m)]
+        centers = X[:, samples]
+        self.centers = centers
+        # self.invert_matrix = torch.linalg.inv(
+        #     self._kernel(centers, centers) + self.lamb*torch.eye(n_samples, dtype=torch.float)
+        # )
+
+    def loss(self, X, y): 
+        # Cross entropy loss weighted by size of X
+        m = X.shape[1]
+        n = X.shape[0]
+        out = self.predict(X, return_probability=True)
+        return (1-y)*(m/n)*torch.log(1+torch.exp(out)) + y*torch.log(1+torch.exp(-1*out))
+
+    def train(self, X, y):
+        self._find_centers(X)
+        self.weights = torch.nn.Parameter(torch.rand(X.shape[1], ))
+        optimizer = torch.optim.Adam([self.weights], lr=0.01)
+
+        for _ in range(self.epochs): 
+            optimizer.zero_grad()
+            loss = torch.mean(self.loss(X, y))
+            loss.backward()
+            optimizer.step()
+
+    def predict(self, X, return_probability:bool = False):
+        if self.weights is None: 
+            raise ValueError("Cannot run prediction with logistic kernel without first training")
+
+        k_cc = self._kernel(self.centers, self.centers)
+
+        _kernel_out = self._kernel(X.T, k_cc)
+        out = torch.matmul(_kernel_out.T, self.weights)
+        if return_probability: 
+            return out 
+        return (out > 0).int()
+
+class NewPhysicsLearningMachine:
+    def __init__(self, config):
+        """
+        reference: https://arxiv.org/abs/2508.02275
+        """
+        # Use a logistic model as a kernel 
+        # f_w = Sigma(w*exp(-||y-y'||^2/(2*sigma^2)))
+        self.logistic_model = _LogisticKernel()
+        
+        self.sample_steps = config.get('NSTEPS')
+        self.weight = 0.5  # Configurable hyperparam
+
+    def train_kernel(self, x, y):
+        self.logistic_model.train(x, y)
+
+    def compute_t(self, batch, labels): 
+        ""
+        # t_nplm = -2*[m/n * Sigma(e^(f_w)-1) - Sigma(f_w)]
+        prediction = self.logistic_model.predict(batch)
+        diff = self.weight*torch.sum(torch.exp(prediction[labels==0]) - 1)
+        return 2 * (diff - torch.sum(prediction[labels==1]))
+
+    def __call__(self, generated, eval_data, **kwargs): 
+
+        metric = []
+
+        for i, (E, layers, batch_data) in enumerate(eval_data):
+            batch_size = eval_data.batch_size
+            batch_generated = generated[i*batch_size: (i+1)*batch_size]
+
+            batch_input = torch.concatenate((batch_data, batch_generated), axis=0)
+            batch_input = batch_input.reshape(batch_input.shape[0], batch_input[:1,].numel())
+            labels = torch.zeros((batch_input.shape[0], 1))
+            labels[batch_data.shape[0]:, :] = torch.ones((batch_data.shape[0], 1))
+            labels = labels.squeeze()
+
+            self.train_kernel(batch_input, labels)
+            batch_metrics = self.compute_t(batch_input, labels)
+            metric.append(batch_metrics)
+
+        return torch.mean(torch.tensor(metric))

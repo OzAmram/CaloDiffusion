@@ -15,19 +15,54 @@ import torch
 from torchvision.models.resnet import ResNet, BasicBlock
 
 import calodiffusion.utils.HighLevelFeatures as HLF
+from calodiffusion.utils.HGCal_utils import HighLevelFeatures as HGCAL_HLF
+from calodiffusion.utils import HGCal_utils as hgcal_utils
 
 
 class FDPCalculationError(Exception): 
     def __init__(self, *args):
         super().__init__(*args)
 
-class FDP: 
-    def _init__(self, binning_dataset, particle): 
-        self.hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
-        self.reference_hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
+class _FPD_HGCAL():
+    def __init__(self, binning_dataset, embed_shape=(-1, 1, 28, 12, 21)):
+        self.hlf = HGCAL_HLF(binning_dataset)  # Hgcal HLF is stateless(ish), we don't need one for reference 
+        self.encoder = hgcal_utils.HGCalConverter(bins=embed_shape, geom_file=binning_dataset)
 
-    def pre_process(self, energies, hlf_class, label): 
-        """ takes hdf5_file, extracts high-level features, appends label, returns array """
+    def __call__(self, generated, energies, eval_data, *args, **kwargs):
+
+        if (kwargs.get("energies") is None) and (kwargs.get("showers") is None):
+            reference_shower = []
+            reference_energy = []
+            for energy, _, data in eval_data: 
+                reference_shower.append(data)
+                reference_energy.append(energy)
+
+            reference_shower = np.concatenate(reference_shower)
+            reference_energy = np.concatenate(reference_energy)
+        else: 
+            reference_shower = kwargs.get("showers")
+            reference_energy = kwargs.get("energies")
+
+        generated = np.squeeze(generated)
+
+        energies = np.squeeze(energies)
+        reference_shower = np.squeeze(reference_shower)
+        reference_shower = self.encoder.dec(
+            torch.tensor(reference_shower, dtype=torch.float32)
+        ).detach().numpy()
+
+        source = self.hlf(generated, energies)
+        reference = self.hlf(reference_shower, reference_energy)
+
+        return {"source": source, "reference": reference}
+
+
+class _FPD(): 
+    def __init__(self, particle, binning_dataset):
+        self.hlf = HLF.HighLevelFeatures(particle, binning_dataset)
+        self.reference_hlf = HLF.HighLevelFeatures(particle, binning_dataset)
+    
+    def pre_process(self, energies, hlf_class, label):
         E_layer = []
         for layer_id in hlf_class.GetElayers():
             E_layer.append(hlf_class.GetElayers()[layer_id].reshape(-1, 1))
@@ -48,39 +83,51 @@ class FDP:
         ret = np.concatenate([np.log10(energies), np.log10(E_layer+1e-8), EC_etas/1e2, EC_phis/1e2,
                             Width_etas/1e2, Width_phis/1e2, label*np.ones_like(energies)], axis=1)
         return ret
+    
+    def __call__(self, generated, energies, eval_data, *args, **kwargs):
+        if (kwargs.get("energies") is None) and (kwargs.get("showers") is None):
+            reference_shower = []
+            reference_energy = []
+            for energy, _, data in eval_data: 
+                reference_shower.append(data)
+                reference_energy.append(energy)
 
-    def __call__(self, trained_model, eval_data, kwargs) -> float:
-
-        reference_shower = []
-        reference_energy = []
-        for energy, _, data in eval_data: 
-            reference_shower.append(data)
-            reference_energy.append(energy)
-
-        reference_shower = np.concatenate(reference_shower)
-        reference_energy = np.concatenate(reference_energy)
-
-        generated, energies = trained_model.generate(
-            data_loader=eval_data, 
-            sample_steps=trained_model.config.get("NSTEPS"), 
-            sample_offset=0
-        )
+            reference_shower = np.concatenate(reference_shower)
+            reference_energy = np.concatenate(reference_energy)
+        else: 
+            reference_shower = kwargs.get("showers")
+            reference_energy = kwargs.get("energies")
 
         self.hlf.CalculateFeatures(generated)
         self.reference_hlf.CalculateFeatures(reference_shower)
         
         source_array = self.pre_process(energies, self.hlf, 0.)[:, :-1]
         reference_array = self.pre_process(reference_energy, self.reference_hlf, 1.)[:, :-1]
-        
+
+        return {"source": source_array, "reference": reference_array}
+
+class FPD: 
+    def __init__(self, binning_dataset, particle, hgcal=False): 
+        if jetnet is None: 
+            raise ImportError("jetnet is not installed. Please install it to use FPD evaluation.")
+        if hgcal:
+            self.fpd = _FPD_HGCAL(binning_dataset)
+        else: 
+            self.fpd = _FPD(particle, binning_dataset)
+
+    def __call__(self, generated, energies, eval_data, **kwargs) -> float:
+        out = self.fpd(generated=generated, energies=energies, eval_data=eval_data, **kwargs)
+        source_array = out["source"]
+        reference_array = out["reference"]
+
         try: 
             fpd, _ = jetnet.evaluation.fpd(
                 np.nan_to_num(source_array), np.nan_to_num(reference_array)
             )
         except ValueError as err:
-            raise FDPCalculationError(err)
+            raise FPDCalculationError(err)
 
         return fpd
-
 
 class ComparisonNetwork(ResNet): 
     def __init__(self, dataset_num: Literal[2, 3]):
@@ -179,6 +226,10 @@ class CNNCompare:
             3: {
                 "epochs": 12, 
                 "lr": 5e-5
+            }, 
+            111: {
+                "epochs": 50, 
+                "lr": 1e-5
             }
         }
         if num not in config.keys(): 

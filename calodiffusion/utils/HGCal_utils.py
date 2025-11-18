@@ -1,8 +1,20 @@
-from calodiffusion.utils.common import *
-
-from HGCalShowers.HGCalGeo import HGCalGeo
+import pickle
 import calodiffusion.utils.consts as constants
+from sklearn.isotonic import IsotonicRegression
+import os
+import numpy as np
+import matplotlib.pyplot as plt
 
+import h5py as h5
+import torch
+import torch.utils.data as torchdata
+from einops import rearrange
+
+from calodiffusion.utils import utils
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import roc_auc_score
+from sklearn.calibration import calibration_curve
 
 def logit(x, alpha=1e-8):
     o = alpha + (1 - 2 * alpha) * x
@@ -15,6 +27,50 @@ def reverse_logit(x, alpha=1e-8):
     o = exp / (1 + exp)
     o = (o - alpha) / (1 - 2 * alpha)
     return o
+
+class HighLevelFeatures: 
+    def __init__(self, binning, *args, **kwargs):
+        self.geom =  load_geom(binning)
+
+    def calculate_cartesian_features(self, showers): 
+        x_vals = self.geom.xmap[:, :self.geom.max_ncell]
+        E_x_center = utils.WeightedMean(x_vals, showers, axis=(2))
+        E_x2_center = utils.WeightedMean(x_vals, showers, power=2, axis=(2))
+        E_x_width = utils.GetWidth(E_x_center, E_x2_center)
+
+        y_vals = self.geom.ymap[:, :self.geom.max_ncell]
+        E_y_center = utils.WeightedMean(y_vals, showers, axis=(2))
+        E_y2_center = utils.WeightedMean(y_vals, showers, power=2, axis=(2))
+        E_y_width = utils.GetWidth(E_y_center, E_y2_center)
+
+        return np.concatenate((E_x_center, E_x_width, E_y_center, E_y_width), axis = -1)
+
+    def calculate_angular_features(self, showers): 
+        r_vals = self.geom.ring_map[:, :self.geom.max_ncell]
+        E_R_center = utils.WeightedMean(r_vals, showers, axis=(2))
+        E_R2_center = utils.WeightedMean(r_vals, showers, power=2, axis=(2))
+        E_R_width = utils.GetWidth(E_R_center, E_R2_center)
+
+        phi_vals = self.geom.theta_map[:, :self.geom.max_ncell]
+        E_phi_center, E_phi_width = utils.ang_center_spread(phi_vals, showers, axis=(2))
+
+        return np.concatenate((E_R_center, E_R_width, E_phi_center, E_phi_width), axis = -1)
+    
+    def __call__(self, showers, incident_E, *args, **kwds):
+        """Calculate all features and concat them into an array"""
+
+        E_per_layer = np.log10( np.sum(showers, axis=(2)) + 10e-8)
+        E_total = np.sum(showers, axis=(1,2)).reshape(showers.shape[0], 1)
+        E_ratio = E_total / incident_E
+
+        xy = self.calculate_cartesian_features(showers)
+        rphi = self.calculate_angular_features(showers)
+        
+        eps = 1e-6
+        layer_voxels = np.reshape(showers,(showers.shape[0],showers.shape[1],-1))
+        layer_sparsity = np.sum(layer_voxels > eps, axis = -1) / layer_voxels.shape[2]
+
+        return np.concatenate((incident_E, E_per_layer, E_ratio, xy, rphi, layer_sparsity), axis = -1).astype(np.float32)
 
 
 def preprocess_hgcal_shower(
@@ -291,7 +347,7 @@ def ReverseNormHGCal(
     return data, gen_out
 
 
-class Embeder(nn.Module):
+class Embeder(torch.nn.Module):
     def __init__(self, dim1, dim2, mat, mask, trainable=False):
         super().__init__()
 
@@ -323,7 +379,7 @@ class Embeder(nn.Module):
         self.mask = mask
 
 
-class Decoder(nn.Module):
+class Decoder(torch.nn.Module):
     def __init__(self, dim1, dim2, mat, mask, trainable=False):
         super().__init__()
         self.dim1 = dim1
@@ -336,7 +392,7 @@ class Decoder(nn.Module):
             self.mat = mat
         self.mask = mask
 
-    def forward(self, x, sparse_decoding=False):
+    def forward(self, x, sparse_decoding=True):
         masked_mat = self.mat * self.mask if self.trainable else self.mat
 
         out = rearrange(x, " ... l a r -> ... l (a r)", a=self.dim1, r=self.dim2)
@@ -500,7 +556,7 @@ def load_geom(geom_filename):
     return geom
 
 
-class HGCalConverter(nn.Module):
+class HGCalConverter(torch.nn.Module):
     "Convert irregular hgcal geometry to regular one, initialized with regular geometric conversion, but uses trainable linear map"
 
     def __init__(
@@ -530,6 +586,7 @@ class HGCalConverter(nn.Module):
                 self.geom.max_ncell,
             ),
             device=device,
+            dtype=torch.float32,
         )
         self.dec_mat = torch.zeros(
             (
@@ -537,6 +594,7 @@ class HGCalConverter(nn.Module):
                 self.geom.max_ncell,
                 self.num_alpha_bins * self.num_r_bins,
             ),
+            dtype=torch.float32,
             device=device,
         )
 
@@ -575,7 +633,7 @@ class HGCalConverter(nn.Module):
             trainable=self.trainable,
         )
 
-        self.nets = nn.ModuleList([self.embeder, self.decoder])
+        self.nets = torch.nn.ModuleList([self.embeder, self.decoder])
 
     # proper initialization of embedding
     def init(self, noise_scale=0.0, norm=False, dataset_num=101):
@@ -583,7 +641,7 @@ class HGCalConverter(nn.Module):
         for i in range(self.geom.nlayers):
             lay_size = self.geom.ncells[i]
 
-            conv_map, mask = init_map(
+            conv_map, mask = self.init_map(
                 self.num_alpha_bins, self.num_r_bins, self.geom, i
             )
             conv_map = conv_map.to(device=self.device)
@@ -618,6 +676,77 @@ class HGCalConverter(nn.Module):
             c = constants.dataset_params[dataset_num]
             self.embed_mean = c["embed_mean"]
             self.embed_std = c["embed_std"]
+
+    # initialize GLaM map
+    def init_map(self, num_alpha_bins, num_r_bins, geom, ilay, trainable=False):
+        dim_in = geom.max_ncell
+        ncells = int(round(geom.ncells[ilay]))
+        dim_out = num_alpha_bins * num_r_bins
+
+        # Weight matrix and sparsity mask
+        weight_mat = torch.zeros((num_alpha_bins, num_r_bins, dim_in))
+        mask = torch.zeros((num_alpha_bins, num_r_bins, dim_in))
+
+        step_size = 2.0 * np.pi / num_alpha_bins
+        ang_bins = torch.arange(0, 2.0 * np.pi + step_size, step_size)
+        ang_bins += (
+            np.pi / num_alpha_bins
+        )  # shift by half a bin width so bin center at zero
+
+        eps = 1e-4
+        eps2 = 1e-2
+        cell_alphas = torch.tensor(geom.theta_map[ilay][:dim_in])
+        cell_ang_bins = torch.bucketize(cell_alphas + eps, ang_bins, right=True)
+        # print(ang_bins)
+        # print(cell_alphas[1:7])
+        # print(cell_ang_bins)
+        # last bin = first bin b/c phi periodic
+        cell_ang_bins[cell_ang_bins == num_alpha_bins] = 0
+        diffs = torch.abs(cell_alphas - ang_bins[cell_ang_bins - 1])
+
+        close_boundaries = (diffs < eps2) | (torch.abs(diffs - 2.0 * np.pi) < eps2)
+
+        # special init for first bin
+        # split among all ang bins in the central radial bin
+        weight_mat[:, 0, 0] = 1.0 / num_alpha_bins
+        mask[:, 0, 0] = 1.0
+
+        # dumb slow for loop to initialize for now
+        for i in range(1, ncells):
+            # matrix is size of largest layer, but only process up to size of this layer
+            a_bin = cell_ang_bins[i] % num_alpha_bins
+            r_bin = int(round(geom.ring_map[ilay, i]))
+            if close_boundaries[i]:
+                weight_mat[a_bin, r_bin, i] = 0.5
+                weight_mat[a_bin - 1, r_bin, i] = 0.5
+
+                # Local neighborhood of values trainable
+                mask[a_bin, r_bin, i] = 1.0
+                if r_bin > 0:
+                    mask[a_bin, r_bin - 1, i] = 1.0
+                if r_bin < num_r_bins - 1:
+                    mask[a_bin, r_bin + 1, i] = 1.0
+                mask[a_bin - 1, r_bin, i] = 1.0
+                if r_bin > 0:
+                    mask[a_bin - 1, r_bin - 1, i] = 1.0
+                if r_bin < num_r_bins - 1:
+                    mask[a_bin - 1, r_bin - 1, i] = 1.0
+
+            else:
+                weight_mat[a_bin, r_bin, i] = 1.0
+
+                # Local neighborhood of values trainable
+                mask[a_bin, r_bin, i] = 1.0
+                mask[(a_bin - 1) % num_alpha_bins, r_bin, i] = 1.0
+                mask[(a_bin + 1) % num_alpha_bins, r_bin, i] = 1.0
+                if r_bin > 0:
+                    mask[a_bin, r_bin - 1, i] = 1.0
+                if r_bin < num_r_bins - 1:
+                    mask[a_bin, r_bin + 1, i] = 1.0
+
+        weight_mat = weight_mat.reshape((num_alpha_bins * num_r_bins, dim_in))
+        mask = mask.reshape((num_alpha_bins * num_r_bins, dim_in))
+        return weight_mat, mask
 
     def enc(self, x):
         out = self.embeder(x)
@@ -665,8 +794,7 @@ class HGCalConverter(nn.Module):
 
         return out
 
-
-    def forward(x):
+    def forward(self, x):
         if self.norm:
             x = (x - self.embed_mean) / self.embed_std
         x = self.embeder(x)
@@ -674,3 +802,137 @@ class HGCalConverter(nn.Module):
         if self.norm:
             x = (x * self.embed_std) + self.embed_mean
         return x
+
+class TrainDNNCompare:
+
+    def train_and_evaluate_cls(self, model, data_train, data_test, optim, n_epochs):
+        """ train the model and evaluate along the way"""
+        best_eval_acc = float('-inf')
+        try:
+            for i in range(n_epochs):
+                self.train_cls(model, data_train, optim, i)
+                with torch.no_grad():
+                    eval_acc, _, _ = self.evaluate_cls(model, data_test)
+                if eval_acc > best_eval_acc:
+                    best_eval_acc = eval_acc
+
+                if eval_acc == 1.:
+                    break
+        except KeyboardInterrupt:
+            # training can be cut short with ctrl+c, for example if overfitting between train/test set
+            # is clearly visible
+            pass
+        return model
+
+    def train_cls(self, model, data_train, optim, epoch):
+        """ train one step """
+        model.train()
+        for i, data_batch in enumerate(data_train):
+            data_batch = data_batch[0].to(utils.get_device())
+
+            #input_vector, target_vector = torch.split(data_batch, [data_batch.size()[1]-1, 1], dim=1)
+            input_vector, target_vector = data_batch[:, :-1], data_batch[:, -1]
+            output_vector = model(input_vector)
+            criterion = torch.nn.BCEWithLogitsLoss()
+            loss = criterion(output_vector, target_vector.unsqueeze(1))
+
+            optim.zero_grad()
+            loss.backward()
+            optim.step()
+
+            pred = torch.round(torch.sigmoid(output_vector.detach()))
+            target = torch.round(target_vector.detach())
+            if i == 0:
+                res_true = target
+                res_pred = pred
+            else:
+                res_true = torch.cat((res_true, target), 0)
+                res_pred = torch.cat((res_pred, pred), 0)
+
+        try:
+            print("Accuracy on training set is",
+            accuracy_score(res_true.cpu(), np.clip(res_pred.cpu(), 0., 1.0)))
+        except:
+            print("Nans")
+
+    def evaluate_cls(self, model, data_test, final_eval=False, calibration_data=None):
+        """ evaluate on test set """
+        model.eval()
+        for j, data_batch in enumerate(data_test):
+            data_batch = data_batch[0].to(utils.get_device())
+
+            input_vector, target_vector = data_batch[:, :-1], data_batch[:, -1]
+            output_vector = model(input_vector)
+            pred = output_vector.reshape(-1)
+            target = target_vector.double()
+            if j == 0:
+                result_true = target
+                result_pred = pred
+            else:
+                result_true = torch.cat((result_true, target), 0)
+                result_pred = torch.cat((result_pred, pred), 0)
+        BCE = torch.nn.BCEWithLogitsLoss()(result_pred, result_true)
+        result_pred = torch.round(torch.sigmoid(result_pred)).cpu().numpy()
+        result_true = result_true.cpu().numpy().astype(np.float32)
+        result_pred = np.clip(np.round(result_pred), 0., 1.0)
+        #print(np.amin(result_pred), np.amax(result_pred), np.sum(np.isnan(result_pred)))
+        try:
+            eval_acc = accuracy_score(result_true, result_pred)
+        except:
+            print("Nans")
+            result_pred[np.isnan(result_pred)] = 0.5
+            eval_acc = accuracy_score(result_true, result_pred)
+        print("Accuracy on test set is", eval_acc)
+        eval_auc = roc_auc_score(result_true, result_pred)
+        print("AUC on test set is", eval_auc)
+        JSD = - BCE + np.log(2.)
+        print("BCE loss of test set is {:.4f}, JSD of the two dists is {:.4f}".format(BCE, JSD/np.log(2.)))
+        if final_eval:
+            prob_true, prob_pred = calibration_curve(result_true, result_pred, n_bins=10)
+            print("unrescaled calibration curve:", prob_true, prob_pred)
+            calibrator = self.calibrate_classifier(model, calibration_data)
+            rescaled_pred = calibrator.predict(result_pred)
+            eval_acc = accuracy_score(result_true, np.clip(np.round(rescaled_pred), 0., 1.0))
+            print("Rescaled accuracy is", eval_acc)
+            eval_auc = roc_auc_score(result_true, rescaled_pred)
+            print("rescaled AUC of dataset is", eval_auc)
+            prob_true, prob_pred = calibration_curve(result_true, rescaled_pred, n_bins=10)
+            print("rescaled calibration curve:", prob_true, prob_pred)
+            # calibration was done after sigmoid, therefore only BCELoss() needed here:
+            BCE = torch.nn.BCELoss()(torch.tensor(rescaled_pred), torch.tensor(result_true))
+            JSD = - BCE.cpu().numpy() + np.log(2.)
+            otp_str = "rescaled BCE loss of test set is {:.4f}, "+\
+                "rescaled JSD of the two dists is {:.4f}"
+            print(otp_str.format(BCE, JSD/np.log(2.)))
+        return eval_acc, eval_auc, JSD/np.log(2.)
+
+    def calibrate_classifier(self, model, calibration_data):
+        """ reads in calibration data and performs a calibration with isotonic regression"""
+        model.eval()
+        assert calibration_data is not None, ("Need calibration data for calibration!")
+        for j, data_batch in enumerate(calibration_data):
+
+            data_batch = data_batch[0].to(utils.get_device())
+
+            input_vector, target_vector = data_batch[:, :-1], data_batch[:, -1]
+            output_vector = model(input_vector)
+            pred = torch.sigmoid(output_vector).reshape(-1)
+            target = target_vector.to(torch.float64)
+            if j == 0:
+                result_true = target
+                result_pred = pred
+            else:
+                result_true = torch.cat((result_true, target), 0)
+                result_pred = torch.cat((result_pred, pred), 0)
+        result_true = result_true.cpu().numpy()
+        result_pred = result_pred.cpu().numpy()
+        iso_reg = IsotonicRegression(out_of_bounds='clip', y_min=1e-6, y_max=1.-1e-6).fit(result_pred, result_true)
+        return iso_reg
+
+
+def get_device():
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    return device

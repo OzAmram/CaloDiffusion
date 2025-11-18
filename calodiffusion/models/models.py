@@ -123,7 +123,6 @@ class ScalarAddLayer(nn.Module):
         self.mu = nn.Parameter(torch.tensor(1e-6))
 
     def forward(self, x1, x2):
-        # print("Mu", self.mu)
         out = (1 - self.mu) * x1 + self.mu * x2
         # out = x1 + x2
         return out
@@ -446,6 +445,8 @@ class ResNet(nn.Module):
     def forward(self, x, cond=None, time=None, controls=None):
         c = self.cond_mlp(cond)
         t = self.time_mlp(time)
+        if len(t.shape) > 2:
+            t = t.squeeze()
         cond = torch.cat([c, t], axis=-1)
 
         x = self.in_lay(x)
@@ -704,6 +705,8 @@ class CondUnet(nn.Module):
         c = self.cond_mlp(cond)
         if(not self.no_time):
             t = self.time_mlp(time)
+            if len(t.shape) > 2:
+                t = t.squeeze()
             conditions = torch.cat([t, c], axis=-1)
         else: 
             conditions = c

@@ -146,21 +146,23 @@ class Train(ABC):
             optimizer=optimizer, factor=0.1, patience=15
         )
 
-        start_epoch = 0
+        start_epoch = epoch = 0
+        training_losses = dict()
+        val_losses = dict()
         if self.flags.load:
-            model, optimizer, scheduler, start_epoch, training_losses, val_losses = (
-                self.pickup_checkpoint(
-                    model=self.model,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    early_stopper=early_stopper,
-                    n_epochs=num_epochs,
-                    restart_training=self.flags.reset_training,
+            try: 
+                model, optimizer, scheduler, start_epoch, training_losses, val_losses = (
+                    self.pickup_checkpoint(
+                        model=self.model,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        early_stopper=early_stopper,
+                        n_epochs=num_epochs,
+                        restart_training=self.flags.reset_training,
+                    )
                 )
-            )
-        else: 
-            training_losses = dict()
-            val_losses = dict()
+            except ValueError as e: 
+                print("WARNING: Specified `--load` bur no checkpoint found. Starting training from scratch.",)
 
         model, epoch, training_losses, val_losses, optimizer, scheduler, early_stopper = self.training_loop(
             optimizer, 

@@ -6,25 +6,63 @@ General evaluation metrics for a fully trained model (not losses)
 from typing import Literal
 from calodiffusion.utils import utils
 import numpy as np
-import jetnet
+try: 
+    import jetnet
+except ImportError: 
+    print("Cannot use jetnet")
 import torch 
 
 from torchvision.models.resnet import ResNet, BasicBlock
 
 import calodiffusion.utils.HighLevelFeatures as HLF
+from calodiffusion.utils.HGCal_utils import HighLevelFeatures as HGCAL_HLF
+from calodiffusion.utils import HGCal_utils as hgcal_utils
 
 
 class FDPCalculationError(Exception): 
     def __init__(self, *args):
         super().__init__(*args)
 
-class FDP: 
-    def _init__(self, binning_dataset, particle): 
-        self.hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
-        self.reference_hlf = HLF.HighLevelFeatures(particle, filename=binning_dataset)
+class _FPD_HGCAL():
+    def __init__(self, binning_dataset, embed_shape=(-1, 1, 28, 12, 21)):
+        self.hlf = HGCAL_HLF(binning_dataset)  # Hgcal HLF is stateless(ish), we don't need one for reference 
+        self.encoder = hgcal_utils.HGCalConverter(bins=embed_shape, geom_file=binning_dataset)
 
-    def pre_process(self, energies, hlf_class, label): 
-        """ takes hdf5_file, extracts high-level features, appends label, returns array """
+    def __call__(self, generated, energies, eval_data, *args, **kwargs):
+
+        if (kwargs.get("energies") is None) and (kwargs.get("showers") is None):
+            reference_shower = []
+            reference_energy = []
+            for energy, _, data in eval_data: 
+                reference_shower.append(data)
+                reference_energy.append(energy)
+
+            reference_shower = np.concatenate(reference_shower)
+            reference_energy = np.concatenate(reference_energy)
+        else: 
+            reference_shower = kwargs.get("showers")
+            reference_energy = kwargs.get("energies")
+
+        generated = np.squeeze(generated)
+
+        energies = np.squeeze(energies)
+        reference_shower = np.squeeze(reference_shower)
+        reference_shower = self.encoder.dec(
+            torch.tensor(reference_shower, dtype=torch.float32)
+        ).detach().numpy()
+
+        source = self.hlf(generated, energies)
+        reference = self.hlf(reference_shower, reference_energy)
+
+        return {"source": source, "reference": reference}
+
+
+class _FPD(): 
+    def __init__(self, particle, binning_dataset):
+        self.hlf = HLF.HighLevelFeatures(particle, binning_dataset)
+        self.reference_hlf = HLF.HighLevelFeatures(particle, binning_dataset)
+    
+    def pre_process(self, energies, hlf_class, label):
         E_layer = []
         for layer_id in hlf_class.GetElayers():
             E_layer.append(hlf_class.GetElayers()[layer_id].reshape(-1, 1))
@@ -45,39 +83,51 @@ class FDP:
         ret = np.concatenate([np.log10(energies), np.log10(E_layer+1e-8), EC_etas/1e2, EC_phis/1e2,
                             Width_etas/1e2, Width_phis/1e2, label*np.ones_like(energies)], axis=1)
         return ret
+    
+    def __call__(self, generated, energies, eval_data, *args, **kwargs):
+        if (kwargs.get("energies") is None) and (kwargs.get("showers") is None):
+            reference_shower = []
+            reference_energy = []
+            for energy, _, data in eval_data: 
+                reference_shower.append(data)
+                reference_energy.append(energy)
 
-    def __call__(self, trained_model, eval_data, kwargs) -> float:
-
-        reference_shower = []
-        reference_energy = []
-        for energy, _, data in eval_data: 
-            reference_shower.append(data)
-            reference_energy.append(energy)
-
-        reference_shower = np.concatenate(reference_shower)
-        reference_energy = np.concatenate(reference_energy)
-
-        generated, energies = trained_model.generate(
-            data_loader=eval_data, 
-            sample_steps=trained_model.config.get("NSTEPS"), 
-            sample_offset=0
-        )
+            reference_shower = np.concatenate(reference_shower)
+            reference_energy = np.concatenate(reference_energy)
+        else: 
+            reference_shower = kwargs.get("showers")
+            reference_energy = kwargs.get("energies")
 
         self.hlf.CalculateFeatures(generated)
         self.reference_hlf.CalculateFeatures(reference_shower)
         
         source_array = self.pre_process(energies, self.hlf, 0.)[:, :-1]
         reference_array = self.pre_process(reference_energy, self.reference_hlf, 1.)[:, :-1]
-        
+
+        return {"source": source_array, "reference": reference_array}
+
+class FPD: 
+    def __init__(self, binning_dataset, particle, hgcal=False): 
+        if jetnet is None: 
+            raise ImportError("jetnet is not installed. Please install it to use FPD evaluation.")
+        if hgcal:
+            self.fpd = _FPD_HGCAL(binning_dataset)
+        else: 
+            self.fpd = _FPD(particle, binning_dataset)
+
+    def __call__(self, generated, energies, eval_data, **kwargs) -> float:
+        out = self.fpd(generated=generated, energies=energies, eval_data=eval_data, **kwargs)
+        source_array = out["source"]
+        reference_array = out["reference"]
+
         try: 
             fpd, _ = jetnet.evaluation.fpd(
                 np.nan_to_num(source_array), np.nan_to_num(reference_array)
             )
         except ValueError as err:
-            raise FDPCalculationError(err)
+            raise FPDCalculationError(err)
 
         return fpd
-
 
 class ComparisonNetwork(ResNet): 
     def __init__(self, dataset_num: Literal[2, 3]):
@@ -176,6 +226,10 @@ class CNNCompare:
             3: {
                 "epochs": 12, 
                 "lr": 5e-5
+            }, 
+            111: {
+                "epochs": 50, 
+                "lr": 1e-5
             }
         }
         if num not in config.keys(): 
@@ -232,3 +286,155 @@ class CNNCompare:
             probabilities.append(self.cnn.forward(torch.tensor(batch_generated), E).detach())
 
         return (1/len(probabilities))*np.sum(np.log(np.array(probabilities)))
+
+
+class ProfileInference: 
+    def __init__(self, config, trained_model, n_iterations=10):
+        """
+        Create a pytorch profiler that can compare compute requirements during inference
+        Measured GPU and CPU use, estimated flops
+        """
+        
+        # Setup the model
+        # Make a fake input
+        self.n_iterations = n_iterations
+        self.model = trained_model
+        self.config = config
+
+        class DummyLoader(torch.utils.data.Dataset): 
+            def __init__(self):
+                super().__init__()
+
+            def __len__(self): 
+                return 1
+            
+            def __getitem__(self, idx): 
+                E = torch.rand((config.get("NLAYERS")), dtype=torch.float)
+                layer = torch.rand((config.get("SHAPE_ORIG")[1]+1), dtype=torch.float)
+                batch = torch.rand((10, *config.get("SHAPE_PAD")[1:]), dtype=torch.float)
+                return E, layer, batch
+            
+        self.dummy_loader = torch.utils.data.DataLoader(DummyLoader())
+
+    def __call__(self, *args, **kwds):
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA], 
+            schedule=torch.profiler.schedule(wait=1, warmup=1, active=1, repeat=1),
+            with_flops=True
+        ) as profile: 
+            for _ in range(self.n_iterations):
+                self.model.generate(
+                    data_loader=self.dummy_loader, 
+                    sample_steps=self.config.get("NSTEPS"),
+                    sample_offset=0
+                )
+                profile.step()
+
+        return profile.key_averages()
+
+class _LogisticKernel:
+    def __init__(self, training_epochs: int = 100, sigma: float = 0.5):
+        self.sigma = sigma
+        self.lamb = 1e-8
+        self.epochs = training_epochs
+        self.weights = None
+        self.centers = None 
+        self.invert_matrix = None
+
+    def _kernel(self, x1, x2): 
+        return torch.exp(-torch.cdist(x1, x2)**2/(2*self.sigma**2))
+
+    def _find_centers(self, X): 
+        # Finding approximate nystrom centers given the distributions X
+        n_samples = X.shape[0]
+        n_features = X.shape[-1]
+        m = int(n_features/3)
+
+        def random_fourier_features():
+            # Return the score used to sample indices
+            W = torch.normal(0, 1.0/self.sigma, size=(n_samples, n_features))
+            b = torch.randn(size=(n_features, 1)) * 2*torch.pi
+            phi = torch.Tensor([np.sqrt(2.0/n_features)]) * torch.cos(X.T @ W + b)
+
+            Q, _ = torch.linalg.qr(phi, mode='reduced')
+            return torch.sum(Q**2, axis=1)
+            
+        dist = torch.distributions.categorical.Categorical(probs=random_fourier_features())
+        samples = [int(dist.sample()) for _ in range(m)]
+        centers = X[:, samples]
+        self.centers = centers
+        # self.invert_matrix = torch.linalg.inv(
+        #     self._kernel(centers, centers) + self.lamb*torch.eye(n_samples, dtype=torch.float)
+        # )
+
+    def loss(self, X, y): 
+        # Cross entropy loss weighted by size of X
+        m = X.shape[1]
+        n = X.shape[0]
+        out = self.predict(X, return_probability=True)
+        return (1-y)*(m/n)*torch.log(1+torch.exp(out)) + y*torch.log(1+torch.exp(-1*out))
+
+    def train(self, X, y):
+        self._find_centers(X)
+        self.weights = torch.nn.Parameter(torch.rand(X.shape[1], ))
+        optimizer = torch.optim.Adam([self.weights], lr=0.01)
+
+        for _ in range(self.epochs): 
+            optimizer.zero_grad()
+            loss = torch.mean(self.loss(X, y))
+            loss.backward()
+            optimizer.step()
+
+    def predict(self, X, return_probability:bool = False):
+        if self.weights is None: 
+            raise ValueError("Cannot run prediction with logistic kernel without first training")
+
+        k_cc = self._kernel(self.centers, self.centers)
+
+        _kernel_out = self._kernel(X.T, k_cc)
+        out = torch.matmul(_kernel_out.T, self.weights)
+        if return_probability: 
+            return out 
+        return (out > 0).int()
+
+class NewPhysicsLearningMachine:
+    def __init__(self, config):
+        """
+        reference: https://arxiv.org/abs/2508.02275
+        """
+        # Use a logistic model as a kernel 
+        # f_w = Sigma(w*exp(-||y-y'||^2/(2*sigma^2)))
+        self.logistic_model = _LogisticKernel()
+        
+        self.sample_steps = config.get('NSTEPS')
+        self.weight = 0.5  # Configurable hyperparam
+
+    def train_kernel(self, x, y):
+        self.logistic_model.train(x, y)
+
+    def compute_t(self, batch, labels): 
+        ""
+        # t_nplm = -2*[m/n * Sigma(e^(f_w)-1) - Sigma(f_w)]
+        prediction = self.logistic_model.predict(batch)
+        diff = self.weight*torch.sum(torch.exp(prediction[labels==0]) - 1)
+        return 2 * (diff - torch.sum(prediction[labels==1]))
+
+    def __call__(self, generated, eval_data, **kwargs): 
+
+        metric = []
+
+        for i, (E, layers, batch_data) in enumerate(eval_data):
+            batch_size = eval_data.batch_size
+            batch_generated = generated[i*batch_size: (i+1)*batch_size]
+
+            batch_input = torch.concatenate((batch_data, batch_generated), axis=0)
+            batch_input = batch_input.reshape(batch_input.shape[0], batch_input[:1,].numel())
+            labels = torch.zeros((batch_input.shape[0], 1))
+            labels[batch_data.shape[0]:, :] = torch.ones((batch_data.shape[0], 1))
+            labels = labels.squeeze()
+
+            self.train_kernel(batch_input, labels)
+            batch_metrics = self.compute_t(batch_input, labels)
+            metric.append(batch_metrics)
+
+        return torch.mean(torch.tensor(metric))

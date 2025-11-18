@@ -7,6 +7,21 @@ from calodiffusion.utils import utils
 import calodiffusion.utils.HGCal_utils as hgcal_utils
 
 class CaloDiffusion(Diffusion): 
+    """
+    A class for training and inference of the base CaloDiffusion model.
+    Uses either a ResNet or a CondUnet model
+    The denoising sampler can be any of the samplers in samplers.py (given by config['SAMPLER'])
+    The training losses are defined by the loss function in loss.py (given by config['LOSS'])
+        If these losses have scaling functions (defined by loss.get_scaling),
+        the "c_in" will be applied to the input before denoising (defaults c_in=1), and "c_skip" and "c_out" will 
+        be applied to the output if the loss function is 'hybrid' or 'minsnr'. If the loss is 'noise_pred',
+        the output will be the denoised input (non-noisy-input - sigma * prediction-of-noisy-image). Otherwise, the output will 
+        be the prediction of the noisy image.
+
+    Additional embeds or decoders can be added by using config["SHOWER_EMBED"] = "NN". If it is an HGCal model, a geometric encoder will be used. 
+    The embedding model will be initialized with the config["BIN_FILE"] and the dataset settings. 
+    """
+
     def __init__(self, config: Union[str, dict], n_steps: int = 400, loss_type: str = 'l2'):
         super().__init__(config, n_steps, loss_type)
         self.pre_embed = "pre-embed" in self.config['SHOWER_EMBED']
@@ -91,7 +106,6 @@ class CaloDiffusion(Diffusion):
 
         rz_phi = self.add_RZPhi(x).float()
         out = self.model(rz_phi, cond=E.float(), time=time.float(), controls=controls)
-
         if (self.do_embed):
             out = self.NN_embed.dec(out).to(x.device)
 
@@ -151,8 +165,12 @@ class CaloDiffusion(Diffusion):
         }
         return embed[self.time_embed](sigma)
     
-    def denoise(self, x, E=None, sigma=None, layers = None, controls=None):
-        t_emb = self.do_time_embed(sigma = sigma.reshape(-1)).to(float)
+    def denoise(self, x, E=None, sigma=None, layers = None, controls=None, do_time_embed=True):
+        if do_time_embed:
+            t_emb = self.do_time_embed(sigma = sigma.reshape(-1)).to(float)
+        else:
+            t_emb = sigma.reshape(sigma.shape[0], -1).to(float)
+
         loss_function_name = type(self.loss_function).__name__
 
         scales = self.loss_function.get_scaling(sigma)
@@ -160,13 +178,10 @@ class CaloDiffusion(Diffusion):
 
         if('noise_pred' in loss_function_name):
             return (x - sigma * pred)
-
-        elif('mean_pred' in loss_function_name):
-            return pred
         elif ('hybrid' or 'minsnr') in loss_function_name:
             return (scales['c_skip'] * x + scales['c_out'] * pred)
-        else:
-            raise ValueError("??? Training obj %s" % loss_function_name)
+        else: 
+            return pred
 
 
     def __call__(self, x, **kwargs):

@@ -407,10 +407,11 @@ class HistERatio(Plot):
         feed_dict = {}
         for key in data_dict:
             dep = np.sum(data_dict[key].reshape(data_dict[key].shape[0], -1), -1)
-            if "Geant" in key:
+            
+            try: 
                 feed_dict[key] = dep / energies.reshape(-1)
-            else:
-                feed_dict[key] = dep / energies.reshape(-1)
+            except ValueError: 
+                feed_dict[key] = dep / energies.reshape(-1).repeat(2, 0).reshape(-1)
 
         # Energy scale is arbitrary, scale so dist centered at 1 for geant
         norm = np.mean(feed_dict[self.geant_key])

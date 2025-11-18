@@ -164,7 +164,8 @@ class Diffusion(torch.nn.Module, ABC):
 
         generated = np.concatenate(generated)
         energies = np.concatenate(energies)
-        layers = np.concatenate(layers)
+        if "layer" in self.config["SHOWERMAP"]:
+            layers = np.concatenate(layers)
 
         generated, energies = utils.ReverseNorm(
             generated,

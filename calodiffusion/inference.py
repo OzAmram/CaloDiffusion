@@ -110,8 +110,9 @@ def diffusion(ctx):
 @click.option("--cms/--no-cms", default=False, help='Use the CMS plotting style')
 @click.option("--energy-min", default=-1.0, type=float, help="Min cell energy threshold")
 @click.option("--geant-only", default=False, is_flag=True, help="Plots only of geant distribution")
+@click.option("--run-metrics", default=False, is_flag=True, help="Print out metrics")
 @click.pass_context
-def plot(ctx, generated, plot_label, plot_folder, plot_reshape, extension, cms, energy_min, geant_only):
+def plot(ctx, generated, plot_label, plot_folder, plot_reshape, extension, cms, energy_min, geant_only, run_metrics):
     ctx.obj.plot_label = plot_label
     ctx.obj.plot_folder = plot_folder
     ctx.obj.plot_reshape = plot_reshape
@@ -120,6 +121,7 @@ def plot(ctx, generated, plot_label, plot_folder, plot_reshape, extension, cms, 
     ctx.obj.cms = cms
     ctx.obj.EMin = energy_min
     ctx.obj.geant_only = geant_only
+    ctx.obj.run_metrics = run_metrics
 
     flags = ctx.obj
     data_dict, energies = process_data_dict(flags, config=ctx.obj.config)
@@ -175,6 +177,31 @@ def process_data_dict(flags, config):
 
     if not flags.geant_only: 
         data_dict[utils.name_translate(generated_file_path=flags.generated)] = generated
+
+    if flags.run_metrics: 
+        from calodiffusion.train.evaluate import FPD, CNNCompare, NewPhysicsLearningMachine
+
+        try: 
+            fpd = FPD(config.get("BIN_FILE"), config.get("PART_TYPE"), hgcal=flags.hgcal)(
+                trained_model=None, 
+                eval_data=None, 
+                generated=generated, 
+                showers=showers, 
+                energies=energies
+            )
+            print(f"FPD: {fpd}")
+
+        except ImportError: 
+            print("Cannot compute FPD measurement without JetNet")
+        
+        #CNNCompare(trained_model="", config=config, flags=flags)
+        nplm = NewPhysicsLearningMachine(config)(
+            generated=generated, 
+            showers=showers, 
+            energies=energies
+        )
+        print(f"NLPM: {nlpm}")
+
 
     return data_dict, energies
 

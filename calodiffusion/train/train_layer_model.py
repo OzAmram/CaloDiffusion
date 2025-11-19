@@ -11,6 +11,7 @@ class TrainLayerModel(TrainDiffusion):
             self.model.set_layer_state(True)
 
     def init_model(self):
+        self.config['checkpoint'] = self.checkpoint_folder
         self.model = LayerDiffusion(
             self.config, n_steps = self.config["NSTEPS"], loss_type = self.config['LOSS_TYPE']
         )

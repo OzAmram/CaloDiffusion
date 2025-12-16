@@ -27,7 +27,8 @@ class TrainDiffusion(Train):
 
         #fixed noise levels for  the validation loss for stability
         if(self.loader_val is not None):
-            val_rnd = torch.randn( (len(self.loader_val),self.batch_size,), device=self.device)
+            val_rnd = torch.randn( (len(self.loader_val)+1,self.batch_size,), device=self.device)
+            print(val_rnd.shape)
 
 
         # training loop
@@ -75,6 +76,9 @@ class TrainDiffusion(Train):
                 for i, (vE, vlayers, vdata) in tqdm(
                     enumerate(self.loader_val, 0), unit="batch", total=len(self.loader_val)
                 ):
+                    #dumb fix
+                    if(i >= val_rnd.shape[0]): break
+
                     vdata = vdata.to(device=self.device)
                     vE = vE.to(device=self.device)
                     vlayers = vlayers.to(device=self.device)

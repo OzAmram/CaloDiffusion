@@ -1,10 +1,10 @@
 
 {
-    'FILES':'data/HGCal_central_2024_pions_train.txt',
-    'VAL_FILES':'data/HGCal_central_2024_pions_val.txt',
-    'EVAL':'data/HGCal_central_2024_pions_eval.txt',
+    'FILES':'CMSHGCaloChallenge/datasets/pion_files_train_local.txt',
+    'VAL_FILES':'CMSHGCaloChallenge/datasets/pion_files_val_local.txt',
+    'EVAL':'CMSHGCaloChallenge/datasets/pion_files_test_local.txt',
     'HGCAL' : True,
-    'BIN_FILE': '/home/oamram/CaloDiffusion/HGCalShowers/geoms/HGCal_geo_2024_large.pkl',
+    'BIN_FILE': '/global/u1/o/ozamram/CaloDiffusion/HGCalShowers/geoms/HGCal_geo_2024_large.pkl',
     'PART_TYPE' : 'pion',
     'AVG_SHOWER_LOC' : 'dataset_1_photons_avg_showers.h5',
     'DATASET_NUM' : 120,
@@ -27,8 +27,8 @@
     'COMPRESS_Z' : True,
     'ACT':'swish',
     'EMBED':128,
-    'EMAX': [100, 2.01, 1.572],
-    'EMIN': [50, 1.99, 1.57],
+    'EMAX': [1000, 2.01, 1.572],
+    'EMIN': [1, 1.99, 1.57],
     'ECUT':0.001,
     'logE':False,
     'MAXDEP':1.0,
@@ -49,6 +49,6 @@
     'TIME_EMBED' : 'log',
     'COND_EMBED' : 'id',
     'SHOWER_EMBED' : 'NN-pre-embed',
-    'CHECKPOINT_NAME':'HGCal_pion_may6',
+    'CHECKPOINT_NAME':'HGCal_pion_oct17',
 }
 

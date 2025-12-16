@@ -4,3 +4,6 @@
 [submodule "HGCalShowers"]
 	path = HGCalShowers
 	url = https://github.com/OzAmram/HGCalShowers
+[submodule "CMSHGCaloChallenge"]
+	path = CMSHGCaloChallenge
+	url = git@github.com:OzAmram/CMSHGCaloChallenge.git

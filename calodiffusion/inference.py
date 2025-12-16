@@ -60,19 +60,24 @@ def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, jo
 
 @inference.group()
 @click.option("-g", "--generated", default="", help="Path for generated shower results")
-@click.option("--sample-steps", default=400, type=int, help="How many steps for sampling (override config)")
+@click.option("--sample-file", default="", help="File of showers to generate (override config)")
+@click.option("--sample-steps", default=200, type=int, help="How many steps for sampling (override config)")
 @click.option("--sample-offset", default=0, type=int, help="Skip some iterations in the sampling (noisiest iters most unstable)")
 @click.option("--sample-algo", default="DDim", help="Algorithm for sampling the model output")
 @click.option("--sparse-decoding", default=False, is_flag=True, help="Sampling during HGCal decoding step to reduce sparsity")
+@click.option("--sparse-per-batch", default=False, is_flag=True, help="Sparsity sampling done once per batch instead of once per sample (less memory intensive)")
+@click.option("--batch-size", default=-1, type=int, help="Set sampling batch size (otherwise use value from training config)")
 @click.option("--train-sampler/--no-train-sampler", default=None, help="For samplers requiring pre-training, train them (overwrites config)")
 @click.option("--model-loc", default=None, help="Specific folder for loading existing model")
 @click.pass_context
-def sample(ctx, generated, sample_steps, sample_algo, sample_offset, sparse_decoding, train_sampler, model_loc):
+def sample(ctx, generated, sample_file, sample_steps, sample_algo, sample_offset, sparse_decoding, sparse_per_batch, batch_size, train_sampler, model_loc):
     ctx.obj.config['SAMPLER'] = sample_algo
     if "SAMPLER_OPTIONS" not in ctx.obj.config.keys(): 
         ctx.obj.config['SAMPLER_OPTIONS'] = {}
     if train_sampler is not None: 
         ctx.obj.config['SAMPLER_OPTIONS']["TRAIN_SAMPLER"] =  train_sampler
+    if (len(sample_file) > 0):
+        ctx.obj.config['EVAL'] = sample_file
 
     if model_loc is None: 
         raise ValueError("model-loc is required")
@@ -82,7 +87,9 @@ def sample(ctx, generated, sample_steps, sample_algo, sample_offset, sparse_deco
     ctx.obj.sample_algo = sample_algo 
     ctx.obj.sample_offset = sample_offset
     ctx.obj.sparse_decoding = sparse_decoding
+    ctx.obj.sparse_per_batch = sparse_per_batch
     ctx.obj.generated = generated
+    ctx.obj.batch_size = batch_size
 
     non_config = dotdict({key: value for key, value in ctx.obj.items() if key!='config'})
     ctx.obj.config['flags'] = non_config
@@ -144,9 +151,21 @@ def process_data_dict(flags, config):
 
 
     total_evts = None
+    generated = energy = None
 
     if(not flags.geant_only):
-        generated, energy = LoadSamples(flags.generated, flags, config, geom_conv, NN_embed=NN_embed)
+        f_sample_list = utils.get_files(flags.generated)
+        for f_sample in f_sample_list: 
+            gen, en = LoadSamples(f_sample, flags, config, geom_conv, NN_embed=NN_embed)
+            if(generated is None): 
+                generated, energy = gen, en
+            else: 
+                generated = np.concatenate((generated, gen), axis=0)
+                energy = np.concatenate((energy, en), axis=0)
+
+            total_evts = generated.shape[0]
+            if(flags.nevts > 0 and total_evts >= flags.nevts): break
+
         total_evts = generated.shape[0]
 
     data = []
@@ -155,9 +174,9 @@ def process_data_dict(flags, config):
     eval_files = utils.get_files(config["EVAL"], folder=flags.data_folder)
     for dataset in eval_files:
         print(dataset)
-        showers, energy = LoadSamples(dataset, flags, config, geom_conv, NN_embed)
+        showers, en = LoadSamples(dataset, flags, config, geom_conv, NN_embed)
         data.append(showers)
-        energies.append(energy)
+        energies.append(en)
 
         total_events = 0
         for d in data:
@@ -169,8 +188,13 @@ def process_data_dict(flags, config):
         raise ValueError("No Evaluation Data passed, please change the `EVAL` field of the config")
     
     energies = np.concatenate(energies)
+    data = np.concatenate(data)
+    if(energies.shape[0] > flags.nevts): energies = energies[:flags.nevts]
+    if(data.shape[0] > flags.nevts): data = data[:flags.nevts]
+    if((generated is not None) and generated.shape[0] > flags.nevts): generated = generated[:flags.nevts]
+
     data_dict = {
-        "Geant4": np.concatenate(data),
+        "Geant4": data,
     }
 
     if not flags.geant_only: 
@@ -330,11 +354,13 @@ def run_inference(flags, config, model):
     )
     sample_steps = flags.sample_steps if flags.sample_steps is not None else config.get("SAMPLE_STEPS", 400)
 
-    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset, sparse_decoding=flags.sparse_decoding)
     if(flags.generated == ""):
         fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}_{datetime.now().timestamp()}.h5"
     else: 
         fout = flags.generated
+
+    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset, 
+                                         sparse_decoding=flags.sparse_decoding, sparse_per_batch=flags.sparse_per_batch)
     write_out(fout, flags, config, generated, energies, first_write=True)
 
 if __name__ == "__main__":

@@ -1,17 +1,12 @@
 
 
 {
-    'FILES':['HGCal_central_2024_photons/batch0.h5','HGCal_central_2024_photons/batch1.h5', 'HGCal_central_2024_photons/batch2.h5',
-             'HGCal_central_2024_photons/batch3.h5','HGCal_central_2024_photons/batch4.h5', 'HGCal_central_2024_photons/batch5.h5','HGCal_central_2024_photons/batch6.h5',
-             'HGCal_central_2024_photons/batch7.h5','HGCal_central_2024_photons/batch8.h5', 'HGCal_central_2024_photons/batch9.h5','HGCal_central_2024_photons/batch10.h5',
-             'HGCal_central_2024_photons/batch11.h5','HGCal_central_2024_photons/batch12.h5', 'HGCal_central_2024_photons/batch13.h5','HGCal_central_2024_photons/batch14.h5',
-             'HGCal_central_2024_photons/batch15.h5'
-    ],
-    'VAL_FILES':['HGCal_central_2024_photons/batch16.h5'],
-    'EVAL':['HGCal_central_2024_photons/batch17.h5', 'HGCal_central_2024_photons/batch18.h5','HGCal_central_2024_photons/batch19.h5' ],
+    'FILES':'CMSHGCaloChallenge/datasets/photon_files_train_local.txt',
+    'VAL_FILES':'CMSHGCaloChallenge/datasets/photon_files_val_local.txt',
+    'EVAL':'CMSHGCaloChallenge/datasets/photon_files_test_local.txt',
     'HGCAL' : True,
-    'BIN_FILE': '/home/oamram/CaloDiffusion/HGCalShowers/geoms/HGCal_geo_2024.pkl',
-    'PART_TYPE' : 'pion',
+    'BIN_FILE': '/global/u1/o/ozamram/CaloDiffusion/HGCalShowers/geoms/HGCal_geo_2024.pkl',
+    'PART_TYPE' : 'photon',
     'AVG_SHOWER_LOC' : 'dataset_1_photons_avg_showers.h5',
     'DATASET_NUM' : 121,
     'HOLDOUT' : 0,

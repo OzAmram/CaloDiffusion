@@ -830,21 +830,22 @@ def conversion_preprocess(file_path):
         h5f.create_dataset("mask", data=mask)
 
 
-def get_files(field, folder=""):
-    print(field, folder)
-    if(isinstance(field, list)):
-        if(len(folder) > 0): 
-            out = [os.path.join(folder, file) if (folder not in file) else file for file in field]
-        else: 
-            out = field
-        return out
-    elif(isinstance(field, str)):
-        if(not os.path.exists(field)):
-            print("File list %s not found" % field)
+def get_files(flist, folder=""):
+    print(flist, folder)
+    if(isinstance(flist, str)):
+        #Read list of filenames from text file
+        if(not os.path.exists(flist)):
+            print("File list %s not found" % flist)
             return []
-        with open(field, "r") as f:
+        with open(flist, "r") as f:
             f_list = [line.strip() for line in f]
-            return f_list
+            flist = f_list
+    if(isinstance(flist, list)):
+        if(len(folder) > 0): 
+            out = [os.path.join(folder, file) if (folder not in file) else file for file in flist]
+        else: 
+            out = flist
+        return out
     else:
         print("Unrecognized file param ", field)
         return []
@@ -864,6 +865,11 @@ def load_data(args, config, eval=False, NN_embed=None):
     shower_scale = config.get("SHOWERSCALE", 200.0)
     max_cells = config.get("MAX_CELLS", None)
     hgcal = config.get("HGCAL", False)
+
+
+    #overwrite batch size from cmd line arg if desired
+    if(hasattr(args, 'batch_size') and (type(args.batch_size)== int) and  args.batch_size > 0):
+        batch_size = args.batch_size
 
     if eval:
         files = get_files(config["EVAL"], folder=args.data_folder)
@@ -890,11 +896,20 @@ def load_data(args, config, eval=False, NN_embed=None):
 
     n_showers = 0
 
+    nevts_to_load = args.nevts
+
     for i, dataset in enumerate(files + val_file_list):
 
         tag = ".npz"
-        if args.nevts > 0:
-            tag = ".n%i.npz" % args.nevts
+
+        #check if we are only loading partial dataset
+        if nevts_to_load > 0:
+            with h5.File(dataset, "r") as f:
+                file_nevts = f['showers'].shape[0]
+
+            if(file_nevts > nevts_to_load):
+                tag = ".n%i.npz" % nevts_to_load
+
         # path of pre-processed data files
         path_clean = dataset + tag
         shape = config.get("SHAPE_PAD")
@@ -902,6 +917,7 @@ def load_data(args, config, eval=False, NN_embed=None):
             shape = config.get("SHAPE_FINAL")
 
         if not os.path.exists(path_clean) or args.reclean:
+            print(path_clean)
             # process this dataset
             showers, E, layers = DataLoader(
                 dataset,
@@ -909,7 +925,7 @@ def load_data(args, config, eval=False, NN_embed=None):
                 emax=config["EMAX"],
                 emin=config["EMIN"],
                 hgcal=hgcal,
-                nevts=args.nevts,
+                nevts=nevts_to_load,
                 binning_file=geom_file,
                 max_deposit=config[
                     "MAXDEP"
@@ -925,7 +941,8 @@ def load_data(args, config, eval=False, NN_embed=None):
                 embed=pre_embed,
                 NN_embed=NN_embed,
             )
-            n_showers += showers.shape[0]
+            file_nevts = showers.shape[0]
+
 
             layers = np.reshape(layers, (layers.shape[0], -1))
 
@@ -947,8 +964,11 @@ def load_data(args, config, eval=False, NN_embed=None):
         else:
             val_files.append(path_clean)
 
-        if (args.nevts > 0 and n_showers >= args.nevts):
-            break
+        if(nevts_to_load > 0):
+            nevts_to_load -= file_nevts
+
+            if(nevts_to_load <= 0): 
+                break
 
     dataset_train = Dataset(train_files)
     loader_train = torchdata.DataLoader(

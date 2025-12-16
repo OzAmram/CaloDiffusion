@@ -837,10 +837,16 @@ def get_files(flist, folder=""):
         if(not os.path.exists(flist)):
             print("File list %s not found" % flist)
             return []
-        with open(flist, "r") as f:
+        if(".h5" in flist): #single file
+            if(folder not in flist):
+                return [os.path.join(folder, flist)]
+            else:
+                return [flist]
+
+        with open(flist, "r") as f: #text file with list of files
             f_list = [line.strip() for line in f]
             flist = f_list
-    if(isinstance(flist, list)):
+    if(isinstance(flist, list)): #list of files
         if(len(folder) > 0): 
             out = [os.path.join(folder, file) if (folder not in file) else file for file in flist]
         else: 

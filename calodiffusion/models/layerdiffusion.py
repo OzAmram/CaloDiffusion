@@ -169,6 +169,7 @@ class LayerDiffusion(CaloDiffusion):
         debug: bool = False,
         sample_offset: Optional[int] = 0,
         sparse_decoding: Optional[bool] = False,
+        sparse_per_batch: Optional[bool] = False,
     ):
         """
         Generate samples for a whole dataloader

@@ -1,3 +1,4 @@
+import os
 from typing import Literal, Optional
 import copy 
 import numpy as np
@@ -54,12 +55,18 @@ class LayerDiffusion(CaloDiffusion):
             return super().compute_loss(data, energy, noise, layers, time, rnd_normal)
 
     def load_layer_model_state(self, strict = True): 
+
         try: 
-            self.config['layer_model']
-        except KeyError:
-            raise KeyError("Something went wrong - Layer model path not found in config")
-        
-        layer_model_state_dict = torch.load(self.config['layer_model'], map_location=self.device, weights_only=False)
+            layer_model_path = self.config['layer_model']
+        except KeyError: 
+            layer_model_path = os.path.join(self.config.get("checkpoint", ""), "checkpoint.pth")
+
+            if os.path.exists(layer_model_path):
+                print("Loading training checkpoint from %s" % layer_model_path, flush=True)
+            else:
+                raise RuntimeError("Could not load layer model from either config or checkpoint path")
+
+        layer_model_state_dict = torch.load(layer_model_path, map_location=self.device, weights_only=False)
         state_dict = layer_model_state_dict if 'model_state_dict' not in layer_model_state_dict else layer_model_state_dict['model_state_dict']
         
         weights_prefixes = set([key.split('.')[0] for key in state_dict.keys()])

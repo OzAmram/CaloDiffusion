@@ -151,23 +151,20 @@ def process_data_dict(flags, config):
 
 
     total_evts = None
+    generated = energy = None
 
     if(not flags.geant_only):
-        generated = energy = None
         f_sample_list = utils.get_files(flags.generated)
         for f_sample in f_sample_list: 
-            #try:
-                gen, en = LoadSamples(f_sample, flags, config, geom_conv, NN_embed=NN_embed)
-                if(generated is None): 
-                    generated, energy = gen, en
-                else: 
-                    generated = np.concatenate((generated, gen), axis=0)
-                    energy = np.concatenate((energy, en), axis=0)
+            gen, en = LoadSamples(f_sample, flags, config, geom_conv, NN_embed=NN_embed)
+            if(generated is None): 
+                generated, energy = gen, en
+            else: 
+                generated = np.concatenate((generated, gen), axis=0)
+                energy = np.concatenate((energy, en), axis=0)
 
-                total_evts = generated.shape[0]
-                if(flags.nevts > 0 and total_evts >= flags.nevts): break
-            #except:
-                print("Bad file, skipping")
+            total_evts = generated.shape[0]
+            if(flags.nevts > 0 and total_evts >= flags.nevts): break
 
         total_evts = generated.shape[0]
 
@@ -194,7 +191,7 @@ def process_data_dict(flags, config):
     data = np.concatenate(data)
     if(energies.shape[0] > flags.nevts): energies = energies[:flags.nevts]
     if(data.shape[0] > flags.nevts): data = data[:flags.nevts]
-    if(generated.shape[0] > flags.nevts): generated = generated[:flags.nevts]
+    if((generated is not None) and generated.shape[0] > flags.nevts): generated = generated[:flags.nevts]
 
     data_dict = {
         "Geant4": data,

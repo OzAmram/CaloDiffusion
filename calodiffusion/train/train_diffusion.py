@@ -33,7 +33,7 @@ class TrainDiffusion(Train):
 
         # training loop
         min_validation_loss = 99999.0
-        epoch = 0
+        epoch = start_epoch
         for epoch in range(start_epoch, num_epochs):
             print("Beginning epoch %i" % epoch, flush=True)
             train_loss = 0

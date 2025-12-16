@@ -294,3 +294,30 @@ def test_plotting_hgcal(config, pytestconfig, hgcal_data):
         plot --plot-folder ./testing_checkpoints/plots/ -g {base_dir}/{generated}"
     exit = execute(command)
     assert exit == 0
+
+
+def test_load_layer_model(config, pytestconfig, hgcal_data): 
+    data_dir = pytestconfig.getoption("data_dir")
+    data_file = hgcal_data("mock_hgcal.h5")
+    config = config({
+        "FILES":[data_file],
+        "EVAL":[data_file],
+        "CHECKPOINT_NAME": "hgcal", 
+        "BIN_FILE": f"""{pytestconfig.getoption("hgcalshowers")}/HGCalShowers/geoms/geom_william.pkl""", 
+        'SHAPE_ORIG': [-1,28,1988],
+        'DATASET_NUM' : 111,
+        'SHAPE_PAD':[-1,1,28,12,21],
+        'SHAPE_FINAL':[-1,1,28,12,21],
+        'MAX_CELLS': 1988,
+        'LAYER_SIZE_UNET' : [32, 32, 64, 96],
+        'SHOWER_EMBED' : 'NN-pre-embed',
+    })
+    base_dir = "./testing_checkpoints/hgcal_Layer"
+    command = f"calodif-train --hgcal -c {config} -d {data_dir} -n 10 --checkpoint {base_dir} layer"
+    exit = execute(command)
+    assert exit == 0
+
+    # Try to load it
+    command = f"calodif-train --hgcal -c {config} -d {data_dir} -n 10 --checkpoint {base_dir} --load layer"
+    exit = execute(command)
+    assert exit == 0

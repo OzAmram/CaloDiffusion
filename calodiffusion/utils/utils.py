@@ -887,15 +887,6 @@ def load_data(args, config, eval=False, NN_embed=None):
         val_file_list = get_files(config.get("VAL_FILES", []), folder=args.data_folder)
 
     NN_embed = None
-    if pre_embed:
-        trainable = config.get("TRAINABLE_EMBED", False)
-        NN_embed = HGCal_utils.HGCalConverter(
-            bins=config["SHAPE_FINAL"],
-            geom_file=geom_file,
-            trainable=trainable,
-            device=get_device(),
-        ).to(device=get_device())
-        NN_embed.init(norm=True, dataset_num=dataset_num)
 
     train_files = []
     val_files = []
@@ -924,6 +915,17 @@ def load_data(args, config, eval=False, NN_embed=None):
 
         if not os.path.exists(path_clean) or args.reclean:
             print(path_clean)
+
+            if (pre_embed and (NN_embed is None)):
+                trainable = config.get("TRAINABLE_EMBED", False)
+                NN_embed = HGCal_utils.HGCalConverter(
+                    bins=config["SHAPE_FINAL"],
+                    geom_file=geom_file,
+                    trainable=trainable,
+                    device=get_device(),
+                ).to(device=get_device())
+                NN_embed.init(norm=True, dataset_num=dataset_num)
+
             # process this dataset
             showers, E, layers = DataLoader(
                 dataset,

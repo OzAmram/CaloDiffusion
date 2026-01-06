@@ -611,9 +611,6 @@ class HGCalConverter(nn.Module):
             # inv_mask = torch.abs(torch.linalg.pinv(mask)) > eps
             inv_mask = torch.abs(inv_init) > eps
 
-            # print("Inv size", torch.sum(inv_init > 0.))
-            # print("Inv mask size", torch.sum(inv_mask))
-            # inv_init = torch.zeros((conv_map.shape[1], conv_map.shape[0]))
 
             if noise_scale > 0.0:
                 noise = torch.randn_like(conv_map)

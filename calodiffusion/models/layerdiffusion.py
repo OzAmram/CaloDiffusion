@@ -238,6 +238,7 @@ class LayerDiffusion(CaloDiffusion):
                 embed=self.pre_embed,
                 NN_embed=self.NN_embed,
                 sparse_decoding=sparse_decoding,
+                sparse_per_batch=sparse_per_batch,
             )
             energies.append(E)
             generated.append(gen)

@@ -359,6 +359,7 @@ def run_inference(flags, config, model):
     else: 
         fout = flags.generated
 
+
     generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset, 
                                          sparse_decoding=flags.sparse_decoding, sparse_per_batch=flags.sparse_per_batch)
     write_out(fout, flags, config, generated, energies, first_write=True)

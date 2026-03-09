@@ -28,7 +28,6 @@ def preprocess_hgcal_shower(
     max_deposit=2,
 ):
 
-    print("dset", dataset_num)
 
     c = constants.dataset_params[dataset_num]
 
@@ -186,6 +185,7 @@ def ReverseNormHGCal(
     sparse_per_batch=False,
 ):
     """Revert the transformations applied to the training set"""
+
 
     c = constants.dataset_params[dataset_num]
 
@@ -365,9 +365,7 @@ def generate_sparse_mat(in_mat, batches=1, per_batch=False):
         #unique sampling matrix per shower (more accurate)
         batch_size = batches
 
-    #print("in", in_mat.shape)
     in_mat = in_mat.repeat((batch_size,1,1,1))
-    #print("samp", in_mat.shape)
 
     #randomly determine which cells to be nonzero
     eps = 1e-6

@@ -343,75 +343,47 @@ def plot_results(flags, config, data_dict, energies):
 
 def fake_data_loader(config, flags):
     """
-    Create a fake data loader that mocks the real data loader.
-    Returns batches of (E, layers, d_batch) with appropriate shapes.
-    Does not use temp files - generates data on-the-fly.
+    Create a fake data loader that mocks the real data loader by writing
+    a temporary HGCal data file with the correct structure and loading it
+    with the standard DataLoaderHGCal method.
     """
+    import tempfile
+    import h5py
+    import numpy as np
     
     n_events = flags.nevts
-    energy_range = flags.energy_range
-    batch_size = config.get("BATCH", 256)
-    hgcal = config.get("HGCAL", False)
-    shower_map = config.get("SHOWERMAP", "")
+    dataset_num = config.get("DATASET_NUM", 111)
     shower_embed = config.get("SHOWER_EMBED", "")
-    orig_shape = "orig" in shower_embed
     
-    # Determine data shape
-    if orig_shape:
-        data_shape = config.get("SHAPE_ORIG", [1, 45, 16, 9])
-    elif hgcal:
-        data_shape = config.get("SHAPE_PAD", [1, 1, 28, 12, 21])
+    # Determine shapes based on config
+    data_shape = config.get("SHAPE_ORIG", [1, 28, 1988])
+
+    
+    # Create temporary file for mock data
+    temp_file = tempfile.NamedTemporaryFile(prefix="./", suffix=".h5", delete=False)
+    temp_file.close()
+    
+    # Determine number of columns in gen_info based on dataset_num
+    if dataset_num in [111, 120, 121]:  # HGCal with embedding
+        gen_info_shape = (n_events, 3)  # energy, eta=2, phi=pi/2
     else:
-        data_shape = config.get("SHAPE_FINAL", [1, 45, 16, 9])
+        gen_info_shape = (n_events, 1)  # just energy
     
-    # Remove batch dimension (-1) from data_shape for internal use
-    data_shape_no_batch = tuple(dim for dim in data_shape if dim != -1)
+    # Write mock HGCal data
+    with h5py.File(temp_file.name, "w") as h5f:
+
+        h5f.create_dataset("showers", shape=(n_events, data_shape[1], data_shape[-1]), dtype="<f4")
+        h5f['showers'][:] = np.random.rand(n_events, data_shape[1], data_shape[-1]).astype("<f4")
+        # Create gen_info with random values
+        gen_info = h5f.create_dataset("gen_info", shape=gen_info_shape, dtype="<f4")
+        gen_info[:, 0] = np.random.uniform(10**-3-(10**-6), 10**-3+(10**-6), n_events) * flags.energy_range # energy
+        if gen_info_shape[1] > 1:
+            gen_info[:, 1] = np.random.uniform(2-(10**-6), 2+(10**-6), n_events)  # eta
+            gen_info[:, 2] = np.random.uniform((np.pi/2)-(10**-6), (np.pi/2)+(10**-6), n_events)  # phi
     
-    # Handle -1 batch_size from flags
-    if hasattr(flags, 'batch_size') and flags.batch_size is not None and flags.batch_size > 0:
-        batch_size = flags.batch_size
-        
-    # Determine energy condition size
-    # For HGCal with R_Z_INPUT or PHI_INPUT, cond_size includes additional features
-    cond_size = 1
-    if "layer" in shower_map:
-        cond_size = 2 + data_shape_no_batch[1]  # 2 for totalE + layers
-    if hgcal:
-        cond_size += 2  # Extra 2 for HGCal (R and Z positional info)
-    
-    class FakeDataset(torchdata.Dataset):
-        """Dataset that generates fake data on-the-fly."""
-        
-        def __init__(self, energy_range, n_events, data_shape, n_layers, batch_size, cond_size):
-            self.energy_range = energy_range
-            self.n_events = n_events
-            self.data_shape = data_shape
-            self.batch_size = batch_size
-            self.cond_size = cond_size
-            self.n_layers = n_layers
-            
-        def __len__(self):
-            return self.n_events
-            
-        def __getitem__(self, idx):
-            """Generate a single sample."""
-            
-            shower = torch.rand(self.data_shape, dtype=torch.float32) * 0.5
-            energy = torch.rand(self.cond_size, dtype=torch.float32) * 0.1
-            if energy_range is not None: 
-                energy[0] += energy_range * 10e-3  # Energy range scaling
-            layers = torch.rand(self.n_layers, dtype=torch.float32) * 0.5
-            
-            return energy, layers, shower
-    
-    # Create the dataset and DataLoader
-    dataset = FakeDataset(energy_range, n_events, data_shape_no_batch, config.get("NLAYERS", 3), batch_size, cond_size)
-    data_loader = torchdata.DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        shuffle=False,
-        num_workers=0
-    )
+    config['EVAL'] = [temp_file.name]
+    flags.data_folder = "./"
+    data_loader, _ = utils.load_data(flags, config, eval=True)
     
     return data_loader
 

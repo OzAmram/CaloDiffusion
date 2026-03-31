@@ -165,7 +165,9 @@ class Diffusion(torch.nn.Module, ABC):
 
         generated = np.concatenate(generated)
         energies = np.concatenate(energies)
-        layers = np.concatenate(layers)
+        if len(layers)!=0:
+            layers = np.concatenate(layers)
+        else: layers = None
         
 
         generated, energies = utils.ReverseNorm(

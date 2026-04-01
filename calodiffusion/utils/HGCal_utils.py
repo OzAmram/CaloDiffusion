@@ -337,13 +337,27 @@ class Decoder(nn.Module):
             self.mat = mat
         self.mask = mask
 
-    def forward(self, x, sparse_decoding=False, sparse_per_batch=False):
+    def forward(self, x, sparse_decoding=False, sparse_per_batch=False, shower_chunk_size=10):
         masked_mat = self.mat * self.mask if self.trainable else self.mat
 
         out = rearrange(x, " ... l a r -> ... l (a r)", a=self.dim1, r=self.dim2)
         if(sparse_decoding):
-            masked_mat = generate_sparse_mat(masked_mat, batches=x.shape[0], per_batch=sparse_per_batch)
-            out = torch.einsum("b l n e, b c l e ->  b c l n", masked_mat, out)
+            if sparse_per_batch:
+                # One sparse mat shared across the whole batch — no batch dim needed.
+                sparse_mat = generate_sparse_mat(masked_mat, batch_size=1)  # (L, N, E)
+                out = torch.einsum("l n e, ... l e -> ... l n", sparse_mat, out)
+            else:
+                # Unique sparse mat per shower, processed in chunks of shower_chunk_size
+                # to balance GPU utilisation vs memory.  Peak allocation per chunk:
+                # (shower_chunk_size, L, N, E) — tune shower_chunk_size as needed.
+                results = []
+                for i in range(0, out.shape[0], shower_chunk_size):
+                    out_chunk = out[i : i + shower_chunk_size]          # (k, ..., L, E)
+                    k = out_chunk.shape[0]
+                    sparse_mat_k = generate_sparse_mat(masked_mat, batch_size=k)  # (k, L, N, E)
+                    results.append(torch.einsum("b l n e, b c l e -> b c l n",
+                                                sparse_mat_k, out_chunk))
+                out = torch.cat(results, dim=0)
         else:
             out = torch.einsum("l n e, ... l e -> ... l n", masked_mat, out)
         return out
@@ -352,57 +366,36 @@ class Decoder(nn.Module):
         self.mat.values = mat
         self.mask = mask
 
-def generate_sparse_mat(in_mat, batches=1, per_batch=False):
-    #Generate a 'sparse' matrix for the decoding step
-    #instead of using the decode matrix to to split energies over multiple cells (average), sample from it like probabilities
-    #this procedure could probably be better memory optimized ? 
-    #per_batch = generate a single sparse mask for entire batch (cheaper), False -> unique sparse mask per shower (more accurate but mem intensive)
+def generate_sparse_mat(in_mat, batch_size=1):
+    # Generate a sparse matrix for the decoding step.
+    # Instead of using the decode matrix to split energies over multiple cells (average),
+    # sample from it like probabilities.
+    #
+    # in_mat:    (L, N, E) = (num_layers, max_ncell, embed_size)
+    # batch_size=1: returns (L, N, E)      — one shared mat (for per_batch=True)
+    # batch_size=k: returns (k, L, N, E)   — unique mat per shower (for per_batch=False)
 
-    if(per_batch): 
-        #unique sampling matrix per batch (cheaper)
-        batch_size = 1
-    else:
-        #unique sampling matrix per shower (more accurate)
-        batch_size = batches
+    if batch_size > 1:
+        # expand is zero-copy; rand_like and arithmetic ops materialise per-element
+        in_mat = in_mat.unsqueeze(0).expand(batch_size, -1, -1, -1)
+        # shape: (batch_size, L, N, E)
 
-    in_mat = in_mat.repeat((batch_size,1,1,1))
-
-    #randomly determine which cells to be nonzero
     eps = 1e-6
     mask = (in_mat > eps)
     rand_mat = torch.rand_like(in_mat) * mask + in_mat
 
-    #make sure to keep at least one entry
-    #set at least one entry (max) to above thresh
+    # make sure to keep at least one entry — set argmax entry to above threshold
     maxs = torch.argmax(rand_mat, dim=-2, keepdim=True)
     rand_mat = rand_mat.scatter(-2, maxs, 1.0 + eps)
 
-    #select nonzero entries
+    # select nonzero entries
     sparse_mat = (rand_mat > 1.0).to(torch.float32)
 
-    #conserve energy -> each column must add to one
-    sparse_mat_norm = torch.sum(sparse_mat, dim=-2, keepdim=True)
-    sparse_mat /= sparse_mat_norm
+    # conserve energy -> each column must sum to one
+    sparse_mat /= torch.sum(sparse_mat, dim=-2, keepdim=True)
 
-    #if column originally zero, set to zero again
+    # if column was originally zero, set to zero again
     sparse_mat *= mask
-
-    del in_mat, rand_mat, mask
-
-    if(per_batch):
-        sparse_mat = sparse_mat.repeat((batches, 1,1,1))
-
-    #for i in range(sparse_mat.shape[1]):
-        #sum1 = torch.sum(in_mat[0,10,:,i])
-        #sum2 = torch.sum(sparse_mat[0,10,:,i])
-        #if(abs(sum1 - sum2) > eps):
-            #print(i, sum1, sum2)
-            #print(torch.nonzero(in_mat[0,10,:,i]))
-            #print(torch.nonzero(sparse_mat[0,10,:,i]))
-            #print(maxs[0,10,:,i])
-            #print(in_mat[0,10, torch.nonzero(in_mat[0,10,:,i]) ,i])
-            #print(sparse_mat[0,10, torch.nonzero(sparse_mat[0,10,:,i]) ,i])
-            #print(rand_mat[0,10, torch.nonzero(sparse_mat[0,10,:,i]) ,i])
 
     return sparse_mat
 
@@ -656,13 +649,15 @@ class HGCalConverter(nn.Module):
 
         return out
 
-    def dec(self, x, sparse_decoding=False, sparse_per_batch=False):
+    def dec(self, x, sparse_decoding=False, sparse_per_batch=False, shower_chunk_size=10):
         if self.norm:
             x = (x * self.embed_std) + self.embed_mean
-        out = self.decoder(x, sparse_decoding=sparse_decoding, sparse_per_batch = sparse_per_batch)
+        out = self.decoder(x, sparse_decoding=sparse_decoding, sparse_per_batch=sparse_per_batch,
+                           shower_chunk_size=shower_chunk_size)
         return out
 
-    def dec_batches(self, x, batch_size=128, sparse_decoding=False, sparse_per_batch=False):
+    def dec_batches(self, x, batch_size=128, sparse_decoding=False, sparse_per_batch=False,
+                    shower_chunk_size=10):
 
         data_loader = torchdata.DataLoader(x, batch_size=batch_size, shuffle=False)
 
@@ -671,7 +666,9 @@ class HGCalConverter(nn.Module):
         for i, shower_batch in enumerate(data_loader):
             shower_batch = shower_batch.to(self.device)
 
-            batch = self.dec(shower_batch, sparse_decoding=sparse_decoding, sparse_per_batch=sparse_per_batch).detach().cpu().numpy()
+            batch = self.dec(shower_batch, sparse_decoding=sparse_decoding,
+                             sparse_per_batch=sparse_per_batch,
+                             shower_chunk_size=shower_chunk_size).detach().cpu().numpy()
             if i == 0:
                 out = batch
             else:

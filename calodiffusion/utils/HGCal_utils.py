@@ -230,6 +230,8 @@ def ReverseNormHGCal(
         voxels = np.minimum(voxels, np.log(max_deposit))
 
         data = np.exp(voxels)
+    else: 
+        data = voxels
 
     if embed and NN_embed is None:
         trainable = config.get("TRAINABLE_EMBED", False)

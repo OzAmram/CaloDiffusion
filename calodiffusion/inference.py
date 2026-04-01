@@ -5,6 +5,7 @@ import click
 import numpy as np
 import h5py
 import torch
+import torch.utils.data as torchdata
 
 from calodiffusion.utils import utils
 from calodiffusion.utils import HGCal_utils as hgcal_utils
@@ -23,7 +24,7 @@ class dotdict(dict):
 
 @click.group()
 @click.option("-c", "--config")
-@click.option("-d", "--data-folder", default="./data/", help="Folder containing data and MC files")
+@click.option("-d", "--data-folder", help="Folder containing data and MC files. If not supplied, random data is generated.")
 @click.option("--checkpoint-folder", default="./trained_models/", help="Folder to save checkpoints")
 @click.option("-n", "--n-events", default=-1, type=int, help="Number of events to load")
 @click.option("--job-idx", default=-1, type=int, help="Split generation among different jobs")
@@ -69,8 +70,9 @@ def inference(ctx, debug, config, data_folder, checkpoint_folder, layer_only, jo
 @click.option("--batch-size", default=-1, type=int, help="Set sampling batch size (otherwise use value from training config)")
 @click.option("--train-sampler/--no-train-sampler", default=None, help="For samplers requiring pre-training, train them (overwrites config)")
 @click.option("--model-loc", default=None, help="Specific folder for loading existing model")
+@click.option("--energy", type=click.Choice(['5', '50', '500']), help="If not generating off existing energy gen info, what energy ranges to use.", default=5)
 @click.pass_context
-def sample(ctx, generated, sample_file, sample_steps, sample_algo, sample_offset, sparse_decoding, sparse_per_batch, batch_size, train_sampler, model_loc):
+def sample(ctx, generated, sample_file, sample_steps, sample_algo, sample_offset, sparse_decoding, sparse_per_batch, batch_size, train_sampler, model_loc, energy):
     ctx.obj.config['SAMPLER'] = sample_algo
     if "SAMPLER_OPTIONS" not in ctx.obj.config.keys(): 
         ctx.obj.config['SAMPLER_OPTIONS'] = {}
@@ -90,6 +92,7 @@ def sample(ctx, generated, sample_file, sample_steps, sample_algo, sample_offset
     ctx.obj.sparse_per_batch = sparse_per_batch
     ctx.obj.generated = generated
     ctx.obj.batch_size = batch_size
+    ctx.obj.energy_range = int(energy)
 
     non_config = dotdict({key: value for key, value in ctx.obj.items() if key!='config'})
     ctx.obj.config['flags'] = non_config
@@ -263,7 +266,6 @@ def LoadSamples(fp, flags, config, geom_conv, NN_embed=None):
         flags.plot_reshape = True
 
 
-
     if (not flags.hgcal) or flags.plot_reshape:
         shape_plot = config["SHAPE_FINAL"]
     else:
@@ -339,8 +341,58 @@ def plot_results(flags, config, data_dict, energies):
         plotting_method(data_dict, energies)
 
 
-def run_inference(flags, config, model):
+def fake_data_loader(config, flags):
+    """
+    Create a fake data loader that mocks the real data loader by writing
+    a temporary HGCal data file with the correct structure and loading it
+    with the standard DataLoaderHGCal method.
+    """
+    import tempfile
+    import h5py
+    import numpy as np
+    
+    n_events = flags.nevts
+    dataset_num = config.get("DATASET_NUM", 111)
+    shower_embed = config.get("SHOWER_EMBED", "")
+    
+    # Determine shapes based on config
+    data_shape = config.get("SHAPE_ORIG", [1, 28, 1988])
+
+    
+    # Create temporary file for mock data
+    temp_file = tempfile.NamedTemporaryFile(prefix="./", suffix=".h5", delete=False)
+    temp_file.close()
+    
+    # Determine number of columns in gen_info based on dataset_num
+    if dataset_num in [111, 120, 121]:  # HGCal with embedding
+        gen_info_shape = (n_events, 3)  # energy, eta=2, phi=pi/2
+    else:
+        gen_info_shape = (n_events, 1)  # just energy
+    
+    # Write mock HGCal data
+    with h5py.File(temp_file.name, "w") as h5f:
+
+        h5f.create_dataset("showers", shape=(n_events, data_shape[1], data_shape[-1]), dtype="<f4")
+        h5f['showers'][:] = np.random.rand(n_events, data_shape[1], data_shape[-1]).astype("<f4")
+        # Create gen_info with random values
+        gen_info = h5f.create_dataset("gen_info", shape=gen_info_shape, dtype="<f4")
+        gen_info[:, 0] = np.random.uniform(10**-3-(10**-6), 10**-3+(10**-6), n_events) * flags.energy_range # energy
+        if gen_info_shape[1] > 1:
+            gen_info[:, 1] = np.random.uniform(2-(10**-6), 2+(10**-6), n_events)  # eta
+            gen_info[:, 2] = np.random.uniform((np.pi/2)-(10**-6), (np.pi/2)+(10**-6), n_events)  # phi
+    
+    config['EVAL'] = [temp_file.name]
+    flags.data_folder = "./"
     data_loader, _ = utils.load_data(flags, config, eval=True)
+    
+    return data_loader
+
+
+def run_inference(flags, config, model):
+    if flags.data_folder is not None: 
+        data_loader, _ = utils.load_data(flags, config, eval=True)
+    else: 
+        data_loader = fake_data_loader(config, flags)
 
     model_instance = model(flags, config, load_data=False)
     model_instance.init_model()
@@ -358,10 +410,11 @@ def run_inference(flags, config, model):
         fout = f"{model_instance.checkpoint_folder}/generated_{config['CHECKPOINT_NAME']}_{flags.sample_algo}{sample_steps}_{datetime.now().timestamp()}.h5"
     else: 
         fout = flags.generated
+    
 
-
-    generated, energies = model.generate(data_loader, sample_steps, flags.debug, flags.sample_offset, 
-                                         sparse_decoding=flags.sparse_decoding, sparse_per_batch=flags.sparse_per_batch)
+    generated, energies = model.generate(
+        data_loader, sample_steps, flags.debug, flags.sample_offset, 
+        sparse_decoding=flags.sparse_decoding, sparse_per_batch=flags.sparse_per_batch)
     write_out(fout, flags, config, generated, energies, first_write=True)
 
 if __name__ == "__main__":

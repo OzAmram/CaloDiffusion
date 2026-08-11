@@ -259,7 +259,7 @@ def ReverseNormHGCal(
         layers /= np.sum(layers, axis=1, keepdims=True)
         layers *= totalE
 
-        data = np.squeeze(data)
+        data = np.squeeze(data, axis=1)
 
         # remove voxels with negative energies so they don't mess up sums
         eps = 1e-8
